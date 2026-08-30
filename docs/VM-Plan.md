@@ -770,9 +770,11 @@ Two things follow, both already true of erasure:
 
 * The compiler boxes a primitive flowing into an `unknown` and emits a `Cast` reading one out —
   §1.11's two obligations, unchanged.
-* **It is not a top type.** There is no root class (`CLAUDE.md`), so `unknown` sits above nothing
-  in `Ancestors`; assignability to it is a compiler rule, not a subtype relation the linker builds
-  or the interpreter walks. Nothing in the class hierarchy changes.
+* **It is not a top type, even now that `object` (`CLAUDE.md`) is one.** `unknown` still sits above
+  nothing in `Ancestors`; assignability to it is a compiler rule, not a subtype relation the linker
+  builds or the interpreter walks. `object` and `unknown` answer different questions — a class's
+  base versus a slot's representation — and stay two mechanisms on purpose, so a value reaching
+  `unknown` still pays the box-in/cast-out obligation above rather than skipping it through `object`.
 
 `Language-Syntax.md` §2.8's `singleton` is likewise ordinary: one class, one instance created with
 the module's other statics (§1.12), reached by name.

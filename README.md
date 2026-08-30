@@ -133,8 +133,9 @@ be cast before use). Composites:
 
 Generics are written `Box<int>` with constraints like `T : IComparable<T> & IEquatable<T>`; they
 are **erased** at compile time the way Java's are — checked and then discarded, with the runtime
-only ever seeing one class per declaration. There is no root `object` class: a bare
-`class Foo { }` sits at depth 0 in its own hierarchy.
+only ever seeing one class per declaration. `object` is the stateless root every class extends by
+default: a bare `class Foo { }` extends it implicitly, with real `equals`/`hashCode`/`toString`
+inherited from it.
 
 ### Declarations
 

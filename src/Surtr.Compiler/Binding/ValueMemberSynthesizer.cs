@@ -10,32 +10,33 @@ namespace Surtr.Compiler.Binding
 {
     /// <summary>
     /// Builds the value members a <c>@Value</c> class gets without declaring them (§11.1): the
-    /// structural <c>equals</c>, a combined <c>hashCode</c>, and a <c>toDisplayString</c>. These
-    /// are real methods — created by the binder, given bound bodies, emitted into the image like
-    /// any other — rather than lowering at a call site, so they are callable, overridable by
-    /// writing one's own, and consistent with the <c>==</c>/<c>!=</c> operators the same mark
-    /// already turns structural.
+    /// structural <c>equals</c>, a combined <c>hashCode</c>, and a <c>toString</c>. These are real
+    /// methods — created by the binder, given bound bodies, emitted into the image like any other
+    /// — rather than lowering at a call site, so they are callable, overridable by writing one's
+    /// own, and consistent with the <c>==</c>/<c>!=</c> operators the same mark already turns
+    /// structural.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The names carry the <c>$</c> ABI prefix the compiler reserves for what it makes up, so the
-    /// reflection API that shows what a type's author wrote hides them the way it hides a backing
-    /// field or a lambda. A user declaring the same source name — <c>equals</c>, <c>hashCode</c>,
-    /// <c>toDisplayString</c> — is a separate member and wins the readable call; the <c>$</c>
-    /// forms remain the ABI contract.
+    /// The names are the same real names <c>object</c> declares (the language's root class,
+    /// stateless and extended by every class by default): <c>equals</c>, <c>hashCode</c>,
+    /// <c>toString</c>. A user declaring one of those on their own <c>@Value</c> class shadows this
+    /// synthesis outright - the check that gates synthesis (<c>AddValueMembers</c> in
+    /// <c>Binder.cs</c>) looks for that name among the class's own members first, so writing your
+    /// own is what "overridable by writing one's own" means here; nothing is emitted twice.
     /// </para>
     /// <para>
     /// Three invariants tie the synthesized members to the operator: <c>equals</c> and <c>==</c>
     /// share one field-by-field algorithm, so they always agree; <c>hashCode</c> is an FNV-1a fold
     /// over a per-field hash, so equal values hash equal (the hard requirement for a hash — the
-    /// reverse is allowed to collide); and <c>toDisplayString</c> renders <c>Name(field=value, ...)</c>.
+    /// reverse is allowed to collide); and <c>toString</c> renders <c>Name(field=value, ...)</c>.
     /// </para>
     /// </remarks>
     internal static class ValueMemberSynthesizer
     {
-        internal const string EqualsName = "$equals";
-        internal const string HashCodeName = "$hashCode";
-        internal const string ToDisplayStringName = "$toDisplayString";
+        internal const string EqualsName = "equals";
+        internal const string HashCodeName = "hashCode";
+        internal const string ToDisplayStringName = "toString";
 
         /// <summary>
         /// The syntax position every synthesized bound node gets. These methods have no source to
@@ -99,7 +100,7 @@ namespace Surtr.Compiler.Binding
         private static BoundExpression ThisField(BoundExpression receiver, FieldSymbol field)
             => new BoundFieldExpression(NoSyntax, receiver, field);
 
-        /// <summary>The string a field renders as: its <c>toString()</c> for primitives, itself for strings, the nested <c>$toDisplayString</c> for a <c>@Value</c>.</summary>
+        /// <summary>The string a field renders as: its <c>toString()</c> for primitives, itself for strings, the nested <c>toString</c> for a <c>@Value</c>.</summary>
         private static BoundExpression DisplayOf(TypeSymbolFactory factory, MemberLookup lookup, BoundExpression fieldValue, TypeSymbol fieldType)
         {
             switch (fieldType.NonNullable.SpecialType)
@@ -154,7 +155,7 @@ namespace Surtr.Compiler.Binding
         /// <summary>A per-field integer hash, defined so equal fields always produce the same value.</summary>
         /// <remarks>
         /// Numeric fields hash as themselves, strings by their length (deterministic — equal
-        /// strings share it), a nested <c>@Value</c> by its own <c>$hashCode</c>, and everything
+        /// strings share it), a nested <c>@Value</c> by its own <c>hashCode</c>, and everything
         /// else — <c>bool</c>, <c>float</c>, a reference — by a position-dependent constant. The
         /// invariant that matters, equal <c>equals</c>-values hash equal, holds by construction;
         /// collisions beyond that are a quality trade rather than a correctness one.
@@ -195,7 +196,7 @@ namespace Surtr.Compiler.Binding
         }
 
         /// <summary>
-        /// Builds the <c>$equals(other)</c> body: exactly the structural comparison <c>==</c> means.
+        /// Builds the <c>equals(other)</c> body: exactly the structural comparison <c>==</c> means.
         /// </summary>
         internal static BoundStatement EqualsBody(
             TypeSymbolFactory factory,
@@ -228,7 +229,7 @@ namespace Surtr.Compiler.Binding
             return ReturnBlock(new BoundBinaryExpression(NoSyntax, BinaryOperator.LogicalOr, same, guarded, factory.Bool));
         }
 
-        /// <summary>Builds the <c>$hashCode()</c> body: FNV-1a over the per-field hashes.</summary>
+        /// <summary>Builds the <c>hashCode()</c> body: FNV-1a over the per-field hashes.</summary>
         internal static BoundStatement HashCodeBody(
             TypeSymbolFactory factory,
             MemberLookup lookup,
@@ -249,7 +250,7 @@ namespace Surtr.Compiler.Binding
             return ReturnBlock(hash);
         }
 
-        /// <summary>Builds the <c>$toDisplayString()</c> body: <c>Name(field=value, ...)</c>.</summary>
+        /// <summary>Builds the <c>toString()</c> body: <c>Name(field=value, ...)</c>.</summary>
         internal static BoundStatement ToDisplayStringBody(
             TypeSymbolFactory factory,
             MemberLookup lookup,

@@ -1014,8 +1014,10 @@ method, and reading a member off a type parameter were all errors — §6's own
 `max<T : IComparable<T>>` example did not compile. What closed it:
 
 * **A bound is what a type parameter reaches through.** `MemberLookup.Reachable` walks a parameter's
-  constraints; an unconstrained one reaches nothing, since there is no root class to fall back to.
-  The bounds themselves were the actual defect: a *method*'s type parameters are declared while its
+  constraints; an unconstrained one still reaches nothing — `object` existing as the root of the
+  class hierarchy did not change that on purpose, so what `T` can do stays exactly what `<T : ...>`
+  says rather than gaining a standing `object` bound. Writing `<T : object>` gets the same effect
+  explicitly. The bounds themselves were the actual defect: a *method*'s type parameters are declared while its
   signature binds, which is after the pass that resolved bounds had already run, so every one of them
   stayed unbounded. Bound resolution now picks up where it left off, and runs again afterwards.
 * **A construction settles its arguments from three sources, in this order**: written at the call

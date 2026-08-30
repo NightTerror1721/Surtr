@@ -7,13 +7,15 @@ namespace Surtr.Runtime.BuiltIns
 {
     /// <summary>
     /// The three members every class in the language answers to by default: <c>equals</c>,
-    /// <c>hashCode</c> and <c>toString</c>, declared once on the root <c>object</c> class and on
-    /// <c>Enum</c>'s override of <c>toString</c>.
+    /// <c>hashCode</c> and <c>toString</c>, declared once on the root <c>object</c> class.
     /// </summary>
     /// <remarks>
     /// <c>equals</c>/<c>hashCode</c> forward straight to <see cref="SurtrValueComparer"/> - the
     /// same comparer <c>==</c> and every dictionary already use - so a Surtr-level
-    /// <c>x.equals(y)</c> can never disagree with <c>x == y</c>. Both are declared
+    /// <c>x.equals(y)</c> can never disagree with <c>x == y</c>. It already compares a boxed value
+    /// type structurally (<c>SurtrValueComparer.ReferencesEqual</c>'s <c>SurtrInstance</c> case),
+    /// so this default is correct as-is for a value class or an enum with no member of its own -
+    /// no per-family or per-type override is declared here for that reason. Both are declared
     /// <see cref="SurtrMethodDispatch.Virtual"/>, since the whole point is that a call through a
     /// statically-known subtype can still land on that subtype's own override; every built-in
     /// this reaches is sealed, so a call site whose receiver's type is known devirtualises to a
@@ -50,27 +52,6 @@ namespace Surtr.Runtime.BuiltIns
                 isPure: true);
         }
 
-        /// <summary>
-        /// Declares <c>Enum</c>'s override of <c>toString</c>: the case name matching the
-        /// receiver's flattened value, read off <see cref="SurtrClass.EnumCases"/>.
-        /// </summary>
-        /// <remarks>
-        /// One shared body for every enum - nothing per-enum is synthesised. The receiver arrives
-        /// already boxed (an enum is a value type, and this dispatch is not <c>Direct</c>), so its
-        /// wrapped value is the boxed instance's own slot 0, the same slot the switch lowering and
-        /// the static initializer already agree is where an enum's value lives.
-        /// </remarks>
-        internal static void DeclareEnum(SurtrBuiltInTypeBuilder builder)
-        {
-            builder.Method(
-                "toString",
-                SurtrClassReference.String,
-                SurtrNativeEntryPoint.FromFunctionPointer(&EnumToString),
-                dispatch: SurtrMethodDispatch.Virtual,
-                isPure: true,
-                isOverride: true);
-        }
-
         private static int DefaultEquals(SurtrCallArguments arguments)
         {
             var comparer = arguments.Runtime.ValueComparer;
@@ -88,25 +69,6 @@ namespace Surtr.Runtime.BuiltIns
         {
             var self = arguments.Get<SurtrObject>(0);
             return arguments.Return(SurtrValue.CreateReference(arguments.Runtime.NewString(self.Class.Name).GetSurtrReference()));
-        }
-
-        private static int EnumToString(SurtrCallArguments arguments)
-        {
-            var self = arguments.Get<SurtrInstance>(0);
-            var cases = self.Class.EnumCases;
-            int value = self[0].AsInt;
-
-            string name = self.Class.Name;
-            for (int i = 0; i < cases.Length; i++)
-            {
-                if (cases[i].Value == value)
-                {
-                    name = cases[i].Name;
-                    break;
-                }
-            }
-
-            return arguments.Return(SurtrValue.CreateReference(arguments.Runtime.NewString(name).GetSurtrReference()));
         }
     }
 }

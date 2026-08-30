@@ -315,7 +315,7 @@ some runtime interns it — the same reason `SurtrConstant` exists at all.
 | `isSealed` | `bool` | |
 | `isEnum` | `bool` | |
 | `isValueType` | `bool` | Written since format version 8. Lay the class out as a flattened value block rather than one reference slot per field. The widths themselves are not written — the linker recomputes them from the field types, so a nested value type's layout cannot disagree with its own declaration. |
-| `baseType` | `str?` | `-1` for a class with no base — there is no root `object`. |
+| `baseType` | `str?` | `-1` only for `object` itself, the one class with genuinely no base. Every other class writes a real descriptor: the compiler resolves a missing `:` clause to `object`/`Enum`/`ValueType` before emitting, so the image never has to. An ordinary class from an image written before this default existed still loads — `-1` reads back as `BaseType == null`, exactly as it always did, just without `object` among its `Ancestors` until recompiled. An **enum** from such an image does not: `SurtrClass`'s constructor now requires a real base for `isEnum`, so a pre-existing enum image fails to load rather than loading silently stale. |
 | `interfaces` | `str[]` | Declared, not the transitive closure; the linker builds that. |
 | `genericParameters` | `str[]` | Names only, one per parameter. |
 | `constraints` | per parameter: `i32` count + `str[]` | The bounds each parameter declared, as descriptors (`G<n>` included, e.g. `Osurtr:IComparable`1;G0`). Written only when `genericParameters` is non-empty; one list per parameter, empty where the parameter is unconstrained. |

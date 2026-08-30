@@ -70,8 +70,9 @@ not a distinct type, not a conversion target, just another spelling that happens
 identifier — and exist specifically so a constructor can be called on them (§5.5 has no `new`, so a
 form with no identifier can never be callable). §5.3.1 covers the identifier form and the
 constructors it enables; `closure` stays purely symbolic, since a closure is never directly
-constructed from source — it is always a lambda or a value already holding one. There is no root
-`object` type; `unknown` is *not* one, and §5.10 explains why the distinction matters.
+constructed from source — it is always a lambda or a value already holding one. `object` (§2.2) is
+the root every class, primitive and built-in extends by default; `unknown` is *not* one and stays
+outside the class hierarchy entirely — §5.10 explains why the distinction matters.
 
 A method returning nothing must still write `: void` explicitly; the return-type annotation is
 never omitted, so a declaration's shape doesn't change based on what it returns.
@@ -124,10 +125,12 @@ names a whole-module import (§2.1), and everywhere else it remains an ordinary 
 `moduleof(no.such.module)` path is unaffected.
 
 The list is deliberately short — it holds only what the grammar actually branches on. Notable
-absences, each for a reason already decided above: no `new` (§5.5), no `object` (there is no root
-type, §1.1), no `module`/`namespace` (§2.1 derives it from the path), no `extends`/`implements`
-(§2.2 uses a single `:` list), no `abstract` on interface members (§2.3), and no `until` (§5.4
-uses `..=`).
+absences, each for a reason already decided above: no `new` (§5.5), no `module`/`namespace` (§2.1
+derives it from the path), no `extends`/`implements` (§2.2 uses a single `:` list), no `abstract` on
+interface members (§2.3), and no `until` (§5.4 uses `..=`). `object` is absent from this list too,
+but for a different reason than the others: it names the root class every class extends by default
+(§2.2), and it is an ordinary identifier rather than a keyword, resolved by text the same way
+`int`/`string`/`range`/`unknown` are — there was nothing to reserve.
 
 ### 1.3 Naming conventions
 
@@ -2401,10 +2404,13 @@ Two things make this nearly free rather than a new pillar of the type system:
   generic type parameter. So an `unknown` slot is always a reference, always traced, and
   `IsReferenceType` stays a range compare. Primitives box on the way in and the compiler inserts a
   `Cast` on the way out, exactly the two obligations §6 already places on it for generics.
-- **It is not a supertype.** There is no root class in Surtr (§1.1), so `unknown` cannot sit above
-  anything in `Ancestors`; assignability *to* `unknown` is a rule the compiler applies, not a
-  subtype relation the runtime walks. Nothing in the class hierarchy or the linker changes, which
-  is precisely why a real top type was not the design chosen.
+- **It is not a supertype, even though `object` (§2.2) now is one.** `unknown` never sits in any
+  class's `Ancestors` — assignability *to* `unknown` is a rule the compiler applies, not a subtype
+  relation the runtime walks, and that stays true with a real root class in the hierarchy. `object`
+  answers "what is this class's base"; `unknown` answers a different question — "what does this
+  slot's representation look like" — and the two were kept apart on purpose: unifying them would
+  have meant a value flowing into `unknown` no longer needing the cast on the way out that §6
+  already asks generics to pay, which is precisely the safety `unknown` exists to keep.
 
 The motivating cases are host interop where a native function returns something the signature
 cannot name, and genuinely heterogeneous data. Where the type *is* known, a generic (§6) says so

@@ -5028,8 +5028,8 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// The value members are real methods, not call-site lowering: they exist in the image as
-        /// the <c>$</c>-prefixed ABI members §11.1 names, and a host can invoke them by reflection.
+        /// The value members are real methods, not call-site lowering: they exist in the image
+        /// under the same real names §11.1 gives them, and a host can invoke them by reflection.
         /// </summary>
         [Fact]
         public void AValueClassEmitsRealValueMembers()
@@ -5048,9 +5048,9 @@ var runtime = Run(
             runtime.LoadModule(module);
 
             var vec = module.FindClass("Vec2")!;
-            Assert.True(vec.TryGetMethods("$equals", out var equals) && equals.Length == 1);
-            Assert.True(vec.TryGetMethods("$hashCode", out var hashCode) && hashCode.Length == 1);
-            Assert.True(vec.TryGetMethods("$toDisplayString", out var display) && display.Length == 1);
+            Assert.True(vec.TryGetMethods("equals", out var equals) && equals.Length == 1);
+            Assert.True(vec.TryGetMethods("hashCode", out var hashCode) && hashCode.Length == 1);
+            Assert.True(vec.TryGetMethods("toString", out var display) && display.Length == 1);
 
             var a = runtime.NewInstance(vec);
             var b = runtime.NewInstance(vec);
@@ -6102,6 +6102,96 @@ var runtime = Run(
 
             Assert.Equal("Animal", Text(runtime, "dogBaseName"));
             Assert.Equal(1, Int(runtime, "animalBaseIsObject"));
+        }
+
+        /// <summary>
+        /// The polymorphic smoke test the whole feature exists for: a value statically known only
+        /// as `object` still reaches equals/hashCode/toString through the vtable, landing on
+        /// whatever the concrete class - here one with no override of its own - actually is.
+        /// </summary>
+        [Fact]
+        public void APlainClassAnsweredThroughObjectUsesTheInheritedDefaults()
+        {
+            var runtime = Run(
+                "class Animal { public let legs: int = 4; }\n"
+                    + "fun sameInstanceEqualsItself(): int {\n"
+                    + "  let a = Animal();\n"
+                    + "  let asObject: object = a;\n"
+                    + "  return asObject.equals(a) ? 1 : 0;\n"
+                    + "}\n"
+                    + "fun differentInstancesAreNotEqual(): int {\n"
+                    + "  let asObject: object = Animal();\n"
+                    + "  return asObject.equals(Animal()) ? 1 : 0;\n"
+                    + "}\n"
+                    + "fun defaultToStringNamesTheClass(): string {\n"
+                    + "  let asObject: object = Animal();\n"
+                    + "  return asObject.toString();\n"
+                    + "}\n"
+                    + "fun hashCodeIsStableForTheSameInstance(): int {\n"
+                    + "  let a = Animal();\n"
+                    + "  let asObject: object = a;\n"
+                    + "  return asObject.hashCode() == asObject.hashCode() ? 1 : 0;\n"
+                    + "}");
+
+            Assert.Equal(1, Int(runtime, "sameInstanceEqualsItself"));
+            Assert.Equal(0, Int(runtime, "differentInstancesAreNotEqual"));
+            Assert.Equal("Animal", Text(runtime, "defaultToStringNamesTheClass"));
+            Assert.Equal(1, Int(runtime, "hashCodeIsStableForTheSameInstance"));
+        }
+
+        /// <summary>
+        /// `object`/`Enum`/`ValueType` declare no constructor, so a class whose base resolves to
+        /// one implicitly - no constructor of its own, no field initializer - gets no synthesised
+        /// chain at all (`ModuleEmitter.NeedsConstruction` walks the base chain and finds nothing
+        /// to call). Constructing an instance must not throw or otherwise misbehave for that reason.
+        /// </summary>
+        [Fact]
+        public void AClassWithNoConstructorAndNoBaseToConstructBuildsCleanly()
+        {
+            var runtime = Run(
+                "class Empty { }\n"
+                    + "fun make(): int {\n"
+                    + "  let e = Empty();\n"
+                    + "  return e == null ? 0 : 1;\n"
+                    + "}");
+
+            Assert.Equal(1, Int(runtime, "make"));
+        }
+
+        /// <summary>
+        /// A primitive boxed behind `object` reaches the same default equals/hashCode/toString a
+        /// user class does, and its own toString() - now a real override of object's slot - is
+        /// what actually runs, not object's generic class-name fallback.
+        /// </summary>
+        [Fact]
+        public void APrimitiveThroughObjectUsesItsOwnToStringNotTheGenericDefault()
+        {
+            var runtime = Run(
+                "fun boxedIntToString(): string {\n"
+                    + "  let asObject: object = 5;\n"
+                    + "  return asObject.toString();\n"
+                    + "}\n"
+                    + "fun boxedIntsCompareByValue(): int {\n"
+                    + "  let a: object = 5;\n"
+                    + "  let b: object = 5;\n"
+                    + "  return a.equals(b) ? 1 : 0;\n"
+                    + "}");
+
+            Assert.Equal("5", Text(runtime, "boxedIntToString"));
+            Assert.Equal(1, Int(runtime, "boxedIntsCompareByValue"));
+        }
+
+        /// <summary>Every built-in is declared sealed once it extends object, so nothing may extend it.</summary>
+        [Fact]
+        public void ExtendingABuiltInIsRejected()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(Root + "/game/core/Test.surtr", "class Foo : int { }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidBaseType);
         }
         #endregion
 

@@ -3348,7 +3348,7 @@ namespace Surtr.Compiler.Binding
             }
 
             // §11.1: after the @Value marks are known, every class carrying one gains the value
-            // members it did not declare - structural $equals, combined $hashCode, $toDisplayString -
+            // members it did not declare - structural equals, combined hashCode, toString -
             // as real methods with bound bodies, so the emitter ships them like any other member.
             SynthesizeValueMembers();
 
@@ -5798,7 +5798,15 @@ namespace Surtr.Compiler.Binding
 
         /// <summary>
         /// Gives each <c>@Value</c> class the value members it did not declare (§11.1): structural
-        /// <c>$equals</c>, combined <c>$hashCode</c> and <c>$toDisplayString</c>. Runs after
+        /// <c>equals</c>, combined <c>hashCode</c> and <c>toString</c> - the same real names
+        /// <c>object</c>/<c>ValueType</c> declare, and the same shape <c>EnumMemberSynthesizer</c>
+        /// already uses for an enum's own <c>equals</c>/<c>hashCode</c>/<c>toString</c>: a same-name
+        /// member typed against the class itself, found ahead of the inherited one by ordinary
+        /// member lookup for any statically-typed call, rather than a vtable override (the erased,
+        /// <c>object?</c>-typed signature that would need still leaves the inherited default as the
+        /// only answer a truly polymorphic receiver gets - a boxed value type's identity comparison
+        /// is already structural per <c>SurtrValueComparer</c>, so the gap is display text only).
+        /// Runs after
         /// <see cref="BindAttributes"/> so the mark is known, and creates real methods with bound
         /// bodies so the emitter ships them like any other member — callable, overridable by
         /// declaring one's own, and consistent with the <c>==</c>/<c>!=</c> the same mark turns

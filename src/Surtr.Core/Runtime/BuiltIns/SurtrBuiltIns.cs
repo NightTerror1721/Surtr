@@ -120,10 +120,12 @@ namespace Surtr.Runtime.BuiltIns
         /// The stateless class every enum implicitly extends, between it and <see cref="Object"/>.
         /// </summary>
         /// <remarks>
-        /// Overrides <c>toString</c> with one body shared by every enum, reading the receiver's own
-        /// <see cref="SurtrClass.EnumCases"/> rather than anything synthesised per enum - see
-        /// <see cref="SurtrObjectBuiltIn.DeclareEnum"/>. Not itself a value type: it carries no
-        /// field, so it never needs the flattened layout its concrete subclasses do.
+        /// Declares no members of its own: a concrete enum already gets real, per-case-aware
+        /// <c>equals</c>/<c>hashCode</c>/<c>toString</c> (plus <c>values</c>/<c>of</c>/<c>compareTo</c>)
+        /// from the compiler's own <c>EnumMemberSynthesizer</c>, which predates this hierarchy and
+        /// already handles cases a single shared native body could not - a <c>@Flags</c> value that
+        /// combines several cases, for one. Not itself a value type: it carries no field, so it
+        /// never needs the flattened layout its concrete subclasses do.
         /// </remarks>
         public static readonly SurtrClass Enum;
 
@@ -495,7 +497,6 @@ namespace Surtr.Runtime.BuiltIns
             Enum = DeclareObject("Enum", Object, isAbstract: true);
             ValueType = DeclareObject("ValueType", Object, isAbstract: true);
             SurtrObjectBuiltIn.Declare(BuilderFor(Object, handles));
-            SurtrObjectBuiltIn.DeclareEnum(BuilderFor(Enum, handles));
 
             // The composites use the bare family symbol as their descriptor. It is intentionally
             // not a well-formed descriptor - see the type remarks - and it still reads back the
