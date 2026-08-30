@@ -1,17 +1,27 @@
+native fun stopwatchTimestamp(): float;
+
+
+// A running Stopwatch tracks two things: `_elapsed`, the time banked from every completed
+// start/stop span, and `_startedAt`, the timestamp the current span began at. `elapsed` while
+// running has to add the live span (`stopwatchTimestamp() - _startedAt`) on top of `_elapsed`
+// rather than waiting for `stop()` to fold it in - otherwise reading `elapsed` mid-run (the whole
+// point of a profiler scope still open) always answered zero.
 public class Stopwatch
 {
     private var _elapsed: float;
+    private var _startedAt: float;
     private var _running: bool;
 
     public constructor()
     {
         this._elapsed = 0.0;
+        this._startedAt = 0.0;
         this._running = false;
     }
 
-    public inline elapsed: float
+    public elapsed: float
     {
-        get { return _elapsed; }
+        get { return _running ? _elapsed + (stopwatchTimestamp() - _startedAt) : _elapsed; }
     }
 
     public inline isRunning: bool
@@ -21,42 +31,45 @@ public class Stopwatch
 
     public fun start(): void
     {
+        if (_running) return;
+        _startedAt = stopwatchTimestamp();
         _running = true;
     }
 
     public fun stop(): void
     {
+        if (!_running) return;
+        _elapsed = _elapsed + (stopwatchTimestamp() - _startedAt);
         _running = false;
     }
 
     public fun reset(): void
     {
         _elapsed = 0.0;
+        _startedAt = 0.0;
         _running = false;
     }
 
     public fun restart(): void
     {
         _elapsed = 0.0;
+        _startedAt = stopwatchTimestamp();
         _running = true;
     }
 
     public fun addElapsed(delta: float): void
     {
-        if (_running) _elapsed = _elapsed + delta;
+        _elapsed = _elapsed + delta;
     }
 
-    public inline fun isFasterThan(other: Stopwatch): bool => _elapsed < other._elapsed;
+    public inline fun isFasterThan(other: Stopwatch): bool => elapsed < other.elapsed;
 
-    public inline fun isSlowerThan(other: Stopwatch): bool => _elapsed > other._elapsed;
+    public inline fun isSlowerThan(other: Stopwatch): bool => elapsed > other.elapsed;
 
-    public inline fun getElapsedMilliseconds(): float => _elapsed;
+    public inline fun getElapsedMilliseconds(): float => elapsed;
 
-    public inline fun getElapsedSeconds(): float => _elapsed / 1000.0;
+    public inline fun getElapsedSeconds(): float => elapsed / 1000.0;
 }
-
-
-native fun stopwatchTimestamp(): float;
 
 
 public class ProfilerScope
@@ -129,17 +142,19 @@ public class Profiler
 }
 
 
+// `elapsed` reads straight through to `stopwatch.elapsed` instead of a snapshot taken once at
+// construction - a stored copy is exactly what went stale before (see Plan-Revision-Stdlib.md
+// B2): nothing ever wrote the measured time back into it after `ProfilerScope.dispose()` stopped
+// the watch. A computed property has no "forgot to update" state to fall out of sync with.
 public class ProfilerEntry
 {
     public let label: string;
     public let stopwatch: Stopwatch;
-    public let elapsed: float;
 
     public constructor(label: string)
     {
         this.label = label;
         this.stopwatch = Stopwatch();
-        this.elapsed = 0.0;
         this.stopwatch.start();
     }
 
@@ -147,8 +162,10 @@ public class ProfilerEntry
     {
         this.label = label;
         this.stopwatch = Stopwatch();
-        this.elapsed = elapsed;
+        this.stopwatch.addElapsed(elapsed);
     }
+
+    public elapsed: float { get { return stopwatch.elapsed; } }
 }
 
 
