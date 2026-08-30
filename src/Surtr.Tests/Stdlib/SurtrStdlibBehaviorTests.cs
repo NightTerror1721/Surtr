@@ -99,18 +99,84 @@ namespace Surtr.Tests.Stdlib
             return runtime;
         }
 
-        private static SurtrMethodInfo Function(SurtrRuntime runtime, string name)
+        private static SurtrMethodInfo FunctionIn(SurtrRuntime runtime, string modulePath, string name)
         {
-            Assert.True(runtime.TryGetModule("test", out var module), "No 'test' module was loaded.");
-            Assert.True(module.TryGetMethods(name, out var overloads), $"'test' declares no '{name}'.");
+            Assert.True(runtime.TryGetModule(modulePath, out var module), $"No module '{modulePath}' was loaded.");
+            Assert.True(module.TryGetMethods(name, out var overloads), $"'{modulePath}' declares no '{name}'.");
             return overloads[0];
         }
+
+        private static SurtrMethodInfo Function(SurtrRuntime runtime, string name) => FunctionIn(runtime, "test", name);
 
         private static int Int(SurtrRuntime runtime, string name)
             => runtime.Invoke(Function(runtime, name)).AsInt;
 
         private static bool Bool(SurtrRuntime runtime, string name)
             => runtime.Invoke(Function(runtime, name)).AsBool;
+
+        private static double Float(SurtrRuntime runtime, string name)
+            => runtime.Invoke(Function(runtime, name)).AsFloat;
+
+        private static bool BoolIn(SurtrRuntime runtime, string modulePath, string name)
+            => runtime.Invoke(FunctionIn(runtime, modulePath, name)).AsBool;
+
+        /// <summary>
+        /// Like <see cref="BuildAndLoad"/>, but <paramref name="extraCode"/> is appended directly
+        /// into the named module's own source (<paramref name="intoRelativePath"/>) instead of
+        /// living in a separate `test` module that merely imports it.
+        /// </summary>
+        /// <remarks>
+        /// Needed for Vector2/Vector3/Quaternion: a cross-module call that both takes and returns a
+        /// multi-field value class currently corrupts the emitter's stack accounting ("Operand stack
+        /// underflow") - a compiler bug, tracked separately (see the task chip from this session),
+        /// not a stdlib one. It covers essentially the whole vector/quaternion API (`+`, `-`, `*` by
+        /// scalar, `normalized()`, `lerp`, `rotate`, quaternion composition all take and return one),
+        /// so a driver in its own module - which is what any real caller would be - cannot exercise
+        /// any of it today. Same-module calls are unaffected, which is what this works around: the
+        /// assertion function becomes part of `surtr.math.Vector` itself, so it verifies the actual
+        /// vector/quaternion math independently of that orthogonal bug. Flip callers back to
+        /// <see cref="BuildAndLoad"/> once the compiler fix lands, to also start covering the
+        /// cross-module path for real.
+        /// </remarks>
+        private SurtrRuntime BuildAndLoadWithin(string intoRelativePath, string extraCode, params string[] otherStdlibRelativePaths)
+        {
+            var project = new SurtrProject(Root);
+
+            var (intoModulePath, intoText) = StdlibSource(intoRelativePath);
+            project.AddSourceFile(Root + "/surtr/" + intoRelativePath, intoModulePath, intoText + "\n" + extraCode);
+
+            foreach (string relative in otherStdlibRelativePaths)
+            {
+                var (modulePath, text) = StdlibSource(relative);
+                project.AddSourceFile(Root + "/surtr/" + relative, modulePath, text);
+            }
+
+            var compilation = SurtrCompilation.Create(project);
+            _owned.Add(compilation);
+
+            var binder = compilation.Bind();
+            binder.BindBodies();
+
+            Assert.True(
+                !compilation.HasErrors,
+                "Binding reported: " + string.Join("; ", compilation.Diagnostics.Select(d => d.ToString())));
+
+            var emitter = new ModuleEmitter(compilation, binder);
+
+            Assert.True(
+                emitter.TryEmit(),
+                "Emission reported: " + string.Join("; ", compilation.Diagnostics.Select(d => d.ToString())));
+
+            var runtime = new SurtrRuntime();
+            _owned.Add(runtime);
+
+            SurtrStdlib.RegisterNativeBodies(runtime);
+
+            foreach (var module in emitter.Modules)
+                runtime.LoadModule(module);
+
+            return runtime;
+        }
 
         // ── B1: StringBuilder ────────────────────────────────────────────────
 
@@ -511,6 +577,282 @@ namespace Surtr.Tests.Stdlib
                     + "    return sum == 5;\n"
                     + "}\n",
                 "collections/Collection.surtr", "collections/Queue.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        // ── Fase 5: Angle ─────────────────────────────────────────────────────
+
+        [Fact]
+        public void AngleConvertsBetweenDegreesAndRadians()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.math.Angle;\n"
+                    + "fun run(): bool {\n"
+                    + "    let a = Angle.fromDegrees(180.0);\n"
+                    + "    if (a.radians < 3.14159 || a.radians > 3.14160) return false;\n"
+                    + "    let d = a.degrees;\n"
+                    + "    return d > 179.999 && d < 180.001;\n"
+                    + "}\n",
+                "math/Math.surtr", "math/Angle.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void AngleNormalizedWrapsIntoZeroToTwoPi()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.math.Angle;\n"
+                    + "fun run(): bool {\n"
+                    + "    let a = Angle.fromDegrees(-90.0).normalized();\n"
+                    + "    let d = a.degrees;\n"
+                    + "    return d > 269.999 && d < 270.001;\n"
+                    + "}\n",
+                "math/Math.surtr", "math/Angle.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void AngleOperatorsAndComparison()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.math.Angle;\n"
+                    + "fun run(): bool {\n"
+                    + "    let a = Angle.fromDegrees(30.0);\n"
+                    + "    let b = Angle.fromDegrees(60.0);\n"
+                    + "    let sum = a + b;\n"
+                    + "    if (sum.degrees < 89.999 || sum.degrees > 90.001) return false;\n"
+                    + "    if (!(a < b)) return false;\n"
+                    + "    if (a == b) return false;\n"
+                    + "    return (a * 2.0).degrees > 59.999 && (a * 2.0).degrees < 60.001;\n"
+                    + "}\n",
+                "math/Math.surtr", "math/Angle.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        // ── Fase 5: Vector2 / Vector3 ────────────────────────────────────────
+
+        [Fact]
+        public void Vector2ArithmeticLengthAndDot()
+        {
+            var runtime = BuildAndLoadWithin(
+                "math/Vector.surtr",
+                "fun run(): bool {\n"
+                    + "    let a = Vector2(3.0, 4.0);\n"
+                    + "    if (a.length() < 4.999 || a.length() > 5.001) return false;\n"
+                    + "    let b = a + Vector2(1.0, 1.0);\n"
+                    + "    if (b.x != 4.0 || b.y != 5.0) return false;\n"
+                    + "    let scaled = a * 2.0;\n"
+                    + "    if (scaled.x != 6.0 || scaled.y != 8.0) return false;\n"
+                    + "    return a.dot(a) > 24.999 && a.dot(a) < 25.001;\n"
+                    + "}\n",
+                "math/Math.surtr", "math/Angle.surtr");
+
+            Assert.True(BoolIn(runtime, "surtr.math.Vector", "run"));
+        }
+
+        [Fact]
+        public void Vector2NormalizedHasUnitLength()
+        {
+            var runtime = BuildAndLoadWithin(
+                "math/Vector.surtr",
+                "fun run(): bool {\n"
+                    + "    let n = Vector2(3.0, 4.0).normalized();\n"
+                    + "    return n.length() > 0.999 && n.length() < 1.001;\n"
+                    + "}\n",
+                "math/Math.surtr", "math/Angle.surtr");
+
+            Assert.True(BoolIn(runtime, "surtr.math.Vector", "run"));
+        }
+
+        [Fact]
+        public void Vector3CrossProductIsPerpendicularToBothInputs()
+        {
+            var runtime = BuildAndLoadWithin(
+                "math/Vector.surtr",
+                "fun run(): bool {\n"
+                    + "    let x = Vector3.right;\n"
+                    + "    let y = Vector3.up;\n"
+                    + "    let z = x.cross(y);\n"
+                    + "    if (z.dot(x) < -0.001 || z.dot(x) > 0.001) return false;\n"
+                    + "    if (z.dot(y) < -0.001 || z.dot(y) > 0.001) return false;\n"
+                    + "    return z.length() > 0.999 && z.length() < 1.001;\n"
+                    + "}\n",
+                "math/Math.surtr", "math/Angle.surtr");
+
+            Assert.True(BoolIn(runtime, "surtr.math.Vector", "run"));
+        }
+
+        [Fact]
+        public void Vector3LerpInterpolatesLinearly()
+        {
+            var runtime = BuildAndLoadWithin(
+                "math/Vector.surtr",
+                "fun run(): bool {\n"
+                    + "    let mid = Vector3.lerp(Vector3.zero, Vector3(10.0, 20.0, 30.0), 0.5);\n"
+                    + "    return mid.x == 5.0 && mid.y == 10.0 && mid.z == 15.0;\n"
+                    + "}\n",
+                "math/Math.surtr", "math/Angle.surtr");
+
+            Assert.True(BoolIn(runtime, "surtr.math.Vector", "run"));
+        }
+
+        // ── Fase 5: Quaternion ───────────────────────────────────────────────
+
+        [Fact]
+        public void QuaternionIdentityRotationLeavesAVectorUnchanged()
+        {
+            var runtime = BuildAndLoadWithin(
+                "math/Vector.surtr",
+                "fun run(): bool {\n"
+                    + "    let v = Vector3(1.0, 2.0, 3.0);\n"
+                    + "    let r = Quaternion.identity.rotate(v);\n"
+                    + "    return r.x > 0.999 && r.x < 1.001 && r.y > 1.999 && r.y < 2.001 && r.z > 2.999 && r.z < 3.001;\n"
+                    + "}\n",
+                "math/Math.surtr", "math/Angle.surtr");
+
+            Assert.True(BoolIn(runtime, "surtr.math.Vector", "run"));
+        }
+
+        /// <summary>
+        /// A 180-degree rotation is its own convention-independent case: rotating `right` around
+        /// `forward` by half a turn lands on `-right` under either winding, so this does not depend
+        /// on getting the handedness of the rotation right, only its magnitude.
+        /// </summary>
+        [Fact]
+        public void QuaternionRotates180DegreesCorrectly()
+        {
+            var runtime = BuildAndLoadWithin(
+                "math/Vector.surtr",
+                "fun run(): bool {\n"
+                    + "    let q = Quaternion.fromAxisAngle(Vector3.forward, Angle.fromDegrees(180.0));\n"
+                    + "    let r = q.rotate(Vector3.right);\n"
+                    + "    return r.x > -1.001 && r.x < -0.999 && r.y > -0.001 && r.y < 0.001;\n"
+                    + "}\n",
+                "math/Math.surtr", "math/Angle.surtr");
+
+            Assert.True(BoolIn(runtime, "surtr.math.Vector", "run"));
+        }
+
+        /// <summary>Composing two half-rotations should agree with one full rotation.</summary>
+        [Fact]
+        public void QuaternionCompositionMatchesASingleEquivalentRotation()
+        {
+            var runtime = BuildAndLoadWithin(
+                "math/Vector.surtr",
+                "fun run(): bool {\n"
+                    + "    let axis = Vector3.up;\n"
+                    + "    let half = Quaternion.fromAxisAngle(axis, Angle.fromDegrees(45.0));\n"
+                    + "    let full = Quaternion.fromAxisAngle(axis, Angle.fromDegrees(90.0));\n"
+                    + "    let composed = half * half;\n"
+                    + "    let v = Vector3.right;\n"
+                    + "    let a = composed.rotate(v);\n"
+                    + "    let b = full.rotate(v);\n"
+                    + "    let diff = a - b;\n"
+                    + "    return diff.length() < 0.001;\n"
+                    + "}\n",
+                "math/Math.surtr", "math/Angle.surtr");
+
+            Assert.True(BoolIn(runtime, "surtr.math.Vector", "run"));
+        }
+
+        /// <summary>
+        /// Regression for the cross-module value-class stack bug (see
+        /// <see cref="BuildAndLoadWithin"/>'s remarks and the task chip from this session): a driver
+        /// in its own module, importing `surtr.math.Vector` the way any real caller would, cannot
+        /// even add two vectors together. Pins the current (broken) behaviour until the compiler fix
+        /// lands - flip it to assert success afterwards.
+        /// </summary>
+        [Fact]
+        public void VectorArithmeticFromAnotherModuleCurrentlyCrashesOnTheCompilerStackBug()
+        {
+            // The failure surfaces as a failed emission (an assertion inside BuildAndLoad itself),
+            // not a runtime exception - so the "expected" outcome here is that building this at all
+            // throws, not that a call inside it does.
+            Assert.ThrowsAny<Exception>(() => BuildAndLoad(
+                "import surtr.math.Vector;\n"
+                    + "fun run(): float {\n"
+                    + "    let a = Vector2(1.0, 2.0);\n"
+                    + "    let b = a + Vector2(1.0, 1.0);\n"
+                    + "    return b.x;\n"
+                    + "}\n",
+                "math/Math.surtr", "math/Angle.surtr", "math/Vector.surtr"));
+        }
+
+        // ── Fase 5: Random ───────────────────────────────────────────────────
+
+        [Fact]
+        public void RandomWithTheSameSeedProducesTheSameSequence()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.math.Random;\n"
+                    + "fun run(): bool {\n"
+                    + "    let a = Random(42);\n"
+                    + "    let b = Random(42);\n"
+                    + "    for (var i = 0; i < 20; i++) {\n"
+                    + "        if (a.nextInt() != b.nextInt()) return false;\n"
+                    + "    }\n"
+                    + "    return true;\n"
+                    + "}\n",
+                "math/Random.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void RandomNextIntRespectsItsBounds()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.math.Random;\n"
+                    + "fun run(): bool {\n"
+                    + "    let r = Random(1);\n"
+                    + "    for (var i = 0; i < 500; i++) {\n"
+                    + "        let n = r.nextInt(10);\n"
+                    + "        if (n < 0 || n >= 10) return false;\n"
+                    + "    }\n"
+                    + "    for (var i = 0; i < 500; i++) {\n"
+                    + "        let n = r.nextInt(5, 15);\n"
+                    + "        if (n < 5 || n >= 15) return false;\n"
+                    + "    }\n"
+                    + "    return true;\n"
+                    + "}\n",
+                "math/Random.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void RandomNextFloatIsWithinZeroToOne()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.math.Random;\n"
+                    + "fun run(): bool {\n"
+                    + "    let r = Random(7);\n"
+                    + "    for (var i = 0; i < 500; i++) {\n"
+                    + "        let f = r.nextFloat();\n"
+                    + "        if (f < 0.0 || f >= 1.0) return false;\n"
+                    + "    }\n"
+                    + "    return true;\n"
+                    + "}\n",
+                "math/Random.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void RandomWithoutASeedIsUnpredictableButUsable()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.math.Random;\n"
+                    + "fun run(): bool {\n"
+                    + "    let r = Random();\n"
+                    + "    let n = r.nextInt(100);\n"
+                    + "    return n >= 0 && n < 100;\n"
+                    + "}\n",
+                "math/Random.surtr");
 
             Assert.True(Bool(runtime, "run"));
         }
