@@ -2668,8 +2668,24 @@ namespace Surtr.Compiler.CodeGen
 
             if (bare.TypeKind == TypeSymbolKind.ValueClass)
             {
-                Code.CastTo(Descriptors.EmitBoxedForm((NamedTypeSymbol)bare));
-                Code.Unbox();
+                // A single-field value class (byte, say) erases to the field it wraps (§2.9), so
+                // its unboxed form is bit-for-bit its wrapped primitive - the same ambiguity
+                // `UnboxDynamic`'s primitive branch below already reads by tag rather than by a
+                // static type. A `CastTo` + `Unbox` pair here used to insist the value already be
+                // boxed, which held only as long as everywhere a T-typed value crossed into a
+                // collection's own raw storage also boxed it back on the way out - and one writer
+                // doesn't: `UnboxIfStillErased` (its own doc comment) deliberately keeps a
+                // generic body's array/dict storage raw wherever the concrete instantiation might
+                // be a true primitive, which is indistinguishable from this value class at rest.
+                // Reading it back with a strict cast then threw `SurtrExecutionException: 'int'
+                // cannot be cast to 'byte'` on perfectly correct code (B10,
+                // docs/Plan-Revision-Stdlib.md §6.3b) - the class was never wrong, the check was
+                // asking a question storage doesn't promise an answer to. `UnboxDynamic` asks
+                // instead "is this already a reference": boxed, it unwraps (any class - the type
+                // checker already settled what this call site expects, so there is nothing left
+                // to verify at run time); raw, it is already exactly the field this class wraps,
+                // so it is left alone rather than reboxed and re-read.
+                Code.UnboxDynamic();
                 return;
             }
 

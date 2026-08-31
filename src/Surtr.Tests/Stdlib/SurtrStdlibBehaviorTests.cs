@@ -1878,6 +1878,65 @@ namespace Surtr.Tests.Stdlib
             Assert.Equal(13123, Int(runtime, "run"));
         }
 
+        /// <summary>
+        /// Regression for B10 (docs/Plan-Revision-Stdlib.md §6.3b), now fixed:
+        /// <c>T[]</c>/<c>List&lt;T&gt;.sortNatural()</c> (no comparator, for a
+        /// <c>T : IComparable&lt;T&gt;</c>) with <c>T</c> a single-field <c>value class</c>
+        /// (<c>byte</c>). Before the fix, <c>List&lt;byte&gt;.get()</c> after a round trip through
+        /// the list's own generic storage threw <c>SurtrExecutionException: 'int' cannot be cast to
+        /// 'byte'</c> - confirmed root cause was <c>MethodBodyEmitter.Unerase</c>'s single-field
+        /// value-class branch insisting the value already be boxed, which does not hold once
+        /// <c>UnboxIfStillErased</c> (B8) has legitimately kept it raw to match a concretely-typed
+        /// collection's storage. <c>int[]</c>/<c>List&lt;int&gt;</c> alongside the <c>byte</c> cases
+        /// pin the fix does not regress the ordinary primitive path.
+        /// </summary>
+        [Fact]
+        public void ListTSortNaturalAndArraySortNaturalWorkWithAValueClassElement()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Collection;\n"
+                    + "import surtr.collections.List;\n"
+                    + "import surtr.collections.Set;\n"
+                    + "import surtr.collections.Map;\n"
+                    + "import surtr.core.byte;\n"
+                    + "fun runIntArray(): int[] {\n"
+                    + "  var arr: int[] = [3, 1, 2];\n"
+                    + "  arr.sortNatural();\n"
+                    + "  return arr;\n"
+                    + "}\n"
+                    + "fun runIntList(): int {\n"
+                    + "  var lst = List<int>();\n"
+                    + "  lst.add(3); lst.add(1); lst.add(2);\n"
+                    + "  lst.sortNatural();\n"
+                    + "  return lst.get(0) * 100 + lst.get(1) * 10 + lst.get(2);\n"
+                    + "}\n"
+                    + "fun runByteArray(): byte[] {\n"
+                    + "  var arr: byte[] = [byte(3), byte(1), byte(2)];\n"
+                    + "  arr.sortNatural();\n"
+                    + "  return arr;\n"
+                    + "}\n"
+                    + "fun runByteList(): int {\n"
+                    + "  var lst = List<byte>();\n"
+                    + "  lst.add(byte(3)); lst.add(byte(1)); lst.add(byte(2));\n"
+                    + "  lst.sortNatural();\n"
+                    + "  return lst.get(0).toInt() * 100 + lst.get(1).toInt() * 10 + lst.get(2).toInt();\n"
+                    + "}\n",
+                "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr", "collections/Map.surtr", "core/byte.surtr");
+
+            var intArrayResult = runtime.Resolve<SurtrArray>(runtime.Invoke(Function(runtime, "runIntArray")))!;
+            Assert.Equal(new[] { 1, 2, 3 }, new[] { intArrayResult[0].AsInt, intArrayResult[1].AsInt, intArrayResult[2].AsInt });
+
+            Assert.Equal(123, Int(runtime, "runIntList"));
+
+            var byteArrayResult = runtime.Resolve<SurtrArray>(runtime.Invoke(Function(runtime, "runByteArray")))!;
+            var sortedByteValues = new[] { byteArrayResult[0], byteArrayResult[1], byteArrayResult[2] }
+                .Select(v => v.IsReference ? runtime.Resolve<SurtrBoxed>(v)!.BoxedValue.AsInt : v.AsInt)
+                .ToArray();
+            Assert.Equal(new[] { 1, 2, 3 }, sortedByteValues);
+
+            Assert.Equal(123, Int(runtime, "runByteList"));
+        }
+
         // ── Fase 8, §6.2/O2-O3 + §6.3/P7: toDisplayString() on collections ─────────────
 
         [Fact]

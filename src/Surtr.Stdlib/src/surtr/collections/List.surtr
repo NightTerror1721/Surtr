@@ -517,24 +517,29 @@ public class ReadOnlyList<T> : IReadOnlyList<T>
     public inline fun iterate(): IIterator<T> => _items.iterate();
 }
 
-// NOTE: a `T[]`/`List<T>.sortNatural()` extension (no comparator, for `T : IComparable<T>`) was
-// attempted here and pulled - it silently produces the wrong order (and, in `List<T>`'s case, a hard
-// `SurtrExecutionException: 'int' cannot be cast to 'byte'` crash) whenever `T` is a single-field
-// value class such as `byte`. Root cause (docs/Plan-Revision-Stdlib.md B10): an array *concretely*
-// typed `byte[]` at its construction site stores its single-field elements unboxed, matching `byte`'s
-// own erasure rule (§2.9, "a one-field value class... erases to the field it wraps"); crossing that
-// same array into an extension method's own `self: T[]` (T erased, since an extension declares its
-// own type parameter, §15.4) does not re-box it, so the native `array.sort(comparator)`'s comparator
-// callback (`SurtrCompositeBuiltIns.Compare`, which invokes the closure via `SurtrValue.FromRaw` on
-// whatever the array's raw storage already holds) hands the closure - itself compiled against the
-// erased `T`, which expects a boxed reference - a bare unboxed int instead. `Sequence<T>.sortedNatural()`
-// (Sequence.surtr) does NOT hit this: its backing array is built fresh, one `push()` at a time, from
-// *inside* the already-erased generic body, so each element is boxed on the way in. `Sequence<T>.
-// minNatural()/maxNatural()` never call into the native sort at all - they walk `IIterator<T>` and
-// invoke the comparator through ordinary Surtr call bytecode, not `array.sort`'s C# `Compare()` - so
-// they are unaffected either way. Confirmed with `int[]` (built-in, not a value class): identical code
-// sorts correctly, isolating the bug to a value-class array crossing this specific boundary.
-// Re-propose `T[]`/`List<T>.sortNatural()` once B10 is fixed in the compiler/runtime, not before.
+// B10 (docs/Plan-Revision-Stdlib.md §6.3b) is fixed: `T[]`/`List<T>.sortNatural()` (no comparator,
+// for `T : IComparable<T>`) were pulled for a session because `List<T>`'s own generic storage lost a
+// single-field value class's identity across a write/read round trip - confirmed by instrumenting the
+// emitter and reading the real bytecode (`Compiler-CodeGen/MethodBodyEmitter.Unerase`), not by the
+// hypothesis first written here (which named the wrong boundary; see the doc for the corrected root
+// cause). Re-added now with a real regression test
+// (`ListTSortNaturalAndArraySortNaturalWorkWithAValueClassElement`,
+// `src/Surtr.Tests/Stdlib/SurtrStdlibBehaviorTests.cs`) covering exactly the `byte` case that broke.
+public extension<T: IComparable<T>> T[]
+{
+    fun sortNatural(self: T[]): void
+    {
+        self.sort((a, b) => a.compareTo(b));
+    }
+}
+
+public extension<T: IComparable<T>> List<T>
+{
+    fun sortNatural(self: List<T>): void
+    {
+        self.sort((a, b) => a.compareTo(b));
+    }
+}
 
 // Fase 8, §6.2/O3 + §6.3/P7: a debug representation, once `T` is known to have a real `toString()`
 // (`<T : object>`, §4.8) to call. Named `toDisplayString` rather than overriding `toString()`
