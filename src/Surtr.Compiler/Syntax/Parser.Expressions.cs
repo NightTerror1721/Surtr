@@ -347,7 +347,12 @@ namespace Surtr.Compiler.Syntax
 
                     // Everything a type can be written with: a name, a qualification, a separator,
                     // `?`, and the bracket forms of an array, a dict, a tuple and a closure.
+                    // `generator` is included because it is the one type name that also lexes as
+                    // its own keyword (§1.2, ParseCoreType) — nested inside another type argument
+                    // list, as in `array<generator<float>>`, it is exactly as valid a type there as
+                    // anywhere else, and this scan has to accept whatever ParseType would.
                     case TokenType.Identifier:
+                    case TokenType.KeywordGenerator:
                     case TokenType.Dot:
                     case TokenType.Comma:
                     case TokenType.Question:
@@ -734,7 +739,10 @@ namespace Surtr.Compiler.Syntax
                         return depth == 0 && reader.Peek(offset + 1).Type == TokenType.RightParen;
                     }
 
+                    // Same allowed-token set as LooksLikeTypeArgumentList, including `generator`
+                    // for the same reason (a nested `generator<T>` type argument).
                     case TokenType.Identifier:
+                    case TokenType.KeywordGenerator:
                     case TokenType.Dot:
                     case TokenType.Comma:
                     case TokenType.Question:

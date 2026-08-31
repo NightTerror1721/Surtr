@@ -1262,5 +1262,33 @@ namespace Surtr.Tests.Compiler.Syntax
         /// <summary>Where the expression under test begins inside the wrapper it is parsed in.</summary>
         private static int LeadingOffset(string expression)
             => $"fun f(): void {{ let x = ".Length;
+
+        /// <summary>
+        /// Regression for B12 (docs/Plan-Revision-Stdlib.md §6.3d): <c>generator&lt;T&gt;</c> as a
+        /// bare type annotation already parsed, but nested inside another type's own
+        /// <c>&lt;...&gt;</c> - <c>array&lt;generator&lt;float&gt;&gt;(n)</c>,
+        /// <c>List&lt;generator&lt;float&gt;&gt;()</c> - failed with <c>SURTR2003: Expected an
+        /// expression, found KeywordGenerator</c>. Root cause: a generic call in expression
+        /// position is disambiguated from a chain of <c>&lt;</c>/<c>&gt;</c> comparisons by a
+        /// lookahead scan (<c>Parser.LooksLikeTypeArgumentList</c>/
+        /// <c>Parser.LooksLikeGenericTypeOnlyAhead</c>, the latter used by <c>typeof</c>),
+        /// and neither scan's allow-list of "tokens a type can be written with" included
+        /// <c>KeywordGenerator</c> - the one type name that also lexes as its own keyword (§1.2) -
+        /// even though the real type parser (<c>ParseCoreType</c>) already accepted it anywhere
+        /// else. Hitting <c>generator</c> mid-scan made the lookahead give up and conclude the
+        /// <c>&lt;</c> was a comparison, so the parser then tried to read <c>generator</c> as an
+        /// expression operand and failed.
+        /// </summary>
+        [Fact]
+        public void GeneratorTypeArgumentNestsInsideAnotherGenericTypeArgumentList()
+        {
+            ParseWithoutErrors("fun f(): void { let x = array<generator<float>>(4); }");
+            ParseWithoutErrors("fun f(): void { let x = List<generator<float>>(); }");
+            ParseWithoutErrors("fun f(): generator<float>[] { let x: generator<float>[] = array<generator<float>>(4); return x; }");
+
+            // The same allow-list backs `typeof`'s own lookahead - not part of the reported bug,
+            // but the identical mechanism, so pinned here too.
+            ParseWithoutErrors("fun f(): bool { return typeof(int) == typeof(float); }");
+        }
     }
 }

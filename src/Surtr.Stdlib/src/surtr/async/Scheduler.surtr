@@ -10,26 +10,25 @@
 // "wait one frame". The coroutine returning (falling off the end, or an explicit `return;`) retires
 // it from the scheduler with no special call needed.
 //
-// Stored as `unknown[]`, cast back to `generator<float>` on read, rather than `generator<float>[]`
-// or `List<generator<float>>`: the parser does not currently accept `generator<T>` nested inside
-// another type's own `<...>` (confirmed: `array<generator<float>>(n)` and `List<generator<float>>`
-// both fail to parse, "Expected an expression, found KeywordGenerator", while a bare `x:
-// generator<float>` parameter/local/return works fine) - a real, narrow parser gap, not something
-// this file works around by choice. `unknown[]` sidesteps it entirely since `generator<float>`
-// only ever appears here as a standalone cast target, never nested inside another `<...>`.
+// Stored as `generator<float>[]` directly (B12, docs/Plan-Revision-Stdlib.md §6.3d, fixed): earlier
+// sessions worked around a parser gap that rejected `generator<T>` nested inside another type's own
+// `<...>` - `array<generator<float>>(n)` failed to parse, "Expected an expression, found
+// KeywordGenerator" - by storing `unknown[]` and casting back on every read. The lookahead that
+// disambiguates a generic call from a chain of comparisons did not know `generator` could appear
+// mid-scan; it does now, so the array can name its real element type.
 //
 // Backed by two parallel arrays with swap-removal: a scheduler's iteration order across coroutines
 // is never meaningful (each one only cares about its own wait timer), so an O(1) swap-with-last on
 // completion costs nothing a shifting removal would have bought.
 public class Scheduler
 {
-    private var _coroutines: unknown[];
+    private var _coroutines: generator<float>[];
     private var _remaining: float[];
     private var _count: int;
 
     public constructor()
     {
-        this._coroutines = array<unknown>(4);
+        this._coroutines = array<generator<float>>(4);
         this._remaining = array<float>(4);
         this._count = 0;
     }
@@ -42,7 +41,7 @@ public class Scheduler
         if (_count == _coroutines.length)
         {
             let newCapacity = _count == 0 ? 4 : _count * 2;
-            var newCoroutines = array<unknown>(newCapacity);
+            var newCoroutines = array<generator<float>>(newCapacity);
             var newRemaining = array<float>(newCapacity);
             for (var i = 0; i < _count; i++)
             {
@@ -73,7 +72,7 @@ public class Scheduler
                 continue;
             }
 
-            let coroutine = _coroutines[i] as generator<float>;
+            let coroutine = _coroutines[i];
             if (coroutine.moveNext())
             {
                 _remaining[i] = coroutine.current;
@@ -92,7 +91,7 @@ public class Scheduler
     public fun stopAll(): void
     {
         for (var i = 0; i < _count; i++)
-            (_coroutines[i] as generator<float>).dispose();
+            _coroutines[i].dispose();
         _count = 0;
     }
 }
