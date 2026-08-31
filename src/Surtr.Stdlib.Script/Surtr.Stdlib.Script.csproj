@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <RootNamespace>Surtr.Stdlib.Script</RootNamespace>
+    <AssemblyName>Surtr.Stdlib.Script</AssemblyName>
+
+    <!-- Deliberately its OWN assembly, separate from Surtr.Stdlib: Surtr.Stdlib.csproj carries no
+         reference to Surtr.Compiler on purpose (see its own remarks) so that every ordinary consumer
+         - a Unity game shipping the base stdlib - never pays for bundling the whole front end. Only
+         a host that explicitly wants dynamic compilation/eval adds this project too. -->
+    <IsPackable>false</IsPackable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Surtr.Core\Surtr.Core.csproj" />
+    <ProjectReference Include="..\Surtr.Compiler\Surtr.Compiler.csproj" />
+  </ItemGroup>
+
+</Project>
