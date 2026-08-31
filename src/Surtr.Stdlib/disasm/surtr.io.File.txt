@@ -1,0 +1,48 @@
+module surtr.io.File
+  constants: 0   types: 0   fields: 0   methods: 11   modules: 0
+
+  method table:
+    #0  fileExists(string) -> bool
+    #1  directoryExists(string) -> bool
+    #2  fileDelete(string) -> void
+    #3  createDirectory(string) -> void
+    #4  fileReadAllText(string) -> string
+    #5  fileWriteAllText(string, string) -> void
+    #6  fileAppendAllText(string, string) -> void
+    #7  fileReadAllBytes(string) -> bytes
+    #8  fileWriteAllBytes(string, bytes) -> void
+    #9  listFiles(string) -> string[]
+    #10  listDirectories(string) -> string[]
+
+[public] static native createDirectory(path: string): void
+  ; native link="surtr.io.File.createDirectory" unbound declared
+
+[public] static native directoryExists(path: string): bool
+  ; native link="surtr.io.File.directoryExists" unbound declared
+
+[public] static native fileAppendAllText(path: string, text: string): void
+  ; native link="surtr.io.File.fileAppendAllText" unbound declared
+
+[public] static native fileDelete(path: string): void
+  ; native link="surtr.io.File.fileDelete" unbound declared
+
+[public] static native fileExists(path: string): bool
+  ; native link="surtr.io.File.fileExists" unbound declared
+
+[public] static native fileReadAllBytes(path: string): bytes
+  ; native link="surtr.io.File.fileReadAllBytes" unbound declared
+
+[public] static native fileReadAllText(path: string): string
+  ; native link="surtr.io.File.fileReadAllText" unbound declared
+
+[public] static native fileWriteAllBytes(path: string, data: bytes): void
+  ; native link="surtr.io.File.fileWriteAllBytes" unbound declared
+
+[public] static native fileWriteAllText(path: string, text: string): void
+  ; native link="surtr.io.File.fileWriteAllText" unbound declared
+
+[public] static native listDirectories(path: string): string[]
+  ; native link="surtr.io.File.listDirectories" unbound declared
+
+[public] static native listFiles(path: string): string[]
+  ; native link="surtr.io.File.listFiles" unbound declared

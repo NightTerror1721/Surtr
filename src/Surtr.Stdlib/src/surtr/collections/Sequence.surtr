@@ -246,6 +246,38 @@ public value class Sequence<T> : IIterable<T>
     public inline fun iterate(): IIterator<T> => _provider();
 }
 
+// Fase 8, §6.2/O4 + §6.3/P6: once a T is bounded by the built-in IComparable<T>, min()/max()/sorted()
+// need no comparator written out by hand - the same trade §6.2/O4 makes for List<T>.sortNatural().
+// Named minNatural/maxNatural/sortedNatural rather than second overloads of min/max/sorted:
+// Sequence<T> already declares real (non-extension) members by those names, and a real member of a
+// name blocks every extension of that same name on the type regardless of arity - the explicit-
+// comparator forms above stay exactly as useful as before for a T with no natural order.
+public extension<T: IComparable<T>> Sequence<T>
+{
+    fun minNatural(self: Sequence<T>): T? => self.min((a, b) => a.compareTo(b));
+
+    fun maxNatural(self: Sequence<T>): T? => self.max((a, b) => a.compareTo(b));
+
+    fun sortedNatural(self: Sequence<T>): Sequence<T> => self.sorted((a, b) => a.compareTo(b));
+}
+
+// Fase 8, §6.2/O2/O3: once T is bounded by object, a join/display form needs no selector written
+// out by hand - it can call the real toString() every object has. Named toDisplayString rather than
+// an arity overload of joinToString: Sequence<T> already declares a real (non-extension)
+// joinToString(separator, selector) instance method, and a real member of a name blocks every
+// extension of that same name on the type regardless of arity - the same rule that makes
+// List<T>.toDisplayString() a new name rather than an override of the inherited toString().
+public extension<T: object> Sequence<T>
+{
+    /// A debug representation, e.g. `[1, 2, 3]` - the same shape List<T>.toDisplayString() gives.
+    fun toDisplayString(self: Sequence<T>): string => "[" + self.joinToString(", ", (x) => x.toString()) + "]";
+}
+
+public extension<T: object> IIterable<T>
+{
+    fun toDisplayString(self: IIterable<T>): string => self.asSequence().toDisplayString();
+}
+
 // int/float only, rather than members of Sequence<T> itself: summing/averaging needs a concrete
 // numeric element type to add, and this language has no numeric-trait constraint to ask for one
 // generically - two concrete extensions is the same trade sorted()/min()/max() avoid by taking an

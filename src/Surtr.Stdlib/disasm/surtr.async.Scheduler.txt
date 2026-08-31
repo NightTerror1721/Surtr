@@ -1,0 +1,286 @@
+module surtr.async.Scheduler
+  constants: 1   types: 3   fields: 3   methods: 14   modules: 0
+
+  type table:
+    #0  unknown[]
+    #1  float[]
+    #2  generator<float>
+
+  field table:
+    #0  surtr.async.Scheduler:Scheduler._coroutines: unknown[]
+    #1  surtr.async.Scheduler:Scheduler._remaining: float[]
+    #2  surtr.async.Scheduler:Scheduler._count: int
+
+  method table:
+    #0  surtr.async.Scheduler:Scheduler.ctor() -> void
+    #1  surtr.async.Scheduler:Scheduler.get_activeCount() -> int
+    #2  surtr.async.Scheduler:Scheduler.start(generator<float>) -> void
+    #3  surtr.async.Scheduler:Scheduler.update(float) -> void
+    #4  surtr.async.Scheduler:Scheduler.stopAll() -> void
+    #5  delay(float, () -> void) -> generator<float>
+    #6  $generator$delay$0(float, () -> void) -> void
+    #7  repeatEvery(float, () -> void) -> generator<float>
+    #8  $generator$repeatEvery$0(float, () -> void) -> void
+    #9  repeatTimes(float, int, () -> void) -> generator<float>
+    #10  $generator$repeatTimes$0(float, int, () -> void) -> void
+    #11  generator<>.moveNext() -> bool
+    #12  generator<>.get_current() -> T0
+    #13  generator<>.dispose() -> void
+
+[private] static $generator$delay$0(seconds: float, action: () -> void): void
+  ; entry 1, locals 2, stack 1, code 0009..0010
+    0009  Ldl0
+    000A  Yield
+    000B  Ldl1
+    000C  InvokeClosure args=0 ret=0
+    000F  ReturnVoid
+
+[private] static $generator$repeatEvery$0(interval: float, action: () -> void): void
+  ; entry 3, locals 2, stack 1, code 0019..0023
+  L0:
+    0019  Ldl1
+    001A  InvokeClosure args=0 ret=0
+    001D  Ldl0
+    001E  Yield
+    001F  JP -9 -> L0 (0019)
+    0022  ReturnVoid
+
+[private] static $generator$repeatTimes$0(interval: float, times: int, action: () -> void): void
+  ; entry 5, locals 4, stack 2, code 002D..0042
+    002D  PushI8 0
+    002F  Stl3
+    0030  Ldl3
+    0031  Ldl1
+    0032  JPGE +12 -> L1 (0041)
+  L0:
+    0035  Ldl2
+    0036  InvokeClosure args=0 ret=0
+    0039  Ldl0
+    003A  Yield
+    003B  ForRangeNextLT 3 1 -> L0 (0035)
+  L1:
+    0041  ReturnVoid
+
+[public] static delay(seconds: float, action: () -> void): generator<float>
+  ; entry 0, locals 2, stack 2, code 0000..0009
+    0000  Ldl0
+    0001  Ldl1
+    0002  GenNew 6 ($generator$delay$0)  2 (generator<float>) args=2
+    0008  ReturnValue
+
+[public] static repeatEvery(interval: float, action: () -> void): generator<float>
+  ; entry 2, locals 2, stack 2, code 0010..0019
+    0010  Ldl0
+    0011  Ldl1
+    0012  GenNew 8 ($generator$repeatEvery$0)  2 (generator<float>) args=2
+    0018  ReturnValue
+
+[public] static repeatTimes(interval: float, times: int, action: () -> void): generator<float>
+  ; entry 4, locals 3, stack 3, code 0023..002D
+    0023  Ldl0
+    0024  Ldl1
+    0025  Ldl2
+    0026  GenNew 10 ($generator$repeatTimes$0)  2 (generator<float>) args=3
+    002C  ReturnValue
+
+class Scheduler : surtr:object  [public]
+  [private] field _coroutines: unknown[]
+  [private] field _count: int
+  [private] field _remaining: float[]
+
+  [public] property activeCount: int { get; }
+    get:
+      ; entry 7, locals 1, stack 1, code 005F..0064
+        005F  Ldl0
+        0060  FieldGet 2 (_count)
+        0063  ReturnValue
+
+  [public] ctor (): void
+    ; entry 6, locals 1, stack 2, code 0042..005F
+      0042  Ldl0
+      0043  ArrNewX 0 (unknown[]) size=4
+      004A  FieldSet 0 (_coroutines)
+      004D  Ldl0
+      004E  ArrNewX 1 (float[]) size=4
+      0055  FieldSet 1 (_remaining)
+      0058  Ldl0
+      0059  PushI8 0
+      005B  FieldSet 2 (_count)
+      005E  ReturnVoid
+
+  [public] start(coroutine: generator<float>): void
+    ; entry 8, locals 6, stack 4, code 0064..00DE
+      0064  Ldl0
+      0065  FieldGet 2 (_count)
+      0068  Ldl0
+      0069  FieldGet 0 (_coroutines)
+      006C  ArrLen
+      006D  JPNE +78 -> L4 (00BE)
+      0070  Ldl0
+      0071  FieldGet 2 (_count)
+      0074  PushI8 0
+      0076  EQ
+      0077  JPZ +5 -> L0 (007F)
+      007A  PushI8 4
+      007C  JP +7 -> L1 (0086)
+    L0:
+      007F  Ldl0
+      0080  FieldGet 2 (_count)
+      0083  PushI8 2
+      0085  Mul
+    L1:
+      0086  Stl2
+      0087  Ldl2
+      0088  ArrNew 0 (unknown[])
+      008B  Stl3
+      008C  Ldl2
+      008D  ArrNew 1 (float[])
+      0090  Stl4
+      0091  PushI8 0
+      0093  Stl5
+    L2:
+      0094  Ldl5
+      0095  Ldl0
+      0096  FieldGet 2 (_count)
+      0099  JPGE +24 -> L3 (00B4)
+      009C  Ldl3
+      009D  Ldl5
+      009E  Ldl0
+      009F  FieldGet 0 (_coroutines)
+      00A2  Ldl5
+      00A3  ArrGet
+      00A4  ArrSet
+      00A5  Ldl4
+      00A6  Ldl5
+      00A7  Ldl0
+      00A8  FieldGet 1 (_remaining)
+      00AB  Ldl5
+      00AC  ArrGet
+      00AD  ArrSet
+      00AE  IncLocal 5 by 1
+      00B1  JP -32 -> L2 (0094)
+    L3:
+      00B4  Ldl0
+      00B5  Ldl3
+      00B6  FieldSet 0 (_coroutines)
+      00B9  Ldl0
+      00BA  Ldl4
+      00BB  FieldSet 1 (_remaining)
+    L4:
+      00BE  Ldl0
+      00BF  FieldGet 0 (_coroutines)
+      00C2  Ldl0
+      00C3  FieldGet 2 (_count)
+      00C6  Ldl1
+      00C7  ArrSet
+      00C8  Ldl0
+      00C9  FieldGet 1 (_remaining)
+      00CC  Ldl0
+      00CD  FieldGet 2 (_count)
+      00D0  Ldc0
+      00D1  ArrSet
+      00D2  Ldl0
+      00D3  Ldl0
+      00D4  FieldGet 2 (_count)
+      00D7  PushI8 1
+      00D9  Add
+      00DA  FieldSet 2 (_count)
+      00DD  ReturnVoid
+
+  [public] stopAll(): void
+    ; entry 10, locals 2, stack 2, code 0157..017D
+      0157  PushI8 0
+      0159  Stl1
+    L0:
+      015A  Ldl1
+      015B  Ldl0
+      015C  FieldGet 2 (_count)
+      015F  JPGE +20 -> L1 (0176)
+      0162  Ldl0
+      0163  FieldGet 0 (_coroutines)
+      0166  Ldl1
+      0167  ArrGet
+      0168  Cast 2 (generator<float>)
+      016B  InvokeVirtual 13 (dispose) args=1 ret=0
+      0170  IncLocal 1 by 1
+      0173  JP -28 -> L0 (015A)
+    L1:
+      0176  Ldl0
+      0177  PushI8 0
+      0179  FieldSet 2 (_count)
+      017C  ReturnVoid
+
+  [public] update(deltaTime: float): void
+    ; entry 9, locals 5, stack 4, code 00DE..0157
+      00DE  PushI8 0
+      00E0  Stl2
+    L0:
+      00E1  Ldl2
+      00E2  Ldl0
+      00E3  FieldGet 2 (_count)
+      00E6  JPGE +109 -> L4 (0156)
+      00E9  Ldl0
+      00EA  FieldGet 1 (_remaining)
+      00ED  Ldl2
+      00EE  ArrGet
+      00EF  Ldl1
+      00F0  FSub
+      00F1  Stl3
+      00F2  Ldl3
+      00F3  Ldc0
+      00F4  JPFLE +13 -> L1 (0104)
+      00F7  Ldl0
+      00F8  FieldGet 1 (_remaining)
+      00FB  Ldl2
+      00FC  Ldl3
+      00FD  ArrSet
+      00FE  IncLocal 2 by 1
+      0101  JP -35 -> L0 (00E1)
+    L1:
+      0104  Ldl0
+      0105  FieldGet 0 (_coroutines)
+      0108  Ldl2
+      0109  ArrGet
+      010A  Cast 2 (generator<float>)
+      010D  Stl4
+      010E  Ldl4
+      010F  InvokeVirtual 11 (moveNext) args=1 ret=1
+      0114  JPZ +19 -> L2 (012A)
+      0117  Ldl0
+      0118  FieldGet 1 (_remaining)
+      011B  Ldl2
+      011C  Ldl4
+      011D  InvokeVirtual 12 (get_current) args=1 ret=1
+      0122  UnboxDynamic
+      0123  ArrSet
+      0124  IncLocal 2 by 1
+      0127  JP +41 -> L3 (0153)
+    L2:
+      012A  Ldl0
+      012B  Ldl0
+      012C  FieldGet 2 (_count)
+      012F  PushI8 1
+      0131  Sub
+      0132  FieldSet 2 (_count)
+      0135  Ldl0
+      0136  FieldGet 0 (_coroutines)
+      0139  Ldl2
+      013A  Ldl0
+      013B  FieldGet 0 (_coroutines)
+      013E  Ldl0
+      013F  FieldGet 2 (_count)
+      0142  ArrGet
+      0143  ArrSet
+      0144  Ldl0
+      0145  FieldGet 1 (_remaining)
+      0148  Ldl2
+      0149  Ldl0
+      014A  FieldGet 1 (_remaining)
+      014D  Ldl0
+      014E  FieldGet 2 (_count)
+      0151  ArrGet
+      0152  ArrSet
+    L3:
+      0153  JP -117 -> L0 (00E1)
+    L4:
+      0156  ReturnVoid

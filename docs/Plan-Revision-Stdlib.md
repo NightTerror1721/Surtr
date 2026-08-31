@@ -1,6 +1,16 @@
 # Plan-Revision-Stdlib — Auditoría de `src/Surtr.Stdlib` y propuestas
 
-> **Estado:** Fases 0-4 completas (B1-B4, D1-D5, C1-C3, E1). Fases 5-7 completas. `Angle` y `Random`
+> **Estado (actualizado):** Fases 0-7 completas (ver más abajo). **Fase 8 — auditoría posterior a la
+> jerarquía `object`/`Enum`/`ValueType` (§6) — implementada** (§6.4): de las diez propuestas más las
+> tres piezas añadidas sobre la marcha (Scheduler de corrutinas, `surtr.io.File`, compilación
+> dinámica/`eval` vía el proyecto nuevo `Surtr.Stdlib.Script`), todo salvo P2 (excluido a petición),
+> P3 (JSON, sin tiempo) y P8 (sin investigar) quedó implementado y verificado compilando y
+> ejecutando contra el runtime real. Cuatro bugs/límites nuevos de compilador o runtime descubiertos
+> en el camino (B10, B11, B12, y un límite de `SurtrRuntime.Invoke` con argumentos ya boxeados) —
+> ninguno corregido, toda la superficie afectada retirada o evitada antes de comitear nada roto. Ver
+> §6.4 para el detalle completo de qué se implementó y qué quedó fuera.
+>
+> **Estado (histórico, Fases 0-7):** Fases 0-4 completas (B1-B4, D1-D5, C1-C3, E1). Fases 5-7 completas. `Angle` y `Random`
 > terminados y utilizables; `Vector2`/`Vector3`/`Quaternion` escritos, matemáticamente correctos,
 > probados y ahora también **utilizables por un llamador real entre módulos** — B6 (§2.6), que lo
 > bloqueaba, está corregido. Fase 6: `PriorityQueue<T>` y `Map<K,V>` ambas completas y utilizables de
@@ -1036,3 +1046,419 @@ Preguntas que siguen abiertas para cuando se retome cada fase:
 - **Fase 5:** confirmar alcance exacto de la superficie de `Vector2`/`Vector3`/`Quaternion`/`Angle`
   antes de diseñar (¿se incluye `Vector4`/`Color`/`Rect` ya, o se dejan para después como sugiere
   §3.1?).
+
+---
+
+## 6. Fase 8 — auditoría tras la jerarquía `object`/`Enum`/`ValueType` (optimización + expansión)
+
+Disparada por una pregunta directa: con `object` como raíz real de todo (`6a31338`
+`feat(runtime): add a real object/Enum/ValueType root hierarchy`, y la cadena que lo completa —
+`d865828`, `9f82f5b`, `76e076c`, `9b8de0b` `feat(runtime): expose equals/hashCode/toString on
+SurtrObject, wire into the untyped comparer fallback` — las cinco ya en el árbol **antes** de que
+empezaran las Fases 5-7), ¿qué debería la stdlib estar aprovechando que no aprovecha todavía, y qué
+hueco queda ahora que el lenguaje tiene una raíz de objeto de verdad? Esta sección es solo análisis y
+propuesta — nada de lo que sigue está implementado todavía; queda para que se decida qué abordar y en
+qué orden.
+
+Método: relectura completa de los 30 archivos `.surtr` reales de la stdlib (~4755 líneas, la lista
+completa creció de 24 a 30 desde la E1 original con `PriorityQueue`, `Map`, `Vector`, `Quaternion`,
+`Random` y el paquete `diagnostics/`), más tres sondas de verificación compiladas y ejecutadas de
+verdad contra el runtime (no solo inspección de código) para confirmar exactamente qué desbloquea la
+jerarquía `object` antes de proponer nada sobre esa base.
+
+### 6.1 Lo que la jerarquía `object` desbloquea de verdad — confirmado, no solo leído
+
+El hallazgo central de esta fase: **`Set<T>`, `Map<K,V>` y, por extensión, cualquier colección
+genérica de la stdlib respaldada por `{T: bool}`/`{K: V}`, ya respetan un `equals()`/`hashCode()`
+declarado por el usuario — para una `value class` de la propia stdlib sin ningún override explícito,
+y para una clase corriente con un override explícito de verdad.** Esto no estaba documentado en
+ningún sitio de la stdlib ni cubierto por ningún test de la propia stdlib (`SurtrStdlibBehaviorTests`
+no tiene ni un solo caso que ejercite esta ruta), así que antes de basar ninguna propuesta en ello se
+verificó con tres sondas reales (compiladas y ejecutadas con el mismo arnés que usa
+`SurtrStdlibBehaviorTests`, `SurtrCompilation`/`ModuleEmitter`/`SurtrRuntime.LoadModule`, luego
+descartadas — no quedan en el árbol):
+
+1. `Set<Vector2>` con `Vector2(1.0, 2.0)` insertado dos veces (instancias distintas, mismos campos) más
+   `Vector2(3.0, 4.0)` → `length == 2`. `Vector2` no declara `override fun equals(...)` ni
+   `hashCode()` en absoluto — solo `operator==` (§2.9, ya existente) y el `toString()` de la Fase 5.
+2. `Map<Vector2, int>`: `m.set(Vector2(1.0, 2.0), 42)` seguido de `m.get(Vector2(1.0, 2.0))` (una
+   **segunda** instancia, mismos campos) → `42`. Confirma que la clave de un `Map<K,V>` con `K` una
+   `value class` de la stdlib hashea y compara por estructura, no por identidad, sin que
+   `Vector2`/`Angle`/`Quaternion`/`byte` tengan que hacer nada especial.
+3. Una clase corriente (no `value class`) con `override fun equals(other: object?): bool` y
+   `override fun hashCode(): int` escritos a mano, metida en un `Set<T>` de la stdlib →
+   `length == 2` tras insertar dos instancias "iguales" por su override y una distinta. (La mitad
+   `equals` de esto ya estaba cubierta por un test de compilador ajeno a la stdlib,
+   `AnArrayOfPlainClassesWithARealEqualsOverride_IndexOfNowRespectsIt`, pero **ningún test en todo el
+   árbol** — ni de compilador ni de stdlib — ejercitaba la mitad `hashCode`, que es la que de verdad
+   importa para un `Set`/`Map`: `equals` sin `hashCode` coherente rompería silenciosamente el
+   contrato hash/igualdad de cualquier colección respaldada por un diccionario.)
+
+**Por qué esto importa más que un dato suelto:** es la pieza que le faltaba a `collections/` para
+que una clase de dominio del usuario (un `Item`, un `Entity`, un `Vector2` importado) se comporte como
+"de primera clase" dentro de `Set<T>`/`Map<K,V>` — antes de esta cadena de commits, solo las
+`value class` con operadores escritos a mano y las built-in tenían igualdad estructural; una clase de
+usuario corriente solo podía compararse por identidad dentro de un `Set`/`Map`, sin forma de optar a
+otra cosa. Ahora puede, y ya funciona, pero **nadie lo ha probado con la propia stdlib ni lo dice en
+ningún sitio** — el README de la stdlib y los propios docstrings de `Set`/`Map` siguen sin
+mencionarlo. Recomendación inmediata, de bajo coste: llevar las tres sondas de arriba a
+`SurtrStdlibBehaviorTests.cs` como tests permanentes (hoy no existe ninguno) y añadir una línea en
+`Set.surtr`/`Map.surtr` señalando que la igualdad respeta un `equals()`/`hashCode()` de verdad.
+
+### 6.2 Hallazgos de optimización sobre el código ya existente
+
+Cada uno con archivo/línea y una acción concreta — no son bugs (nada de esto compila mal ni da un
+resultado incorrecto), son ocasiones reales de aprovechar la jerarquía `object` o de evitar trabajo
+que ya no hace falta.
+
+**O1 — `Map<K,V>.iterate()` copia el mapa entero a un array en cada llamada, aunque el mecanismo para
+no hacerlo ya existe en el propio runtime.** `collections/Map.surtr:71-81`: cada `for (pair in map)`
+snapshotea **todos** los pares a un `array<(K,V)>` nuevo antes de poder iterar uno solo, porque
+`dict<K,V>.iterate()` está declarado contra `IIterable<K>` (una sola K), no contra `(K,V)`. Pero el
+propio comentario del archivo ya señala que el `for-in` sobre un `dict` real está "specially lowered
+to walk real (K, V) pairs regardless" — es decir, el lowering que necesita ya existe y ya lo usa el
+propio cuerpo de `iterate()` (`for (pair in _dict)`, línea 75) para construir el array; lo que falta
+es exponer esa misma capacidad como un método nativo del `dict` built-in
+(`fun pairs(): IIterator<(K, V)>`, sin cambiar `iterate()` para no romper nada que dependa de su forma
+actual) para que `Map<K,V>.iterate()` pueda delegar directamente en él sin copiar. Esto es un cambio
+de runtime/compilador (`SurtrCompositeBuiltIns`/`SurtrDictionaryBuiltIn`), no de la stdlib en sí — la
+stdlib solo cambiaría una línea una vez exista. Impacto: cada `for (pair in map)` sobre cualquier
+`Map<K,V>` de tamaño N asigna hoy un array de N elementos por adelantado en vez de ser perezoso;
+importa sobre todo si `Map<K,V>` se usa dentro de un bucle caliente (p. ej. un sistema de juego que
+recorre un mapa de entidades cada frame).
+
+**O2 — `Sequence<T>`/`IIterable<T>.joinToString` exige siempre un `selector: (T) -> string` explícito
+porque `T` no lleva la restricción `<T : object>` (razón ya documentada en el propio archivo,
+`collections/Sequence.surtr:167-170`) — pero ahora esa restricción es exactamente lo que hace falta y
+ya funciona (§4.8/Compiler-Plan.md, "escribir `<T : object>` a mano consigue el mismo efecto donde se
+quiera").** Se puede añadir una sobrecarga **adicional** (no sustituir la actual, que sigue
+sirviendo para un `T` sin esa cota) `joinToString<T: object>(self: IIterable<T>, separator: string):
+string => self.asSequence().map(x => x.toString()).joinToString(separator, x => x)` — o más
+directamente, una nueva `fun toDisplayString<T: object>(self: IIterable<T>): string`. Coste: una
+firma nueva, sin tocar nada existente.
+
+**O3 — ninguna colección de `collections/` (`List`, `Set`, `Map`, `Queue`, `Stack`, `Deque`,
+`PriorityQueue`, `LinkedList`) tiene un `toString()` de depuración**, a diferencia de `StringBuilder`,
+`byte`, `Angle`, `Vector2/3`, `Quaternion`, que sí lo tienen desde que se escribieron. Antes de la
+jerarquía `object` esto no se podía hacer de forma genérica sin asumir algo sobre `T`; ahora
+`toString<T: object>(): string => "[" + elements-joined-by-toString + "]"` es directo — el mismo
+mecanismo de O2. Es una mejora de ergonomía de depuración pura (nada compila distinto sin ella), pero
+es exactamente el tipo de hueco que salta a la vista en cuanto se usa `dump()`/`println()`
+(`diagnostics/Debug.surtr`) sobre un `List<T>` hoy: sale el nombre desnudo de la clase, no su
+contenido (regla ya documentada para `surtr run`/`EntryPoint.Resolve` en `CLAUDE.md`: "a class that
+writes no toString() of its own still falls back to its bare name").
+
+**O4 — ni `byte` ni `Angle` implementan `IComparable<T>`/`IEquatable<T>`, pese a que ambos ya
+escriben `compareTo`/`equals`/`<=>`/`==` a mano y ambos built-ins existen desde antes de que ninguno
+de los dos se escribiera** (`SurtrStandardLibrary.cs:145-149`, `DeclareInterface(module, handles,
+"IComparable", "T")`/`"IEquatable"`). Confirmado con `grep`: **ningún archivo de toda la stdlib
+declara `IComparable<T>` ni `IEquatable<T>`** — ni siquiera `Vector2`/`Vector3`/`Quaternion`, para los
+que tendría menos sentido (no hay un orden natural de un vector), pero `byte` y `Angle` sí tienen un
+orden total real y ya implementado en la práctica. El coste de arreglarlo es añadir
+`: IComparable<byte>, IEquatable<byte>` (y lo mismo en `Angle`) a la lista de interfaces — los cuerpos
+ya existen, no hay que escribir nada nuevo. La razón por la que importa **ahora**: es exactamente la
+pieza que le falta a la stdlib para poder escribir, sin comparador explícito en cada llamada, un
+`List<T: IComparable<T>>.sort(): void` o un `Sequence<T: IComparable<T>>.min()/max()/sorted()` — hoy
+`List.sort`/`Sequence.min`/`Sequence.max`/`Sequence.sortBy` piden siempre un `comparator`/`selector`
+explícito (decisión consciente documentada en el propio `Sequence.surtr`, "no hay rasgo numérico
+genérico al que pedir uno"), lo cual sigue siendo cierto para un `T` sin cota, pero deja de serlo para
+un `T` acotado a `IComparable<T>` — que hoy ningún tipo de la stdlib satisface, así que la sobrecarga
+sin comparador nunca tendría con qué probarse de verdad.
+
+**O5 — `List<T>.sort()` hace dos copias completas (`toArray()` + `sorted.sort(...)` + escritura de
+vuelta) para evitar que el `sort()` del array built-in incluya la cola sin usar más allá de
+`_length`** (`collections/List.surtr:172-184`, ya documentado en el propio comentario). No es
+arreglable desde Surtr puro sin la copia — necesitaría una sobrecarga `array<T>.sort(comparator,
+count: int)` en el built-in que ordene solo el prefijo `[0, count)`. Se deja anotado como candidato de
+runtime, no de stdlib, en la misma categoría que O1.
+
+### 6.3 Diez propuestas de expansión (nuevas, no cubiertas por las Fases 3.1-3.8 originales)
+
+Ordenadas de mayor a menor "encaja con la misión declarada de Surtr" (alternativa a Lua embebida en
+Unity, `CLAUDE.md` primera sección), no por facilidad de implementación.
+
+**P1 — Un planificador de corrutinas sobre `generator` (`surtr.async.Scheduler`/`Timer`).** El
+lenguaje ya tiene corrutinas completas de verdad — `generator`, `send`/`raise`/`dispose`, `yield`
+como expresión, cierre determinista en las cuatro salidas (`CLAUDE.md`, sección de generadores) — y
+hoy la stdlib no tiene absolutamente nada que las use para lo que un juego las necesita: temporizar
+una secuencia de acciones sin bloquear el frame (`WaitForSeconds` de Unity es el paralelo directo). Un
+`Scheduler` que registre generadores/closures con un delay o una condición y los reanude cuando un
+`update(deltaTime: float)` avance el reloj sería la pieza que conecta la inversión ya hecha en
+corrutinas con el caso de uso real que las motivó. Coste: medio (Surtr puro, sobre `List<T>` +
+`generator` ya existentes); riesgo: bajo.
+
+**P2 — `surtr.events.Signal<T>` / `EventEmitter<T>` (multicast de closures).** Los closures ya son
+valores de primera clase (`ClosureValue`, `CLAUDE.md` §8). Un tipo mínimo — `subscribe((T) -> void):
+Subscription`, `unsubscribe(Subscription)`, `emit(T): void`, sobre un `List<(T) -> void>` interno — es
+el patrón más repetido de scripting de gameplay (input, daño, cambios de estado) y hoy hay que
+reinventarlo a mano en cada script. Coste: bajo; riesgo: bajo.
+
+**P3 — Un módulo de serialización ligera (`surtr.text.Json` o `surtr.serialization.Json`).** Ahora
+que `object.toString()` es real y cada tipo (incluyendo enums y `value class`) tiene una
+representación textual de verdad, un encoder/decoder JSON mínimo (a/desde `Map<string, unknown>` +
+`List<unknown>` + primitivos) cubriría guardado de partidas, configuración y mensajes de red — los
+tres casos de uso que cualquier script embebido en un motor necesita y que hoy no tienen ninguna
+respuesta en la stdlib. Coste: medio-alto (un parser recursivo-descendente y un encoder, ambos Surtr
+puro); riesgo: medio (el propio `unknown`/erasure hace que el árbol de resultado sea menos cómodo de
+consumir que en un lenguaje con `any` real — hay que diseñar la forma exacta del árbol antes de
+escribir nada).
+
+**P4 — `Grid<T>` / `Array2D<T>` (`surtr.collections.Grid`).** Encaja directamente al lado de
+`Vector2` (Fase 5): un wrapper sobre `array<T>` plano indexado por `(x, y)` con bounds-checking,
+`width`/`height`, y idealmente `get(pos: Vector2Int)`/`operator[]` — el patrón de tablero/tilemap que
+todo juego 2D necesita y que hoy solo se puede montar a mano con `array<array<T>>` (doble
+indirección, doble alocación). Coste: bajo; riesgo: bajo. Necesitaría decidir si existe ya o hace
+falta un `Vector2Int`/`(int, int)` — hoy `Vector2` es de `float`, no de `int`.
+
+**P5 — Cerrar `Color`/`Rect` (ya anticipados en §3.1, nunca implementados).** Con `Vector2`/`Vector3`
+ya probados y estables, el motivo original para posponerlos (validar el diseño de vectores primero)
+ya no aplica. Sigue habierta la pregunta de diseño de entonces: `Color` en floats `[0,1]` o bytes
+`[0,255]` (con `byte` ya disponible desde esta misma ronda de trabajo, la opción de bytes ahora tiene
+un tipo natural donde antes no lo había) y `Rect` en `x,y,w,h` o `min,max`.
+
+**P6 — Cerrar O4 + extensiones `IComparable<T>` (`List<T: IComparable<T>>.sort()` sin comparador,
+`Sequence<T: IComparable<T>>.min()/max()/sorted()`).** Descrito en detalle en §6.2/O4 — se cataloga
+aquí también porque es, en sí mismo, una adición de superficie (métodos nuevos), no solo una
+corrección.
+
+**P7 — `toString()`/`toDisplayString<T: object>()` en las colecciones (O2/O3 llevados a código).**
+Igual que P6, ya descrito en detalle en §6.2 — entra en la lista de diez porque es superficie nueva,
+no solo optimización.
+
+**P8 — `StringBuilder`/`string`: `padLeft`/`padRight`/`repeat(string, n)`/`trim` con variantes
+(`trimStart`/`trimEnd`).** No se ha podido confirmar desde la stdlib si el `string` built-in ya cubre
+esto (vive en `SurtrStringBuiltIn.cs`, fuera del alcance de esta auditoría de `.surtr`) — se incluye
+como pregunta abierta a resolver antes de implementar: si el built-in ya los tiene, esto se cae de la
+lista; si no, son huecos de uso muy frecuente (formateo de HUD, tablas de depuración) que hoy solo se
+pueden montar a mano concatenando espacios en un bucle.
+
+**P9 — `Optional<T>`/`Result<T, E>` explícito, sin excepciones.** Menor prioridad que P1-P4: el
+lenguaje ya tiene nulables reales y excepciones con jerarquía completa (`CLAUDE.md`, sección de
+excepciones y trap-to-class), así que esto es "azúcar de estilo Rust/Swift" más que un hueco
+funcional — pero es un patrón habitual para quien viene de esos lenguajes y quiere evitar excepciones
+en rutas de error esperadas (parseo, validación) sin recurrir a un nulable que pierde el motivo del
+fallo. Coste: bajo (una `value class` con dos casos, apoyada en `@Value`/enum interno); riesgo: bajo.
+
+**P10 — `Vector2Int`/`Vector3Int` (vectores de coordenadas enteras).** Todo lo que usa `Vector2`/
+`Vector3` para indexar una `Grid<T>` (P4) o una posición de tablero/tile necesita coordenadas enteras,
+no `float` — hoy no existe ningún tipo así, y `Vector2`/`Vector3` no sirven para el caso (dividir con
+`/` o comparar con `==` sobre floats en una posición de rejilla es exactamente el tipo de error sutil
+que un tipo dedicado evita). Coste: bajo (misma forma que `Vector2`/`Vector3`, aritmética entera en
+vez de flotante); riesgo: bajo. Encaja directamente como prerrequisito de P4.
+
+### 6.3b B10 — Bug del compilador/runtime: un array de una `value class` de un solo campo, cruzando el `self` de una extensión genérica, corrompe (o revienta) `array.sort(comparator)` — Prioridad ALTA — **Descubierto, no corregido; superficie afectada retirada de la stdlib**
+
+Descubierto implementando P6 (§6.2/O4): al intentar añadir `T[]`/`List<T>.sortNatural()` (ordenar sin
+comparador para un `T : IComparable<T>`), usando `byte` como primer caso real. Como B8/B9, **falla en
+silencio** en uno de sus dos modos — sin `SURTR4001`, sin excepción — así que solo se vio al comparar
+el resultado, no al compilar ni al ejecutar sin más.
+
+**Síntoma exacto, confirmado con tres sondas mínimas aisladas** (`SurtrCompilation`/`ModuleEmitter`,
+sin pasar por disco):
+
+| Camino | `T = int` (primitivo, no `value class`) | `T = byte` (`value class` de un campo) |
+|---|---|---|
+| `a.compareTo(b)` llamado directamente, sin lambda, dentro de una extensión genérica sobre `T[]` | Correcto | **Correcto** |
+| Lo mismo a través de una lambda `(a, b) => a.compareTo(b)` invocada por bytecode Surtr normal (sin pasar por sort nativo) | Correcto | **Correcto** |
+| `self.sort((a, b) => a.compareTo(b))` sobre el **propio parámetro `self: T[]`** de una extensión `T[]` | Correcto | **Incorrecto en silencio** — reordena mal (visto: `[3,1,2]` → `[2,3,1]` en vez de `[1,2,3]`) |
+| Lo mismo sobre `List<T>` (extensión `List<T>.sortNatural()`, que internamente llama a `List<T>.sort(comparator)`) | Correcto | **Revienta**: `SurtrExecutionException: A 'int' cannot be cast to 'byte'` |
+| El mismo patrón dentro de `Sequence<T>.sortedNatural()`/`minNatural()`/`maxNatural()` (Sequence.surtr) — el array de trabajo se construye **dentro** de un generador ya genérico, `push()` a `push()` | Correcto | **Correcto** |
+
+**Causa raíz (hipótesis fundamentada, no confirmada con debugging directo del bytecode — a
+diferencia de B6-B9, no se llegó a instrumentar el emisor esta vez; el patrón de evidencia es
+consistente pero no se verificó leyendo el IL/bytecode generado):** un array **concretamente
+tipado** `byte[]` en su sitio de construcción (p. ej. el literal `[byte(3), byte(1), byte(2)]`)
+almacena sus elementos de un solo campo **sin boxear**, exactamente como predice §2.9 ("un `value
+class` de un solo campo... erosiona al campo que envuelve") — el mismo motivo por el que `byte[]` e
+`int[]` son indistinguibles en almacenamiento. Ese mismo array, al cruzar hacia el parámetro `self:
+T[]` de una extensión (una extensión declara su **propio** parámetro de tipo, §15.4 — `T` ahí es
+genérico/erosionado, no el `byte` concreto que el llamador tiene) **no se re-boxea** en ese cruce. El
+`Compare()` nativo de `array.sort` (`SurtrCompositeBuiltIns.cs:184-195`) lee el elemento crudo con
+`SurtrValue.FromRaw(items[left])` y lo pasa tal cual a `runtime.InvokeClosure(comparator, ...)` — pero
+el comparador fue compilado contra el `T` erosionado de la extensión, que espera una referencia
+boxeada (todo slot erosionado es referencia, §1.11), no un entero crudo. `Sequence<T>.sortedNatural()`
+no lo sufre porque su array de trabajo se construye **dentro** del propio cuerpo ya-erosionado
+(`items.push(source.current)`, con cada elemento boxeado al entrar, igual que hace cualquier otro
+límite de erasure) — nunca es un array **concreto ajeno** que cruza la frontera desde fuera.
+`minNatural()`/`maxNatural()` tampoco, porque ninguno llama a `array.sort`: recorren un
+`IIterator<T>` e invocan el comparador con una llamada Surtr corriente (bytecode `Call`), no con el
+`InvokeClosure` nativo de C# que usa `Compare()`.
+
+**Impacto real:** cualquier `T[]`/`List<T>` con `T` un `value class` de un solo campo (`byte`, y
+cualquier futuro `value class` de un campo — no `Vector2`/`Quaternion`, que son multi-campo y ya
+tienen su propia clase de bugs, B6) que se ordene **a través de un método de extensión genérico**
+(no un método declarado directamente en `List<T>` con su propio `T`, que no cruza esta frontera)
+puede dar un orden incorrecto en silencio, o reventar. `int[]`/`List<int>` (y cualquier primitivo)
+no están afectados — confirmado con el mismo repro exacto sustituyendo `byte` por `int`.
+
+**Arreglo aplicado en la stdlib (mientras el bug sigue abierto):** se retiraron `T[].sortNatural()` y
+`List<T>.sortNatural()` de `collections/List.surtr` antes de comitear nada — nunca llegaron a
+publicarse rotos. `Sequence<T>.minNatural()`/`maxNatural()`/`sortedNatural()` sí se mantienen: los
+tres están verificados correctos con `byte` mediante un test de regresión real
+(`ComparableSequenceExtensionsWorkWithNoComparator`,
+`src/Surtr.Tests/Stdlib/SurtrStdlibBehaviorTests.cs`). Queda una nota en el propio `List.surtr`
+explicando por qué la superficie no está — para que nadie la vuelva a proponer sin saber por qué
+falla, y para que se recupere en cuanto el compilador lo arregle.
+
+**No corregido en el compilador** — a diferencia de B5-B9, esta ronda no llegó a instrumentar el
+emisor para confirmar la causa exacta (la hipótesis de arriba está bien fundamentada por las cinco
+filas de la tabla, pero no verificada leyendo bytecode real como sí se hizo con B6-B9). Candidato
+natural de arreglo: que `SurtrCompositeBuiltIns.Compare` (o el punto donde se emite/resuelve la
+llamada al comparador de `array.sort`) boxee el valor crudo leído del array antes de invocar el
+closure, cuando el closure lo declare con un parámetro erosionado — simétrico al arreglo de B8
+("UnboxIfStillErased" en escritura; aquí haría falta un "BoxIfNeededForClosureCall" en lectura).
+
+### 6.3c B11 — Bug del compilador: un método invoca su propio parámetro-closure con el valor equivocado cuando ese closure devuelve el propio parámetro de tipo del método — Prioridad ALTA — **Descubierto, no corregido; `Result<T,E>.map/mapError/match` retirados antes de comitear**
+
+Descubierto implementando P9 (`Result<T,E>`, §6.3). Como B10, se manifiesta en silencio — sin
+`SURTR4001`, sin excepción — devolviendo un valor incorrecto.
+
+**Repro mínimo, sin `Result` ni ningún campo de por medio** (confirmado con `SurtrCompilation`/
+`ModuleEmitter`):
+
+```surtr
+fun apply<T>(v: T, f: (T) -> T): T { return f(v); }
+fun run(): int { return apply(5, (v) => v * 100); }   // da 100, no 500 - "v" dentro de la lambda vale 1
+```
+
+Reproduce igual con dos parámetros de tipo separados (`apply<T, U>(v: T, f: (T) -> U): U`), con el
+argumento de tipo explícito o inferido, y con el valor leído de un campo (`_payload as T`) en vez de
+un parámetro — la condición común en los seis repros que sí fallaron es: un método (de instancia o
+función suelta) recibe un valor de su **propio** genérico `T` y lo pasa, **en la misma llamada**, como
+argumento a un **parámetro-closure** cuyo tipo de retorno es también un genérico propio del método
+(`U`, o el propio `T`).
+
+**Lo que NO reproduce, y por qué importa:** `Sequence<T>.map<U>(mapper)`/`groupBy<K>(keySelector)` —
+ya en producción y cubiertos por tests que pasan — tienen la misma forma superficial y **no** están
+afectados. La diferencia real: `map` nunca llama a `mapper` dentro de su propio cuerpo — lo guarda y
+se lo pasa a un generador privado (`seqMap`) que lo invoca más tarde, fuera del método que lo
+declaró; `groupBy` sí invoca `keySelector` en el sitio, pero contra un **local** (`iter.current`),
+no contra un valor leído de un campo/cast. Ninguno de los dos coincide exactamente con la forma que
+falla (invocación **síncrona**, **dentro** del mismo método que declara el genérico, sobre un valor
+que **es** ese genérico).
+
+**Causa raíz:** no confirmada — a diferencia de B6-B9, no se llegó a instrumentar el emisor ni a leer
+el bytecode generado; el patrón de evidencia (siete repros, todos consistentes) es fuerte pero la
+frontera exacta de qué combinación dispara el bug no quedó cerrada.
+
+**Impacto real:** `Result<T, E>.map<U>()`, `.mapError<F>()` y `.match<U>(onOk, onError)` — las tres
+retiradas de `core/Result.surtr` antes de comitear nada; nunca llegaron a publicarse rotas. El resto
+de `Result<T,E>` (`ok`/`error`/`isOk`/`isError`/`unwrap`/`unwrapOr`/`unwrapError`) no invoca ningún
+parámetro-closure y está verificado correcto (`ResultOkAndErrorRoundTripAcrossModules`,
+`src/Surtr.Tests/Stdlib/SurtrStdlibBehaviorTests.cs`).
+
+**No corregido en el compilador.** Candidato de investigación futura: instrumentar
+`MethodBodyEmitter`/`EmitResolvedCall` para el repro mínimo de arriba y comparar contra el caso que
+sí funciona (`Sequence.groupBy`) para aislar en qué paso exacto el valor se pierde o se sustituye.
+
+### 6.3d B12 — Bug del parser: `generator<T>` no se acepta anidado dentro de otro `<...>` — Prioridad BAJA — **Descubierto al construir `Scheduler` (§6.3/P1); evitado en la stdlib con `unknown[]`, no corregido**
+
+`generator<float>` como anotación de tipo suelta (parámetro, local, retorno) funciona bien, pero
+`array<generator<float>>(n)` y `List<generator<float>>` fallan ambos a la primera con `SURTR2003:
+Expected an expression, found KeywordGenerator`. Consistente con que `generator` es "la única palabra
+reservada que también aparece en posición de tipo" (`CLAUDE.md`) — el reconocimiento contextual de
+`generator` como tipo parece limitarse a la posición de anotación directa y no a un argumento de tipo
+anidado dentro de otro genérico. `collections/Scheduler.surtr` guarda las corrutinas en un `unknown[]`
+y castea de vuelta a `generator<float>` en cada lectura (`x as generator<float>`, que sí parsea al
+ser un target de cast, no anidado) para esquivarlo por completo. No investigado más allá de
+confirmar el síntoma — de baja prioridad porque tiene un rodeo de coste cero, pero documentado para
+que la próxima vez que alguien quiera `List<generator<T>>` no lo redescubra desde cero.
+
+### 6.4 Estado final de la Fase 8 e implementación real
+
+Sesión posterior a §6.1-§6.3: se implementó **todo lo de §6.2/§6.3 salvo P2 (Signal, pedido
+explícitamente fuera de alcance) y P8** (pendiente de confirmar qué ya cubre el `string` built-in —
+no investigado), más P3 (JSON quedó **fuera** — ver nota abajo), y tres piezas nuevas que no estaban
+en la lista original de diez: un `Scheduler` de corrutinas (`surtr.async`), una sección de ficheros
+(`surtr.io.File`) y un sistema de compilación dinámica/`eval` (`Surtr.Stdlib.Script`, proyecto
+opcional aparte). Todo verificado compilando y ejecutando contra el runtime real, con tests de
+regresión en `src/Surtr.Tests/Stdlib/`.
+
+**Lo que se implementó y quedó en verde:**
+
+- **§6.1** — las tres sondas de la jerarquía `object` (`Set<Vector2>`, `Map<Vector2,int>`,
+  `Set<Point>` con `equals`/`hashCode` reales) ahora son tests permanentes.
+- **§6.2/O4 + P6** — `byte`/`Angle` implementan `IComparable<T>`/`IEquatable<T>` de verdad (sin
+  `override`: satisfacer una interfaz corriente en Surtr **no** lleva ese modificador — solo
+  `override`ar un miembro ya virtual de `object`/una clase base lo lleva; confirmado por el propio
+  compilador, `SURTR3068`). `Sequence<T: IComparable<T>>.minNatural()/maxNatural()/sortedNatural()`
+  añadidos y verificados correctos. **`T[]`/`List<T>.sortNatural()` NO se pudieron añadir** — ver B10
+  abajo.
+- **§6.2/O3 + P7** — `toDisplayString()` en `List`, `LinkedList`, `Set`, `Map`, `Queue`, `Deque`,
+  `Stack`, `PriorityQueue`, `Sequence` e `IIterable<T>` (todas con `<T: object>`, y **nunca** llamadas
+  `toString` — un miembro real de ese nombre, aunque sea el heredado de `object`, bloquea cualquier
+  extensión del mismo nombre en el tipo, sin importar la aridad).
+- **Assert/Contracts revisados** (pedido explícito): `assertEqual<T: object>(a, b)` y
+  `assertNotEqual<T: object>` (2 args, sin mensaje) ahora dan un mensaje real ("Expected X but got
+  Y") — coexisten sin colisión con las versiones de 3 args con mensaje explícito, porque una llamada
+  de aridad exacta gana sobre una que necesitaría rellenar un default (confirmado empíricamente).
+  `Contracts.surtr` gana `requireEqual<T: object>`/`ensureEqual<T: object>` con el mismo mensaje real.
+- **P6.3/collection builders** (pedido explícito, no estaba en la lista original): `Map<K,V>` gana
+  `each (key: K, value: V)` — `Map<string,int>{"a":1}` y `let m: IMap<K,V> = {...}` ya construyen de
+  verdad — y `IDeque<T>` gana `default Deque<T>`, que le faltaba.
+- **P10** — `Vector2Int`/`Vector3Int` en `math/Vector.surtr`, con `IEquatable<T>`.
+- **P5** — `Color` (4 floats, `[0,1]`) y `Color32` (un `int` empaquetado `0xAARRGGBB`, tal como pidió
+  el usuario explícitamente: "una que use un int y otra que use 4 floats"), con conversión en ambas
+  direcciones; `Rect` (`x,y,width,height`, estilo Unity) en `math/Rect.surtr`.
+- **P4** — `Grid<T>` (`collections/Grid.surtr`): array plano bajo índice `(x,y)`, `get`/`set`/`fill`,
+  sin `operator[]` multi-índice (el lenguaje solo admite indexadores de un índice, §5.7 — documentado
+  en el propio archivo).
+- **P9** — `Result<T,E>` (`core/Result.surtr`): `ok`/`error`/`isOk`/`isError`/`unwrap`/`unwrapOr`/
+  `unwrapError`. **`map`/`mapError`/`match` NO se pudieron añadir** — ver B11 abajo. Es una `class`
+  ordinaria, no `value class` — el compilador rechaza un `value class` genérico de más de un campo
+  (`SURTR3012`), aunque ninguno de los dos campos varíe realmente por sustitución. `Optional<T>`
+  deliberadamente **no** se añadió: `T?` ya cubre exactamente ese hueco (§5.1), y añadir un segundo
+  envoltorio habría sido la clase de abstracción redundante que `CLAUDE.md` pide evitar.
+- **"Investiga más usos de corrutinas"** — `surtr.async.Scheduler`: registra corrutinas
+  `generator<float>` donde cada `yield <segundos>` es una espera; `update(deltaTime)` las avanza.
+  Además tres corrutinas ya escritas para usar directamente: `delay`, `repeatEvery`, `repeatTimes`.
+  Ver B12 (bug de parser encontrado y evitado en el camino).
+- **Sección de ficheros** — `surtr.io.File`: operaciones de fichero completo (`fileReadAllText`/
+  `fileWriteAllText`/`fileReadAllBytes`/`fileWriteAllBytes`/`fileExists`/`fileDelete`/
+  `createDirectory`/`directoryExists`/`listFiles`/`listDirectories`). **Limitación real, documentada
+  en el propio archivo**: un fallo (fichero inexistente, sin permiso...) hoy **no es capturable por
+  un `catch` de Surtr** — no existe una API pública para que un cuerpo `native` lance una excepción
+  Surtr real (se buscó explícitamente y no hay); el error de `System.IO` cruza sin modificar hasta el
+  `try/catch` del **host** en C#, no hasta el del script. No hay streaming (`FileStream` con handle)
+  todavía — solo fichero completo, suficiente para config/guardado, que es el caso de uso dominante.
+- **Compilación dinámica / `eval`** — proyecto nuevo y **separado**, `Surtr.Stdlib.Script`
+  (netstandard2.1, referencia `Surtr.Core` + `Surtr.Compiler`), deliberadamente fuera de
+  `Surtr.Stdlib` (que no referencia el compilador a propósito, para que un host normal no cargue con
+  todo el front-end). Expone `surtr.script.Script`: `Script.compile(source)` compila una cadena como
+  módulo nuevo y aislado (sin colisión entre llamadas), `.isValid`/`.lastError()` para un fallo de
+  compilación (**no lanza** — no hay forma de que un `native` lance algo capturable, mismo motivo que
+  arriba; el error es un valor, no una excepción), `.hasFunction(name)`, `.call(name, args:
+  unknown...)` empareja por nombre y **aridad** (igual que `Surtr.Run`'s `EntryPoint.Resolve` — un
+  artefacto compilado no tiene resolución de sobrecarga de fuente que rehacer). Más
+  `evalInt`/`evalFloat`/`evalBool`/`evalString(expr)` como azúcar sobre lo anterior. Un driver
+  compilado en el mismo proceso vía `SurtrCompilation` (no cargado desde una imagen) necesita añadir
+  `SurtrScripting.ScriptModuleSource` a su propio `SurtrProject` para que el *binder* vea los símbolos
+  declarados — `SurtrScripting.LoadInto`/`RegisterNativeBodies` por sí solos publican cuerpos y cargan
+  en un runtime **ya en marcha**, después de que la compilación ya terminó, así que no sirven para
+  resolver un `import` en tiempo de compilación. Documentado con detalle en los comentarios del propio
+  `SurtrScripting.cs`. Seis tests end-to-end reales en
+  `src/Surtr.Tests/Stdlib/SurtrScriptingTests.cs`.
+
+**No implementado / fuera de alcance de esta ronda:**
+
+- **P3 (JSON)** — no se llegó a implementar por presión de tiempo frente al resto de la lista. Sigue
+  siendo la propuesta de mayor valor pendiente para una próxima ronda.
+- **P8** — sin investigar.
+- **P2 (Signal)** — excluido explícitamente por el usuario.
+- **O1** (evitar la copia de `Map<K,V>.iterate()`) — sigue siendo un cambio de runtime, no abordado.
+
+**Hallazgo adicional, fuera de la lista original — el límite real de `SurtrRuntime.Invoke` con
+argumentos boxeados:** al construir `Script.call`, pasar argumentos ya boxeados (como llegan desde un
+`unknown[]` de Surtr) directamente a `runtime.Invoke(method, args)` da un resultado **incorrecto en
+silencio** en cuanto el método de destino declara un parámetro **primitivo concreto** (`int`, no
+`unknown`) — `Invoke` no desboxea por su cuenta en ese caso (solo maneja el boxeo/desboxeo de
+parámetros *inline*, no de un primitivo boxeado suelto). Un llamador nativo que reenvíe valores desde
+un `unknown[]`/similar debe desboxear él mismo antes de invocar, mirando el `TypeCode` de cada
+parámetro declarado (`method.Parameters[i].ParameterType.TypeCode`) y resolviendo un `SurtrBoxed` a
+su `.BoxedValue` cuando ese tipo es primitivo. `SurtrScripting.ScriptCall` ya lo hace; no se investigó
+si algún otro sitio del árbol tiene el mismo problema latente, porque ningún otro sitio existente
+reenvía argumentos de esta forma exacta (boxeados, desde host, hacia un método de firma arbitraria).
+
+Los cuatro bugs de compilador/parser descubiertos esta ronda (B10, B11, B12, más el hallazgo de
+`Invoke` de arriba) están documentados con su repro exacto en §6.3b-d — ninguno corregido, todos con
+la superficie afectada retirada o evitada antes de comitear código roto.

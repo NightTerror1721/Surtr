@@ -1,0 +1,73 @@
+import surtr.math.Vector;
+
+// Fase 8, §6.3/P5. `x,y,width,height` rather than `min,max`: matches Unity's own `Rect` and reads
+// directly off a sprite/UI layout, which is the dominant use case this is for; `width`/`height` can
+// go negative if constructed that way (not clamped) since a caller occasionally wants that as a
+// signal, same as Unity's own Rect.
+public value class Rect
+{
+    public let x: float;
+    public let y: float;
+    public let width: float;
+    public let height: float;
+
+    public constructor(x: float, y: float, width: float, height: float)
+    {
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+    }
+
+    public static zero: Rect => Rect(0.0, 0.0, 0.0, 0.0);
+
+    public static fun fromCorners(min: Vector2, max: Vector2): Rect
+        => Rect(min.x, min.y, max.x - min.x, max.y - min.y);
+
+    @Pure
+    public inline xMin: float => x;
+    @Pure
+    public inline yMin: float => y;
+    @Pure
+    public inline xMax: float => x + width;
+    @Pure
+    public inline yMax: float => y + height;
+
+    @Pure
+    public inline center: Vector2 => Vector2(x + width * 0.5, y + height * 0.5);
+    @Pure
+    public inline min: Vector2 => Vector2(x, y);
+    @Pure
+    public inline max: Vector2 => Vector2(x + width, y + height);
+    @Pure
+    public inline size: Vector2 => Vector2(width, height);
+    @Pure
+    public inline area: float => width * height;
+
+    @Pure
+    public fun contains(point: Vector2): bool
+        => point.x >= xMin && point.x <= xMax && point.y >= yMin && point.y <= yMax;
+
+    @Pure
+    public fun overlaps(other: Rect): bool
+        => xMin < other.xMax && xMax > other.xMin && yMin < other.yMax && yMax > other.yMin;
+
+    /// The smallest `Rect` containing both `a` and `b`.
+    public static fun union(a: Rect, b: Rect): Rect
+    {
+        let minX = a.xMin < b.xMin ? a.xMin : b.xMin;
+        let minY = a.yMin < b.yMin ? a.yMin : b.yMin;
+        let maxX = a.xMax > b.xMax ? a.xMax : b.xMax;
+        let maxY = a.yMax > b.yMax ? a.yMax : b.yMax;
+        return Rect(minX, minY, maxX - minX, maxY - minY);
+    }
+
+    @Pure
+    public override fun toString(): string => "($x, $y, $width, $height)";
+
+    @Pure
+    inline operator==(a: Rect, b: Rect): bool
+        => a.x == b.x && a.y == b.y && a.width == b.width && a.height == b.height;
+
+    public inline fun equals(other: Rect): bool => this == other;
+}

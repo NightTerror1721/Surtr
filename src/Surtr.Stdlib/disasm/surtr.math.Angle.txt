@@ -1,6 +1,9 @@
 module surtr.math.Angle
-  constants: 8   types: 0   fields: 0   methods: 18   modules: 0
+  constants: 8   types: 1   fields: 0   methods: 22   modules: 0
   string #6 = " rad"
+
+  type table:
+    #0  surtr.math.Angle:Angle
 
   method table:
     #0  surtr.math.Angle:Angle.ctor(float) -> void
@@ -20,9 +23,13 @@ module surtr.math.Angle
     #14  surtr.math.Angle:Angle.op_-u(float) -> float
     #15  surtr.math.Angle:Angle.op_==(float, float) -> bool
     #16  surtr.math.Angle:Angle.op_<=>(float, float) -> int
-    #17  float.toString() -> string
+    #17  surtr.math.Angle:Angle.equals(float) -> bool
+    #18  surtr.math.Angle:Angle.compareTo(float) -> int
+    #19  float.toString() -> string
+    #20  surtr.math.Angle:Angle.compareTo(unknown) -> int
+    #21  surtr.math.Angle:Angle.equals(unknown) -> bool
 
-sealed class Angle : surtr:ValueType  [public]
+sealed class Angle : surtr:ValueType, surtr:IComparable<float>, surtr:IEquatable<float>  [public]
   [private] readonly field _radians: float
 
   @surtr:Pure
@@ -47,9 +54,43 @@ sealed class Angle : surtr:ValueType  [public]
         0007  Ldc1
         0008  ReturnValue
 
+  [public] compareTo(other: float): int
+    ; entry 18, locals 2, stack 2, code 009D..00A5
+      009D  Ldl0
+      009E  Ldl1
+      009F  InvokeStatic 16 (op_<=>) args=2 ret=1
+      00A4  ReturnValue
+
+  [public] virtual compareTo(other: unknown): int
+    ; entry 19, locals 2, stack 2, code 00A5..00B2
+      00A5  Ldl0
+      00A6  Unbox
+      00A7  Ldl1
+      00A8  Cast 0 (surtr.math.Angle:Angle)
+      00AB  Unbox
+      00AC  InvokeSpecial 18 (compareTo) args=2 ret=1
+      00B1  ReturnValue
+
   [public] ctor (radians: float): void
     ; entry 0, locals 2, stack 0, code 0000..0001
       0000  ReturnVoid
+
+  [public] equals(other: float): bool
+    ; entry 17, locals 2, stack 2, code 0099..009D
+      0099  Ldl0
+      009A  Ldl1
+      009B  FEQ
+      009C  ReturnValue
+
+  [public] virtual equals(other: unknown): bool
+    ; entry 20, locals 2, stack 2, code 00B2..00BF
+      00B2  Ldl0
+      00B3  Unbox
+      00B4  Ldl1
+      00B5  Cast 0 (surtr.math.Angle:Angle)
+      00B8  Unbox
+      00B9  InvokeSpecial 17 (equals) args=2 ret=1
+      00BE  ReturnValue
 
   [public] static fromDegrees(degrees: float): float
     ; entry 5, locals 1, stack 2, code 000B..000F
@@ -207,7 +248,7 @@ sealed class Angle : surtr:ValueType  [public]
       0038  Ldl0
       0039  Unbox
       003A  BoxFloat
-      003B  InvokeVirtual 17 (toString) args=1 ret=1
+      003B  InvokeVirtual 19 (toString) args=1 ret=1
       0040  Ldc6
       0041  StrCat 2
       0043  ReturnValue

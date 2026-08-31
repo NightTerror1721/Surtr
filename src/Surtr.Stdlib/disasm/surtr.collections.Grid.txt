@@ -1,0 +1,264 @@
+module surtr.collections.Grid
+  constants: 2   types: 2   fields: 3   methods: 11   modules: 0
+  string #0 = "width and height must be non-negative"
+  string #1 = "Grid coordinates out of range"
+
+  type table:
+    #0  surtr:IndexOutOfRangeException
+    #1  T0[]
+
+  field table:
+    #0  surtr.collections.Grid:Grid<._width: int
+    #1  surtr.collections.Grid:Grid<._height: int
+    #2  surtr.collections.Grid:Grid<._items: T0[]
+
+  method table:
+    #0  surtr.collections.Grid:Grid<.ctor(int, int) -> void
+    #1  surtr.collections.Grid:Grid<.get_width() -> int
+    #2  surtr.collections.Grid:Grid<.get_height() -> int
+    #3  surtr.collections.Grid:Grid<.get_length() -> int
+    #4  surtr.collections.Grid:Grid<.isInBounds(int, int) -> bool
+    #5  surtr.collections.Grid:Grid<.get(int, int) -> T0
+    #6  surtr.collections.Grid:Grid<.set(int, int, T0) -> void
+    #7  surtr.collections.Grid:Grid<.fill(T0) -> void
+    #8  surtr.collections.Grid:Grid<.iterate() -> surtr:IIterator<T0>
+    #9  surtr:IndexOutOfRangeException.ctor(string) -> void
+    #10  [].iterate() -> surtr:IIterator<T0>
+
+class Grid`1<T> : surtr:object  [public]
+  [private] readonly field _height: int
+  [private] field _items: T0[]
+  [private] readonly field _width: int
+
+  [public] property height: int { get; }
+    get:
+      ; entry 2, locals 1, stack 1, code 0038..003D
+        0038  Ldl0
+        0039  FieldGet 1 (_height)
+        003C  ReturnValue
+
+  [public] property length: int { get; }
+    get:
+      ; entry 3, locals 1, stack 1, code 003D..0043
+        003D  Ldl0
+        003E  FieldGet 2 (_items)
+        0041  ArrLen
+        0042  ReturnValue
+
+  [public] property width: int { get; }
+    get:
+      ; entry 1, locals 1, stack 1, code 0033..0038
+        0033  Ldl0
+        0034  FieldGet 0 (_width)
+        0037  ReturnValue
+
+  [public] ctor (width: int, height: int): void
+    ; entry 0, locals 3, stack 3, code 0000..0033
+      0000  Ldl1
+      0001  PushI8 0
+      0003  LT
+      0004  Dup
+      0005  JPNZ +8 -> L0 (0010)
+      0008  Pop
+      0009  Ldl2
+      000A  PushI8 0
+      000C  LT
+      000D  JP +0 -> L0 (0010)
+    L0:
+      0010  JPZ +11 -> L1 (001E)
+      0013  ObjNew 0 (surtr:IndexOutOfRangeException)
+      0016  Dup
+      0017  Ldc0
+      0018  InvokeSpecial 9 (ctor) args=2 ret=0
+      001D  Throw
+    L1:
+      001E  Ldl0
+      001F  Ldl1
+      0020  FieldSet 0 (_width)
+      0023  Ldl0
+      0024  Ldl2
+      0025  FieldSet 1 (_height)
+      0028  Ldl0
+      0029  Ldl1
+      002A  Ldl2
+      002B  Mul
+      002C  ArrNew 1 (T0[])
+      002F  FieldSet 2 (_items)
+      0032  ReturnVoid
+
+  [public] fill(value: T0): void
+    ; entry 7, locals 3, stack 3, code 0114..012F
+      0114  PushI8 0
+      0116  Stl2
+    L0:
+      0117  Ldl2
+      0118  Ldl0
+      0119  FieldGet 2 (_items)
+      011C  ArrLen
+      011D  JPGE +14 -> L1 (012E)
+      0120  Ldl0
+      0121  FieldGet 2 (_items)
+      0124  Ldl2
+      0125  Ldl1
+      0126  UnboxDynamic
+      0127  ArrSet
+      0128  IncLocal 2 by 1
+      012B  JP -23 -> L0 (0117)
+    L1:
+      012E  ReturnVoid
+
+  [public] get(x: int, y: int): T0
+    ; entry 5, locals 6, stack 3, code 0070..00C0
+      0070  Ldl0
+      0071  Stl3
+      0072  Ldl1
+      0073  Stl4
+      0074  Ldl2
+      0075  Stl5
+      0076  Ldl4
+      0077  PushI8 0
+      0079  GE
+      007A  Dup
+      007B  JPZ +10 -> L0 (0088)
+      007E  Pop
+      007F  Ldl4
+      0080  Ldl3
+      0081  FieldGet 0 (_width)
+      0084  LT
+      0085  JP +0 -> L0 (0088)
+    L0:
+      0088  Dup
+      0089  JPZ +8 -> L1 (0094)
+      008C  Pop
+      008D  Ldl5
+      008E  PushI8 0
+      0090  GE
+      0091  JP +0 -> L1 (0094)
+    L1:
+      0094  Dup
+      0095  JPZ +10 -> L2 (00A2)
+      0098  Pop
+      0099  Ldl5
+      009A  Ldl3
+      009B  FieldGet 1 (_height)
+      009E  LT
+      009F  JP +0 -> L2 (00A2)
+    L2:
+      00A2  Inv
+      00A3  JPZ +11 -> L3 (00B1)
+      00A6  ObjNew 0 (surtr:IndexOutOfRangeException)
+      00A9  Dup
+      00AA  Ldc1
+      00AB  InvokeSpecial 9 (ctor) args=2 ret=0
+      00B0  Throw
+    L3:
+      00B1  Ldl0
+      00B2  FieldGet 2 (_items)
+      00B5  Ldl2
+      00B6  Ldl0
+      00B7  FieldGet 0 (_width)
+      00BA  Mul
+      00BB  Ldl1
+      00BC  Add
+      00BD  ArrGet
+      00BE  BoxDynamic
+      00BF  ReturnValue
+
+  @surtr:Pure
+  [public] isInBounds(x: int, y: int): bool
+    ; entry 4, locals 3, stack 2, code 0043..0070
+      0043  Ldl1
+      0044  PushI8 0
+      0046  GE
+      0047  Dup
+      0048  JPZ +10 -> L0 (0055)
+      004B  Pop
+      004C  Ldl1
+      004D  Ldl0
+      004E  FieldGet 0 (_width)
+      0051  LT
+      0052  JP +0 -> L0 (0055)
+    L0:
+      0055  Dup
+      0056  JPZ +8 -> L1 (0061)
+      0059  Pop
+      005A  Ldl2
+      005B  PushI8 0
+      005D  GE
+      005E  JP +0 -> L1 (0061)
+    L1:
+      0061  Dup
+      0062  JPZ +10 -> L2 (006F)
+      0065  Pop
+      0066  Ldl2
+      0067  Ldl0
+      0068  FieldGet 1 (_height)
+      006B  LT
+      006C  JP +0 -> L2 (006F)
+    L2:
+      006F  ReturnValue
+
+  [public] iterate(): surtr:IIterator<T0>
+    ; entry 8, locals 1, stack 1, code 012F..0139
+      012F  Ldl0
+      0130  FieldGet 2 (_items)
+      0133  InvokeVirtual 10 (iterate) args=1 ret=1
+      0138  ReturnValue
+
+  [public] set(x: int, y: int, value: T0): void
+    ; entry 6, locals 7, stack 3, code 00C0..0114
+      00C0  Ldl0
+      00C1  Stl4
+      00C2  Ldl1
+      00C3  Stl5
+      00C4  Ldl2
+      00C5  StlS 6
+      00C7  Ldl5
+      00C8  PushI8 0
+      00CA  GE
+      00CB  Dup
+      00CC  JPZ +10 -> L0 (00D9)
+      00CF  Pop
+      00D0  Ldl5
+      00D1  Ldl4
+      00D2  FieldGet 0 (_width)
+      00D5  LT
+      00D6  JP +0 -> L0 (00D9)
+    L0:
+      00D9  Dup
+      00DA  JPZ +9 -> L1 (00E6)
+      00DD  Pop
+      00DE  LdlS 6
+      00E0  PushI8 0
+      00E2  GE
+      00E3  JP +0 -> L1 (00E6)
+    L1:
+      00E6  Dup
+      00E7  JPZ +11 -> L2 (00F5)
+      00EA  Pop
+      00EB  LdlS 6
+      00ED  Ldl4
+      00EE  FieldGet 1 (_height)
+      00F1  LT
+      00F2  JP +0 -> L2 (00F5)
+    L2:
+      00F5  Inv
+      00F6  JPZ +11 -> L3 (0104)
+      00F9  ObjNew 0 (surtr:IndexOutOfRangeException)
+      00FC  Dup
+      00FD  Ldc1
+      00FE  InvokeSpecial 9 (ctor) args=2 ret=0
+      0103  Throw
+    L3:
+      0104  Ldl0
+      0105  FieldGet 2 (_items)
+      0108  Ldl2
+      0109  Ldl0
+      010A  FieldGet 0 (_width)
+      010D  Mul
+      010E  Ldl1
+      010F  Add
+      0110  Ldl3
+      0111  UnboxDynamic
+      0112  ArrSet
+      0113  ReturnVoid

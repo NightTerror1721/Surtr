@@ -2,7 +2,7 @@
 // built-in `bytes` is a mutable buffer - so `byte` gives individual bytes a name, an invariant
 // (always in range) and the arithmetic/bitwise vocabulary a raw `int` cannot offer without
 // losing the "this is exactly one byte" guarantee.
-public sealed value class byte
+public sealed value class byte : IComparable<byte>, IEquatable<byte>
 {
     public const MinValue: int = 0;
     public const MaxValue: int = 255;

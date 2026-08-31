@@ -54,8 +54,11 @@ namespace Surtr.Stdlib
         /// <summary><c>surtr/diagnostics/</c> â€” <c>Assert</c>.</summary>
         Diagnostics = 1 << 5,
 
+        /// <summary><c>surtr/async/</c> - <c>Scheduler</c> and its ready-made coroutines.</summary>
+        Async = 1 << 6,
+
         /// <summary>Every category â€” equivalent to the unfiltered <c>LoadInto</c> overloads.</summary>
-        All = Core | Math | Collections | Text | Io | Diagnostics,
+        All = Core | Math | Collections | Text | Io | Diagnostics | Async,
     }
 
     /// <summary>
@@ -307,6 +310,7 @@ namespace Surtr.Stdlib
                 "text" => StdlibModules.Text,
                 "io" => StdlibModules.Io,
                 "diagnostics" => StdlibModules.Diagnostics,
+                "async" => StdlibModules.Async,
                 _ => StdlibModules.None,
             };
 
@@ -408,6 +412,21 @@ namespace Surtr.Stdlib
             runtime.DefineNativeBody("surtr.diagnostics.RuntimeInfo.get_IsDebugBuild", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.RuntimeInfoGetIsDebugBuild));
             runtime.DefineNativeBody("surtr.diagnostics.RuntimeInfo.get_ProcessorCount", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.RuntimeInfoGetProcessorCount));
             runtime.DefineNativeBody("surtr.diagnostics.RuntimeInfo.get_WorkingSet", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.RuntimeInfoGetWorkingSet));
+            runtime.DefineNativeBody("surtr.diagnostics.RuntimeInfo.get_LiveEntityCount", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.RuntimeInfoGetLiveEntityCount));
+
+            // ── surtr.io.File ───────────────────────────────────────────────
+
+            runtime.DefineNativeBody("surtr.io.File.fileExists", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.FileExists));
+            runtime.DefineNativeBody("surtr.io.File.directoryExists", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.DirectoryExists));
+            runtime.DefineNativeBody("surtr.io.File.fileDelete", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.FileDelete));
+            runtime.DefineNativeBody("surtr.io.File.createDirectory", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.CreateDirectory));
+            runtime.DefineNativeBody("surtr.io.File.fileReadAllText", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.FileReadAllText));
+            runtime.DefineNativeBody("surtr.io.File.fileWriteAllText", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.FileWriteAllText));
+            runtime.DefineNativeBody("surtr.io.File.fileAppendAllText", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.FileAppendAllText));
+            runtime.DefineNativeBody("surtr.io.File.fileReadAllBytes", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.FileReadAllBytes));
+            runtime.DefineNativeBody("surtr.io.File.fileWriteAllBytes", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.FileWriteAllBytes));
+            runtime.DefineNativeBody("surtr.io.File.listFiles", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.ListFiles));
+            runtime.DefineNativeBody("surtr.io.File.listDirectories", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.ListDirectories));
         }
     }
 }

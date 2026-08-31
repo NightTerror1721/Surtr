@@ -228,6 +228,9 @@ namespace Surtr.Tests.Stdlib
         private static double Float(SurtrRuntime runtime, string name)
             => runtime.Invoke(Function(runtime, name)).AsFloat;
 
+        private static string Text(SurtrRuntime runtime, string name)
+            => runtime.Resolve<SurtrString>(runtime.Invoke(Function(runtime, name)))!.Text;
+
         private static bool BoolIn(SurtrRuntime runtime, string modulePath, string name)
             => runtime.Invoke(FunctionIn(runtime, modulePath, name)).AsBool;
 
@@ -350,7 +353,33 @@ namespace Surtr.Tests.Stdlib
                     + "    var x = 0;\n"
                     + "    for (var i = 0; i < 300000; i++) { x = x + i; }\n"
                     + "    scope.dispose();\n"
-                    + "    return p.getEntry(0).elapsed > 0.0;\n"
+                    + "    return p.getEntry(\"work\").elapsed > 0.0;\n"
+                    + "}\n",
+                "diagnostics/Profiler.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        /// <summary>
+        /// Fase 8: repeated `beginScope(label)` calls for the same label now accumulate into one
+        /// entry (count/total/min/max/average) instead of each call creating a brand new entry -
+        /// what a profiler embedded in a per-frame loop actually needs.
+        /// </summary>
+        [Fact]
+        public void ProfilerAggregatesRepeatedSamplesUnderTheSameLabel()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.diagnostics.Profiler;\n"
+                    + "fun run(): bool {\n"
+                    + "    let p = Profiler();\n"
+                    + "    for (var i = 0; i < 5; i++) {\n"
+                    + "        let scope = p.beginScope(\"update\");\n"
+                    + "        var x = 0;\n"
+                    + "        for (var j = 0; j < 10000; j++) { x = x + j; }\n"
+                    + "        scope.dispose();\n"
+                    + "    }\n"
+                    + "    let entry = p.getEntry(\"update\");\n"
+                    + "    return p.entryCount == 1 && entry.count == 5 && entry.averageElapsed >= 0.0 && entry.totalElapsed >= entry.maxElapsed;\n"
                     + "}\n",
                 "diagnostics/Profiler.surtr");
 
@@ -1681,6 +1710,513 @@ namespace Surtr.Tests.Stdlib
                 "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr", "collections/Map.surtr", "collections/Sequence.surtr");
 
             Assert.True(Bool(runtime, "run"));
+        }
+
+        // ── Fase 8, §6.1: what the object/Enum/ValueType root hierarchy unlocks ─────────
+
+        /// <summary>
+        /// `Set&lt;Vector2&gt;` deduplicates by structural equality even though `Vector2` declares
+        /// no `hashCode()`/`override equals` of its own - confirmed real by
+        /// docs/Plan-Revision-Stdlib.md §6.1 before this test existed.
+        /// </summary>
+        [Fact]
+        public void SetOfValueClassRespectsStructuralEquality()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Set;\n"
+                    + "import surtr.math.Vector;\n"
+                    + "fun run(): int {\n"
+                    + "  let s = Set<Vector2>();\n"
+                    + "  s.add(Vector2(1.0, 2.0));\n"
+                    + "  s.add(Vector2(1.0, 2.0));\n"
+                    + "  s.add(Vector2(3.0, 4.0));\n"
+                    + "  return s.length;\n"
+                    + "}\n",
+                "collections/Collection.surtr", "collections/Set.surtr", "math/Math.surtr", "math/Angle.surtr", "math/Vector.surtr");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+
+        /// <summary>A `value class` key round-trips through `Map&lt;K,V&gt;` by structural equality.</summary>
+        [Fact]
+        public void MapOfValueClassKeyRoundTrips()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Map;\n"
+                    + "import surtr.math.Vector;\n"
+                    + "fun run(): int {\n"
+                    + "  let m = Map<Vector2, int>();\n"
+                    + "  m.set(Vector2(1.0, 2.0), 42);\n"
+                    + "  return m.get(Vector2(1.0, 2.0));\n"
+                    + "}\n",
+                "collections/Map.surtr", "math/Math.surtr", "math/Angle.surtr", "math/Vector.surtr");
+
+            Assert.Equal(42, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// A plain (non-value-class) class with a real <c>override fun equals(other: object?): bool</c>
+        /// AND <c>override fun hashCode(): int</c> is honoured by <c>Set&lt;T&gt;</c> - the half of
+        /// this (hashCode, not just equals) that no test anywhere in the repo covered before Fase 8.
+        /// </summary>
+        [Fact]
+        public void SetOfPlainClassWithCustomEqualsAndHashCode()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Set;\n"
+                    + "class Point {\n"
+                    + "  public let x: int;\n"
+                    + "  public constructor(x: int) { this.x = x; }\n"
+                    + "  public override fun equals(other: object?): bool {\n"
+                    + "    let p = other as? Point;\n"
+                    + "    return p != null && p.x == this.x;\n"
+                    + "  }\n"
+                    + "  public override fun hashCode(): int { return x; }\n"
+                    + "}\n"
+                    + "fun run(): int {\n"
+                    + "  let s = Set<Point>();\n"
+                    + "  s.add(Point(1));\n"
+                    + "  s.add(Point(1));\n"
+                    + "  s.add(Point(2));\n"
+                    + "  return s.length;\n"
+                    + "}\n",
+                "collections/Collection.surtr", "collections/Set.surtr");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+
+        // ── Fase 8, §6.3 P6/collection builders: `[...]`/`{...}` on every collection ────
+
+        /// <summary>
+        /// <c>Map&lt;K,V&gt;</c> gained an <c>each (key: K, value: V)</c> collection-builder
+        /// constructor in Fase 8 - both the explicit-type form and the target-typed-through-the-
+        /// interface form now build a real <c>Map</c>.
+        /// </summary>
+        [Fact]
+        public void MapSupportsDictLiteralConstruction()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Map;\n"
+                    + "fun run(): int {\n"
+                    + "  let m = Map<string, int>{ \"a\": 1, \"b\": 2 };\n"
+                    + "  return m.get(\"a\") + m.get(\"b\");\n"
+                    + "}\n"
+                    + "fun runTargetTyped(): int {\n"
+                    + "  let m: IMap<string, int> = { \"x\": 10, \"y\": 20 };\n"
+                    + "  return m.get(\"x\") + m.get(\"y\");\n"
+                    + "}\n",
+                "collections/Map.surtr");
+
+            Assert.Equal(3, Int(runtime, "run"));
+            Assert.Equal(30, Int(runtime, "runTargetTyped"));
+        }
+
+        /// <summary><c>IDeque&lt;T&gt;</c> gained a <c>default Deque&lt;T&gt;</c> in Fase 8.</summary>
+        [Fact]
+        public void DequeIsReachableThroughTheInterfaceLiteral()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Queue;\n"
+                    + "fun run(): int {\n"
+                    + "  let d: IDeque<int> = [1, 2, 3];\n"
+                    + "  return d.dequeue() * 100 + d.dequeueBack();\n"
+                    + "}\n",
+                "collections/Collection.surtr", "collections/Queue.surtr");
+
+            Assert.Equal(103, Int(runtime, "run"));
+        }
+
+        // ── Fase 8, §6.2/O4 + §6.3/P6: byte/Angle wired to IComparable<T>/IEquatable<T> ──
+
+        /// <summary>
+        /// <c>byte</c> and <c>Angle</c> now implement <c>IComparable&lt;T&gt;</c>/<c>IEquatable&lt;T&gt;</c>
+        /// (docs/Plan-Revision-Stdlib.md §6.2/O4) - dispatched through the interface, not just
+        /// called directly, since that is exactly the path B5 (§2.0) used to break.
+        /// </summary>
+        [Fact]
+        public void ByteAndAngleDispatchComparableAndEquatableThroughTheInterface()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.core.byte;\n"
+                    + "import surtr.math.Math;\n"
+                    + "import surtr.math.Angle;\n"
+                    + "fun runByte(): bool {\n"
+                    + "  let a: IComparable<byte> = byte(5);\n"
+                    + "  let e: IEquatable<byte> = byte(5);\n"
+                    + "  return a.compareTo(byte(3)) > 0 && e.equals(byte(5));\n"
+                    + "}\n"
+                    + "fun runAngle(): bool {\n"
+                    + "  let a: IComparable<Angle> = Angle.fromDegrees(90.0);\n"
+                    + "  let e: IEquatable<Angle> = Angle.fromDegrees(90.0);\n"
+                    + "  return a.compareTo(Angle.fromDegrees(10.0)) > 0 && e.equals(Angle.fromDegrees(90.0));\n"
+                    + "}\n",
+                "core/byte.surtr", "math/Math.surtr", "math/Angle.surtr");
+
+            Assert.True(Bool(runtime, "runByte"));
+            Assert.True(Bool(runtime, "runAngle"));
+        }
+
+        /// <summary><c>Sequence&lt;T&gt;.min()/max()/sorted()</c> with no comparator, for a <c>T : IComparable&lt;T&gt;</c>.</summary>
+        [Fact]
+        public void ComparableSequenceExtensionsWorkWithNoComparator()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Collection;\n"
+                    + "import surtr.collections.List;\n"
+                    + "import surtr.collections.Set;\n"
+                    + "import surtr.collections.Map;\n"
+                    + "import surtr.collections.Sequence;\n"
+                    + "import surtr.core.byte;\n"
+                    + "fun run(): int {\n"
+                    + "  let s = Sequence<byte>.of(byte(3), byte(1), byte(2));\n"
+                    + "  let mn = s.minNatural(); let mx = s.maxNatural();\n"
+                    + "  let sorted = s.sortedNatural().toArray();\n"
+                    + "  return mn!!.toInt() * 10000 + mx!!.toInt() * 1000 + sorted[0].toInt() * 100 + sorted[1].toInt() * 10 + sorted[2].toInt();\n"
+                    + "}\n",
+                "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr", "collections/Map.surtr", "collections/Sequence.surtr", "core/byte.surtr");
+
+            Assert.Equal(13123, Int(runtime, "run"));
+        }
+
+        // ── Fase 8, §6.2/O2-O3 + §6.3/P7: toDisplayString() on collections ─────────────
+
+        [Fact]
+        public void CollectionsRenderADebugDisplayString()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Collection;\n"
+                    + "import surtr.collections.List;\n"
+                    + "import surtr.collections.Sequence;\n"
+                    + "fun runList(): string {\n"
+                    + "  let l = List<int>(); l.add(1); l.add(2); l.add(3);\n"
+                    + "  return l.toDisplayString();\n"
+                    + "}\n"
+                    + "fun runLinkedList(): string {\n"
+                    + "  let l = LinkedList<int>(); l.add(1); l.add(2);\n"
+                    + "  return l.toDisplayString();\n"
+                    + "}\n"
+                    + "fun runSequence(): string {\n"
+                    + "  let s = Sequence<int>.of(1, 2, 3);\n"
+                    + "  return s.toDisplayString();\n"
+                    + "}\n",
+                "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr", "collections/Map.surtr", "collections/Sequence.surtr");
+
+            Assert.Equal("[1, 2, 3]", Text(runtime, "runList"));
+            Assert.Equal("[1, 2]", Text(runtime, "runLinkedList"));
+            Assert.Equal("[1, 2, 3]", Text(runtime, "runSequence"));
+        }
+
+        // ── Fase 8, §6.2/O2: Assert/Contracts get a real diff message via object.toString() ──
+
+        /// <summary>
+        /// A 2-arg <c>assertEqual(a, b)</c> call now prefers the new <c>&lt;T : object&gt;</c>
+        /// overload (real "expected X but got Y" message) over the old 3-arg, unconstrained one
+        /// with its message defaulted - confirmed exact-arity-wins overload resolution behavior.
+        /// </summary>
+        [Fact]
+        public void AssertEqualWithNoMessageShowsTheActualValues()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.diagnostics.Assert;\n"
+                    + "fun run(): string {\n"
+                    + "  try { assertEqual(1, 2); return \"no exception\"; }\n"
+                    + "  catch (e: AssertionException) { return e.message; }\n"
+                    + "}\n"
+                    + "fun runWithMessageStillWorks(): string {\n"
+                    + "  try { assertEqual(1, 2, \"custom\"); return \"no exception\"; }\n"
+                    + "  catch (e: AssertionException) { return e.message; }\n"
+                    + "}\n",
+                "diagnostics/Assert.surtr");
+
+            Assert.Equal("Expected 1 but got 2.", Text(runtime, "run"));
+            Assert.Equal("custom", Text(runtime, "runWithMessageStillWorks"));
+        }
+
+        [Fact]
+        public void RequireEqualShowsTheActualValuesAndParamName()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.diagnostics.Contracts;\n"
+                    + "fun run(): string {\n"
+                    + "  try { requireEqual(1, 2, \"count\"); return \"no exception\"; }\n"
+                    + "  catch (e: PreconditionException) { return e.message; }\n"
+                    + "}\n",
+                "diagnostics/Contracts.surtr");
+
+            Assert.Equal("Expected 2 but got 1. Parameter: count", Text(runtime, "run"));
+        }
+
+        [Fact]
+        public void RemainingCollectionsRenderADebugDisplayString()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Collection;\n"
+                    + "import surtr.collections.List;\n"
+                    + "import surtr.collections.Set;\n"
+                    + "import surtr.collections.Map;\n"
+                    + "import surtr.collections.Queue;\n"
+                    + "import surtr.collections.Stack;\n"
+                    + "import surtr.collections.PriorityQueue;\n"
+                    + "fun runSet(): string { let s = Set<int>(); s.add(1); return s.toDisplayString(); }\n"
+                    + "fun runMap(): string { let m = Map<string, int>(); m.set(\"a\", 1); return m.toDisplayString(); }\n"
+                    + "fun runQueue(): string { let q = Queue<int>(); q.enqueue(1); q.enqueue(2); return q.toDisplayString(); }\n"
+                    + "fun runStack(): string { let s = Stack<int>(); s.push(1); s.push(2); return s.toDisplayString(); }\n"
+                    + "fun runDeque(): string { let d = Deque<int>(); d.enqueueBack(1); d.enqueueBack(2); return d.toDisplayString(); }\n"
+                    + "fun runPQ(): string { let p = PriorityQueue<int>(); p.enqueue(5, 1.0); return p.toDisplayString(); }\n",
+                "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr", "collections/Map.surtr",
+                "collections/Queue.surtr", "collections/Stack.surtr", "collections/PriorityQueue.surtr");
+
+            Assert.Equal("{1}", Text(runtime, "runSet"));
+            Assert.Equal("{a: 1}", Text(runtime, "runMap"));
+            Assert.Equal("[1, 2]", Text(runtime, "runQueue"));
+            Assert.Equal("[2, 1]", Text(runtime, "runStack"));
+            Assert.Equal("[1, 2]", Text(runtime, "runDeque"));
+            Assert.Equal("[5]", Text(runtime, "runPQ"));
+        }
+
+        // ── Fase 8, §6.3/P10, P5, P4: Vector2Int/Vector3Int, Color/Color32, Rect, Grid<T> ──
+
+        [Fact]
+        public void Vector2IntAndVector3IntArithmeticWorksAcrossModules()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.math.Vector;\n"
+                    + "fun run2(): int {\n"
+                    + "  let a = Vector2Int(1, 2); let b = Vector2Int(3, 4);\n"
+                    + "  let c = a + b;\n"
+                    + "  return c.x * 100 + c.y;\n"
+                    + "}\n"
+                    + "fun run3(): int {\n"
+                    + "  let a = Vector3Int(1, 2, 3); let b = Vector3Int(1, 1, 1);\n"
+                    + "  let c = (a - b) * 2;\n"
+                    + "  return c.x * 10000 + c.y * 100 + c.z;\n"
+                    + "}\n"
+                    + "fun runEquals(): bool {\n"
+                    + "  return Vector2Int(1, 2) == Vector2Int(1, 2) && Vector2Int(1, 2) != Vector2Int(1, 3);\n"
+                    + "}\n",
+                "math/Math.surtr", "math/Angle.surtr", "math/Vector.surtr");
+
+            Assert.Equal(406, Int(runtime, "run2"));
+            Assert.Equal(204, Int(runtime, "run3"));
+            Assert.True(Bool(runtime, "runEquals"));
+        }
+
+        [Fact]
+        public void ColorAndColor32RoundTripAcrossModules()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.math.Color;\n"
+                    + "fun run(): int {\n"
+                    + "  let c = Color(1.0, 0.5, 0.0, 1.0);\n"
+                    + "  let packed = c.toColor32();\n"
+                    + "  return packed.r * 1000000 + packed.g * 1000 + packed.b;\n"
+                    + "}\n"
+                    + "fun runBack(): bool {\n"
+                    + "  let c32 = Color32.fromChannels(255, 0, 0, 255);\n"
+                    + "  let c = c32.toColor();\n"
+                    + "  return c.r == 1.0 && c.g == 0.0 && c.b == 0.0;\n"
+                    + "}\n",
+                "math/Math.surtr", "math/Color.surtr");
+
+            // r=255 (1.0*255 rounded), g=128 (0.5*255 rounded), b=0
+            Assert.Equal(255128000, Int(runtime, "run"));
+            Assert.True(Bool(runtime, "runBack"));
+        }
+
+        [Fact]
+        public void RectContainsAndOverlapsAcrossModules()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.math.Rect;\n"
+                    + "import surtr.math.Vector;\n"
+                    + "fun runContains(): bool {\n"
+                    + "  let r = Rect(0.0, 0.0, 10.0, 10.0);\n"
+                    + "  return r.contains(Vector2(5.0, 5.0)) && !r.contains(Vector2(20.0, 5.0));\n"
+                    + "}\n"
+                    + "fun runOverlaps(): bool {\n"
+                    + "  let a = Rect(0.0, 0.0, 10.0, 10.0);\n"
+                    + "  let b = Rect(5.0, 5.0, 10.0, 10.0);\n"
+                    + "  let c = Rect(20.0, 20.0, 1.0, 1.0);\n"
+                    + "  return a.overlaps(b) && !a.overlaps(c);\n"
+                    + "}\n",
+                "math/Math.surtr", "math/Angle.surtr", "math/Vector.surtr", "math/Rect.surtr");
+
+            Assert.True(Bool(runtime, "runContains"));
+            Assert.True(Bool(runtime, "runOverlaps"));
+        }
+
+        [Fact]
+        public void GridGetSetAndBoundsCheckingAcrossModules()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Grid;\n"
+                    + "fun run(): int {\n"
+                    + "  let g = Grid<int>(3, 2);\n"
+                    + "  g.fill(-1);\n"
+                    + "  g.set(2, 1, 42);\n"
+                    + "  return g.get(2, 1) + g.get(0, 0);\n"
+                    + "}\n"
+                    + "fun runOutOfBounds(): bool {\n"
+                    + "  let g = Grid<int>(2, 2);\n"
+                    + "  try { g.get(5, 5); return false; }\n"
+                    + "  catch (e: IndexOutOfRangeException) { return true; }\n"
+                    + "}\n",
+                "collections/Grid.surtr");
+
+            Assert.Equal(41, Int(runtime, "run"));
+            Assert.True(Bool(runtime, "runOutOfBounds"));
+        }
+
+        // ── Fase 8, §6.3/P9: Result<T, E> ────────────────────────────────────────────
+
+        [Fact]
+        public void ResultOkAndErrorRoundTripAcrossModules()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.core.Result;\n"
+                    + "fun divide(a: int, b: int): Result<int, string> {\n"
+                    + "  if (b == 0) return Result<int, string>.error(\"division by zero\");\n"
+                    + "  return Result<int, string>.ok(a / b);\n"
+                    + "}\n"
+                    + "fun runOk(): int {\n"
+                    + "  let r = divide(10, 2);\n"
+                    + "  if (!r.isOk) return -1;\n"
+                    + "  return r.unwrap();\n"
+                    + "}\n"
+                    + "fun runError(): string {\n"
+                    + "  let r = divide(10, 0);\n"
+                    + "  if (!r.isError) return \"expected error\";\n"
+                    + "  return r.unwrapError();\n"
+                    + "}\n"
+                    + "fun runUnwrapOr(): int {\n"
+                    + "  return divide(10, 0).unwrapOr(-99);\n"
+                    + "}\n",
+                "core/Result.surtr");
+
+            Assert.Equal(5, Int(runtime, "runOk"));
+            Assert.Equal("division by zero", Text(runtime, "runError"));
+            Assert.Equal(-99, Int(runtime, "runUnwrapOr"));
+        }
+
+        // ── Fase 8: RuntimeInfo review ───────────────────────────────────────────────
+
+        /// <summary>
+        /// `EngineVersion` used to be a hardcoded "0.1.0" literal that never reflected the real
+        /// assembly. `LiveEntityCount` is new: what actually drives GC pressure, unlike the raw OS
+        /// `WorkingSet`.
+        /// </summary>
+        [Fact]
+        public void RuntimeInfoReportsARealEngineVersionAndLiveEntityCount()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.diagnostics.RuntimeInfo;\n"
+                    + "fun engineVersion(): string { return EngineVersion; }\n"
+                    + "fun liveEntityCount(): int { return LiveEntityCount; }\n",
+                "diagnostics/RuntimeInfo.surtr");
+
+            Assert.NotEqual("0.1.0", Text(runtime, "engineVersion"));
+            Assert.True(Int(runtime, "liveEntityCount") >= 0);
+        }
+
+        // ── Fase 8, §6.3/P1: Scheduler + ready-made coroutines ────────────────────────
+
+        [Fact]
+        public void SchedulerRunsADelayedCoroutineAfterEnoughUpdates()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.async.Scheduler;\n"
+                    + "var ran: bool = false;\n"
+                    + "fun run(): bool {\n"
+                    + "  let s = Scheduler();\n"
+                    + "  s.start(delay(1.0, () => { ran = true; }));\n"
+                    + "  s.update(0.5);\n"    // first update always resumes the freshly-started coroutine up to its first yield: sets the real 1.0s wait
+                    + "  if (ran) return false;\n"
+                    + "  if (s.activeCount != 1) return false;\n"
+                    + "  s.update(0.6);\n"     // 0.6 of the 1.0s wait elapsed - not enough yet
+                    + "  if (ran) return false;\n"
+                    + "  s.update(0.6);\n"     // now 1.2 of the 1.0s wait elapsed - fires
+                    + "  if (!ran) return false;\n"
+                    + "  return s.activeCount == 0;\n"
+                    + "}\n",
+                "async/Scheduler.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void SchedulerRepeatEveryFiresRepeatedlyUntilStopped()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.async.Scheduler;\n"
+                    + "var count: int = 0;\n"
+                    + "fun run(): int {\n"
+                    + "  let s = Scheduler();\n"
+                    + "  s.start(repeatEvery(1.0, () => { count = count + 1; }));\n"
+                    + "  for (var i = 0; i < 5; i++) s.update(1.0);\n"
+                    + "  s.stopAll();\n"
+                    + "  s.update(1.0);\n"
+                    + "  return count;\n"
+                    + "}\n",
+                "async/Scheduler.surtr");
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        // ── Fase 8: surtr.io.File ──────────────────────────────────────────────────
+
+        [Fact]
+        public void FileWriteReadAndDeleteRoundTripsRealFiles()
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "surtr-file-test-" + Guid.NewGuid().ToString("N"));
+            string path = Path.Combine(dir, "config.txt").Replace('\\', '/');
+            string dirForwardSlash = dir.Replace('\\', '/');
+            try
+            {
+                var runtime = BuildAndLoad(
+                    "import surtr.io.File;\n"
+                        + $"fun runNotExistsYet(): bool {{ return !fileExists(\"{path}\"); }}\n"
+                        + $"fun runCreateDir(): void {{ createDirectory(\"{dirForwardSlash}\"); }}\n"
+                        + $"fun runWrite(): void {{ fileWriteAllText(\"{path}\", \"hello=world\"); }}\n"
+                        + $"fun runExists(): bool {{ return fileExists(\"{path}\"); }}\n"
+                        + $"fun runRead(): string {{ return fileReadAllText(\"{path}\"); }}\n"
+                        + $"fun runListCount(): int {{ return listFiles(\"{dirForwardSlash}\").length; }}\n"
+                        + $"fun runDelete(): void {{ fileDelete(\"{path}\"); }}\n"
+                        + $"fun runNotExistsAfterDelete(): bool {{ return !fileExists(\"{path}\"); }}\n",
+                    "io/File.surtr");
+
+                Assert.True(Bool(runtime, "runNotExistsYet"));
+                runtime.Invoke(Function(runtime, "runCreateDir"));
+                runtime.Invoke(Function(runtime, "runWrite"));
+                Assert.True(Bool(runtime, "runExists"));
+                Assert.Equal("hello=world", Text(runtime, "runRead"));
+                Assert.Equal(1, Int(runtime, "runListCount"));
+                runtime.Invoke(Function(runtime, "runDelete"));
+                Assert.True(Bool(runtime, "runNotExistsAfterDelete"));
+            }
+            finally
+            {
+                if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+            }
+        }
+
+        /// <summary>
+        /// A missing file is NOT catchable by Surtr script code today: a native body has no
+        /// established way to raise a Surtr-level exception a script's own `catch` can see (there is
+        /// no public "raise this as a real Surtr throw" API on `SurtrRuntime`/`SurtrCallArguments` -
+        /// confirmed by searching for one), so the underlying `System.IO` exception propagates
+        /// unmodified all the way to the host's own try/catch. Documented here as a real, current
+        /// limitation (Plan-Revision-Stdlib.md §6.4) rather than silently claimed to work.
+        /// </summary>
+        [Fact]
+        public void FileReadingAMissingFilePropagatesAsAHostLevelException()
+        {
+            string path = "/definitely/does/not/exist/" + Guid.NewGuid().ToString("N") + ".txt";
+            var runtime = BuildAndLoad(
+                "import surtr.io.File;\n"
+                    + $"fun run(): bool {{ try {{ fileReadAllText(\"{path}\"); return false; }} catch (e: Exception) {{ return true; }} }}\n",
+                "io/File.surtr");
+
+            Assert.Throws<System.IO.DirectoryNotFoundException>(() => Bool(runtime, "run"));
         }
     }
 }

@@ -1,5 +1,5 @@
 module surtr.diagnostics.Contracts
-  constants: 9   types: 3   fields: 0   methods: 28   modules: 0
+  constants: 12   types: 3   fields: 0   methods: 31   modules: 0
   string #0 = " Parameter: "
   string #1 = "Parameter must not be null. Parameter: "
   string #2 = "String must not be null or empty. Parameter: "
@@ -8,6 +8,9 @@ module surtr.diagnostics.Contracts
   string #5 = ". Parameter: "
   string #6 = "Value must be positive. Parameter: "
   string #8 = "Value must be non-negative. Parameter: "
+  string #9 = "Expected "
+  string #10 = " but got "
+  string #11 = "."
 
   type table:
     #0  surtr.diagnostics.Contracts:PreconditionException
@@ -29,159 +32,185 @@ module surtr.diagnostics.Contracts
     #11  requirePositive(float, string) -> void
     #12  requireNonNegative(int, string) -> void
     #13  requireNonNegative(float, string) -> void
-    #14  ensure(bool, string) -> void
-    #15  ensureNotNull(T0, string) -> void
-    #16  ensurePositive(int, string) -> void
-    #17  ensurePositive(float, string) -> void
-    #18  ensureNonNegative(int, string) -> void
-    #19  ensureNonNegative(float, string) -> void
-    #20  invariant(bool, string) -> void
-    #21  invariantNotNull(T0, string) -> void
-    #22  invariantNonEmpty(string, string) -> void
-    #23  invariantNonEmpty(surtr:IIterable<unknown>, string) -> void
-    #24  surtr:Exception.ctor(string) -> void
-    #25  int.toString() -> string
-    #26  surtr:IIterable<T0>.iterate() -> surtr:IIterator<T0>
-    #27  surtr:IIterator<T0>.moveNext() -> bool
+    #14  requireEqual(T0, T0, string) -> void
+    #15  ensure(bool, string) -> void
+    #16  ensureNotNull(T0, string) -> void
+    #17  ensurePositive(int, string) -> void
+    #18  ensurePositive(float, string) -> void
+    #19  ensureNonNegative(int, string) -> void
+    #20  ensureNonNegative(float, string) -> void
+    #21  ensureEqual(T0, T0) -> void
+    #22  invariant(bool, string) -> void
+    #23  invariantNotNull(T0, string) -> void
+    #24  invariantNonEmpty(string, string) -> void
+    #25  invariantNonEmpty(surtr:IIterable<unknown>, string) -> void
+    #26  surtr:Exception.ctor(string) -> void
+    #27  int.toString() -> string
+    #28  surtr:object.toString() -> string
+    #29  surtr:IIterable<T0>.iterate() -> surtr:IIterator<T0>
+    #30  surtr:IIterator<T0>.moveNext() -> bool
 
 [public] static ensure(condition: bool, message: string = "Postcondition failed."): void
-  ; entry 11, locals 2, stack 3, code 0112..0123
-    0112  Ldl0
-    0113  Inv
-    0114  JPZ +11 -> L0 (0122)
-    0117  ObjNew 1 (surtr.diagnostics.Contracts:PostconditionException)
-    011A  Dup
-    011B  Ldl1
-    011C  InvokeSpecial 1 (ctor) args=2 ret=0
-    0121  Throw
+  ; entry 12, locals 2, stack 3, code 0138..0149
+    0138  Ldl0
+    0139  Inv
+    013A  JPZ +11 -> L0 (0148)
+    013D  ObjNew 1 (surtr.diagnostics.Contracts:PostconditionException)
+    0140  Dup
+    0141  Ldl1
+    0142  InvokeSpecial 1 (ctor) args=2 ret=0
+    0147  Throw
   L0:
-    0122  ReturnVoid
+    0148  ReturnVoid
+
+[public] static ensureEqual(actual: T0, expected: T0): void
+  ; entry 18, locals 2, stack 7, code 019F..01C5
+    019F  Ldl0
+    01A0  Ldl1
+    01A1  DynNE
+    01A2  JPZ +31 -> L0 (01C4)
+    01A5  ObjNew 1 (surtr.diagnostics.Contracts:PostconditionException)
+    01A8  Dup
+    01A9  Ldc9
+    01AA  Ldl1
+    01AB  BoxDynamic
+    01AC  InvokeVirtual 28 (toString) args=1 ret=1
+    01B1  LdcS 10 " but got "
+    01B3  Ldl0
+    01B4  BoxDynamic
+    01B5  InvokeVirtual 28 (toString) args=1 ret=1
+    01BA  LdcS 11 "."
+    01BC  StrCat 5
+    01BE  InvokeSpecial 1 (ctor) args=2 ret=0
+    01C3  Throw
+  L0:
+    01C4  ReturnVoid
 
 [public] static ensureNonNegative(value: int, message: string = "Result must be non-negative."): void
-  ; entry 15, locals 2, stack 3, code 0156..0168
-    0156  Ldl0
-    0157  PushI8 0
-    0159  JPGE +11 -> L0 (0167)
-    015C  ObjNew 1 (surtr.diagnostics.Contracts:PostconditionException)
-    015F  Dup
-    0160  Ldl1
-    0161  InvokeSpecial 1 (ctor) args=2 ret=0
-    0166  Throw
+  ; entry 16, locals 2, stack 3, code 017C..018E
+    017C  Ldl0
+    017D  PushI8 0
+    017F  JPGE +11 -> L0 (018D)
+    0182  ObjNew 1 (surtr.diagnostics.Contracts:PostconditionException)
+    0185  Dup
+    0186  Ldl1
+    0187  InvokeSpecial 1 (ctor) args=2 ret=0
+    018C  Throw
   L0:
-    0167  ReturnVoid
+    018D  ReturnVoid
 
 [public] static ensureNonNegative(value: float, message: string = "Result must be non-negative."): void
-  ; entry 16, locals 2, stack 3, code 0168..0179
-    0168  Ldl0
-    0169  Ldc7
-    016A  JPFGE +11 -> L0 (0178)
-    016D  ObjNew 1 (surtr.diagnostics.Contracts:PostconditionException)
-    0170  Dup
-    0171  Ldl1
-    0172  InvokeSpecial 1 (ctor) args=2 ret=0
-    0177  Throw
+  ; entry 17, locals 2, stack 3, code 018E..019F
+    018E  Ldl0
+    018F  Ldc7
+    0190  JPFGE +11 -> L0 (019E)
+    0193  ObjNew 1 (surtr.diagnostics.Contracts:PostconditionException)
+    0196  Dup
+    0197  Ldl1
+    0198  InvokeSpecial 1 (ctor) args=2 ret=0
+    019D  Throw
   L0:
-    0178  ReturnVoid
+    019E  ReturnVoid
 
 [public] static ensureNotNull(value: T0, message: string = "Result must not be null."): void
-  ; entry 12, locals 2, stack 3, code 0123..0133
-    0123  Ldl0
-    0124  JPNN +11 -> L0 (0132)
-    0127  ObjNew 1 (surtr.diagnostics.Contracts:PostconditionException)
-    012A  Dup
-    012B  Ldl1
-    012C  InvokeSpecial 1 (ctor) args=2 ret=0
-    0131  Throw
+  ; entry 13, locals 2, stack 3, code 0149..0159
+    0149  Ldl0
+    014A  JPNN +11 -> L0 (0158)
+    014D  ObjNew 1 (surtr.diagnostics.Contracts:PostconditionException)
+    0150  Dup
+    0151  Ldl1
+    0152  InvokeSpecial 1 (ctor) args=2 ret=0
+    0157  Throw
   L0:
-    0132  ReturnVoid
+    0158  ReturnVoid
 
 [public] static ensurePositive(value: int, message: string = "Result must be positive."): void
-  ; entry 13, locals 2, stack 3, code 0133..0145
-    0133  Ldl0
-    0134  PushI8 0
-    0136  JPGT +11 -> L0 (0144)
-    0139  ObjNew 1 (surtr.diagnostics.Contracts:PostconditionException)
-    013C  Dup
-    013D  Ldl1
-    013E  InvokeSpecial 1 (ctor) args=2 ret=0
-    0143  Throw
+  ; entry 14, locals 2, stack 3, code 0159..016B
+    0159  Ldl0
+    015A  PushI8 0
+    015C  JPGT +11 -> L0 (016A)
+    015F  ObjNew 1 (surtr.diagnostics.Contracts:PostconditionException)
+    0162  Dup
+    0163  Ldl1
+    0164  InvokeSpecial 1 (ctor) args=2 ret=0
+    0169  Throw
   L0:
-    0144  ReturnVoid
+    016A  ReturnVoid
 
 [public] static ensurePositive(value: float, message: string = "Result must be positive."): void
-  ; entry 14, locals 2, stack 3, code 0145..0156
-    0145  Ldl0
-    0146  Ldc7
-    0147  JPFGT +11 -> L0 (0155)
-    014A  ObjNew 1 (surtr.diagnostics.Contracts:PostconditionException)
-    014D  Dup
-    014E  Ldl1
-    014F  InvokeSpecial 1 (ctor) args=2 ret=0
-    0154  Throw
+  ; entry 15, locals 2, stack 3, code 016B..017C
+    016B  Ldl0
+    016C  Ldc7
+    016D  JPFGT +11 -> L0 (017B)
+    0170  ObjNew 1 (surtr.diagnostics.Contracts:PostconditionException)
+    0173  Dup
+    0174  Ldl1
+    0175  InvokeSpecial 1 (ctor) args=2 ret=0
+    017A  Throw
   L0:
-    0155  ReturnVoid
+    017B  ReturnVoid
 
 [public] static invariant(condition: bool, message: string = "Invariant violated."): void
-  ; entry 17, locals 2, stack 3, code 0179..018A
-    0179  Ldl0
-    017A  Inv
-    017B  JPZ +11 -> L0 (0189)
-    017E  ObjNew 2 (surtr.diagnostics.Contracts:InvariantException)
-    0181  Dup
-    0182  Ldl1
-    0183  InvokeSpecial 2 (ctor) args=2 ret=0
-    0188  Throw
+  ; entry 19, locals 2, stack 3, code 01C5..01D6
+    01C5  Ldl0
+    01C6  Inv
+    01C7  JPZ +11 -> L0 (01D5)
+    01CA  ObjNew 2 (surtr.diagnostics.Contracts:InvariantException)
+    01CD  Dup
+    01CE  Ldl1
+    01CF  InvokeSpecial 2 (ctor) args=2 ret=0
+    01D4  Throw
   L0:
-    0189  ReturnVoid
+    01D5  ReturnVoid
 
 [public] static invariantNonEmpty(value: string, message: string = "Object state is empty."): void
-  ; entry 19, locals 2, stack 3, code 019A..01B8
-    019A  Ldl0
-    019B  IsNull
-    019C  Dup
-    019D  JPNZ +9 -> L0 (01A9)
-    01A0  Pop
-    01A1  Ldl0
-    01A2  StrLen
-    01A3  PushI8 0
-    01A5  EQ
-    01A6  JP +0 -> L0 (01A9)
+  ; entry 21, locals 2, stack 3, code 01E6..0204
+    01E6  Ldl0
+    01E7  IsNull
+    01E8  Dup
+    01E9  JPNZ +9 -> L0 (01F5)
+    01EC  Pop
+    01ED  Ldl0
+    01EE  StrLen
+    01EF  PushI8 0
+    01F1  EQ
+    01F2  JP +0 -> L0 (01F5)
   L0:
-    01A9  JPZ +11 -> L1 (01B7)
-    01AC  ObjNew 2 (surtr.diagnostics.Contracts:InvariantException)
-    01AF  Dup
-    01B0  Ldl1
-    01B1  InvokeSpecial 2 (ctor) args=2 ret=0
-    01B6  Throw
+    01F5  JPZ +11 -> L1 (0203)
+    01F8  ObjNew 2 (surtr.diagnostics.Contracts:InvariantException)
+    01FB  Dup
+    01FC  Ldl1
+    01FD  InvokeSpecial 2 (ctor) args=2 ret=0
+    0202  Throw
   L1:
-    01B7  ReturnVoid
+    0203  ReturnVoid
 
 [public] static invariantNonEmpty(collection: surtr:IIterable<unknown>, message: string = "Collection is empty."): void
-  ; entry 20, locals 2, stack 3, code 01B8..01D3
-    01B8  Ldl0
-    01B9  InvokeInterface 26 (iterate) args=1 ret=1
-    01BE  InvokeInterface 27 (moveNext) args=1 ret=1
-    01C3  Inv
-    01C4  JPZ +11 -> L0 (01D2)
-    01C7  ObjNew 2 (surtr.diagnostics.Contracts:InvariantException)
-    01CA  Dup
-    01CB  Ldl1
-    01CC  InvokeSpecial 2 (ctor) args=2 ret=0
-    01D1  Throw
+  ; entry 22, locals 2, stack 3, code 0204..021F
+    0204  Ldl0
+    0205  InvokeInterface 29 (iterate) args=1 ret=1
+    020A  InvokeInterface 30 (moveNext) args=1 ret=1
+    020F  Inv
+    0210  JPZ +11 -> L0 (021E)
+    0213  ObjNew 2 (surtr.diagnostics.Contracts:InvariantException)
+    0216  Dup
+    0217  Ldl1
+    0218  InvokeSpecial 2 (ctor) args=2 ret=0
+    021D  Throw
   L0:
-    01D2  ReturnVoid
+    021E  ReturnVoid
 
 [public] static invariantNotNull(value: T0, message: string = "Object state contains null."): void
-  ; entry 18, locals 2, stack 3, code 018A..019A
-    018A  Ldl0
-    018B  JPNN +11 -> L0 (0199)
-    018E  ObjNew 2 (surtr.diagnostics.Contracts:InvariantException)
-    0191  Dup
-    0192  Ldl1
-    0193  InvokeSpecial 2 (ctor) args=2 ret=0
-    0198  Throw
+  ; entry 20, locals 2, stack 3, code 01D6..01E6
+    01D6  Ldl0
+    01D7  JPNN +11 -> L0 (01E5)
+    01DA  ObjNew 2 (surtr.diagnostics.Contracts:InvariantException)
+    01DD  Dup
+    01DE  Ldl1
+    01DF  InvokeSpecial 2 (ctor) args=2 ret=0
+    01E4  Throw
   L0:
-    0199  ReturnVoid
+    01E5  ReturnVoid
 
 [public] static require(condition: bool, paramName: string, message: string = "Precondition failed."): void
   ; entry 0, locals 3, stack 5, code 0000..0015
@@ -212,6 +241,30 @@ module surtr.diagnostics.Contracts
   L0:
     0025  ReturnVoid
 
+[public] static requireEqual(actual: T0, expected: T0, paramName: string): void
+  ; entry 11, locals 3, stack 8, code 0112..0138
+    0112  Ldl0
+    0113  Ldl1
+    0114  DynNE
+    0115  JPZ +31 -> L0 (0137)
+    0118  ObjNew 0 (surtr.diagnostics.Contracts:PreconditionException)
+    011B  Dup
+    011C  Ldc9
+    011D  Ldl1
+    011E  BoxDynamic
+    011F  InvokeVirtual 28 (toString) args=1 ret=1
+    0124  LdcS 10 " but got "
+    0126  Ldl0
+    0127  BoxDynamic
+    0128  InvokeVirtual 28 (toString) args=1 ret=1
+    012D  Ldc5
+    012E  Ldl2
+    012F  StrCat 6
+    0131  InvokeSpecial 0 (ctor) args=2 ret=0
+    0136  Throw
+  L0:
+    0137  ReturnVoid
+
 [public] static requireInRange(value: int, low: int, high: int, paramName: string): void
   ; entry 6, locals 4, stack 8, code 0090..00C0
     0090  Ldl0
@@ -231,11 +284,11 @@ module surtr.diagnostics.Contracts
     00A5  Ldc3
     00A6  Ldl1
     00A7  BoxInt
-    00A8  InvokeVirtual 25 (toString) args=1 ret=1
+    00A8  InvokeVirtual 27 (toString) args=1 ret=1
     00AD  Ldc4
     00AE  Ldl2
     00AF  BoxInt
-    00B0  InvokeVirtual 25 (toString) args=1 ret=1
+    00B0  InvokeVirtual 27 (toString) args=1 ret=1
     00B5  Ldc5
     00B6  Ldl3
     00B7  StrCat 6
@@ -385,26 +438,26 @@ module surtr.diagnostics.Contracts
 class InvariantException : surtr:Exception  [public]
 
   [public] ctor (message: string = "Invariant violated."): void
-    ; entry 23, locals 2, stack 2, code 01E3..01EB
-      01E3  Ldl0
-      01E4  Ldl1
-      01E5  InvokeSpecial 24 (ctor) args=2 ret=0
-      01EA  ReturnVoid
+    ; entry 25, locals 2, stack 2, code 022F..0237
+      022F  Ldl0
+      0230  Ldl1
+      0231  InvokeSpecial 26 (ctor) args=2 ret=0
+      0236  ReturnVoid
 
 class PostconditionException : surtr:Exception  [public]
 
   [public] ctor (message: string = "Postcondition failed."): void
-    ; entry 22, locals 2, stack 2, code 01DB..01E3
-      01DB  Ldl0
-      01DC  Ldl1
-      01DD  InvokeSpecial 24 (ctor) args=2 ret=0
-      01E2  ReturnVoid
+    ; entry 24, locals 2, stack 2, code 0227..022F
+      0227  Ldl0
+      0228  Ldl1
+      0229  InvokeSpecial 26 (ctor) args=2 ret=0
+      022E  ReturnVoid
 
 class PreconditionException : surtr:Exception  [public]
 
   [public] ctor (message: string = "Precondition failed."): void
-    ; entry 21, locals 2, stack 2, code 01D3..01DB
-      01D3  Ldl0
-      01D4  Ldl1
-      01D5  InvokeSpecial 24 (ctor) args=2 ret=0
-      01DA  ReturnVoid
+    ; entry 23, locals 2, stack 2, code 021F..0227
+      021F  Ldl0
+      0220  Ldl1
+      0221  InvokeSpecial 26 (ctor) args=2 ret=0
+      0226  ReturnVoid

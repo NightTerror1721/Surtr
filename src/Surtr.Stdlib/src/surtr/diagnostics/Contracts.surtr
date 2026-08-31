@@ -71,6 +71,14 @@ public fun requireNonNegative(value: float, paramName: string): void
     if (value < 0.0) throw PreconditionException("Value must be non-negative. Parameter: " + paramName);
 }
 
+// Fase 8, §6.2/O2: now that object is a real root, a precondition can show the actual mismatched
+// values rather than only naming the parameter - <T : object> costs nothing at any real call site
+// (every concrete type extends object, §4.8).
+public fun requireEqual<T: object>(actual: T, expected: T, paramName: string): void
+{
+    if (actual != expected) throw PreconditionException("Expected " + expected.toString() + " but got " + actual.toString() + ". Parameter: " + paramName);
+}
+
 
 // --- Postcondition helpers ---
 
@@ -102,6 +110,12 @@ public fun ensureNonNegative(value: int, message: string = "Result must be non-n
 public fun ensureNonNegative(value: float, message: string = "Result must be non-negative."): void
 {
     if (value < 0.0) throw PostconditionException(message);
+}
+
+// Fase 8, §6.2/O2: same reasoning as requireEqual above, for a postcondition.
+public fun ensureEqual<T: object>(actual: T, expected: T): void
+{
+    if (actual != expected) throw PostconditionException("Expected " + expected.toString() + " but got " + actual.toString() + ".");
 }
 
 

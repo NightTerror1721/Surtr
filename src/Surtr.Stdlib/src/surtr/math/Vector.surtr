@@ -143,3 +143,104 @@ public value class Vector3
     @Pure
     inline operator==(a: Vector3, b: Vector3): bool { return a.x == b.x && a.y == b.y && a.z == b.z; }
 }
+
+// Fase 8, §6.3/P10: integer coordinates - what indexing a Grid<T> (surtr.collections.Grid) or a
+// tile/board position actually wants. Vector2/Vector3 are float; dividing or comparing a grid
+// position with == on floats is exactly the subtle-bug class a dedicated integer type avoids.
+public value class Vector2Int : IEquatable<Vector2Int>
+{
+    public let x: int;
+    public let y: int;
+
+    public constructor(x: int, y: int)
+    {
+        this.x = x;
+        this.y = y;
+    }
+
+    public static zero: Vector2Int => Vector2Int(0, 0);
+    public static one: Vector2Int => Vector2Int(1, 1);
+    public static up: Vector2Int => Vector2Int(0, 1);
+    public static down: Vector2Int => Vector2Int(0, -1);
+    public static left: Vector2Int => Vector2Int(-1, 0);
+    public static right: Vector2Int => Vector2Int(1, 0);
+
+    @Pure
+    public inline fun lengthSquared(): int => x * x + y * y;
+
+    @Pure
+    public inline fun length(): float => sqrt(lengthSquared().toFloat());
+
+    @Pure
+    public inline fun toVector2(): Vector2 => Vector2(x.toFloat(), y.toFloat());
+
+    @Pure
+    public override fun toString(): string => "($x, $y)";
+
+    @Pure
+    operator+(a: Vector2Int, b: Vector2Int): Vector2Int { return Vector2Int(a.x + b.x, a.y + b.y); }
+    @Pure
+    operator-(a: Vector2Int, b: Vector2Int): Vector2Int { return Vector2Int(a.x - b.x, a.y - b.y); }
+    @Pure
+    operator*(a: Vector2Int, scalar: int): Vector2Int { return Vector2Int(a.x * scalar, a.y * scalar); }
+    @Pure
+    operator*(scalar: int, a: Vector2Int): Vector2Int { return Vector2Int(a.x * scalar, a.y * scalar); }
+    @Pure
+    operator-(a: Vector2Int): Vector2Int { return Vector2Int(-a.x, -a.y); }
+
+    @Pure
+    inline operator==(a: Vector2Int, b: Vector2Int): bool { return a.x == b.x && a.y == b.y; }
+
+    public inline fun equals(other: Vector2Int): bool => x == other.x && y == other.y;
+}
+
+public value class Vector3Int : IEquatable<Vector3Int>
+{
+    public let x: int;
+    public let y: int;
+    public let z: int;
+
+    public constructor(x: int, y: int, z: int)
+    {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+    }
+
+    public static zero: Vector3Int => Vector3Int(0, 0, 0);
+    public static one: Vector3Int => Vector3Int(1, 1, 1);
+    public static up: Vector3Int => Vector3Int(0, 1, 0);
+    public static down: Vector3Int => Vector3Int(0, -1, 0);
+    public static left: Vector3Int => Vector3Int(-1, 0, 0);
+    public static right: Vector3Int => Vector3Int(1, 0, 0);
+    public static forward: Vector3Int => Vector3Int(0, 0, 1);
+    public static back: Vector3Int => Vector3Int(0, 0, -1);
+
+    @Pure
+    public inline fun lengthSquared(): int => x * x + y * y + z * z;
+
+    @Pure
+    public inline fun length(): float => sqrt(lengthSquared().toFloat());
+
+    @Pure
+    public inline fun toVector3(): Vector3 => Vector3(x.toFloat(), y.toFloat(), z.toFloat());
+
+    @Pure
+    public override fun toString(): string => "($x, $y, $z)";
+
+    @Pure
+    operator+(a: Vector3Int, b: Vector3Int): Vector3Int { return Vector3Int(a.x + b.x, a.y + b.y, a.z + b.z); }
+    @Pure
+    operator-(a: Vector3Int, b: Vector3Int): Vector3Int { return Vector3Int(a.x - b.x, a.y - b.y, a.z - b.z); }
+    @Pure
+    operator*(a: Vector3Int, scalar: int): Vector3Int { return Vector3Int(a.x * scalar, a.y * scalar, a.z * scalar); }
+    @Pure
+    operator*(scalar: int, a: Vector3Int): Vector3Int { return Vector3Int(a.x * scalar, a.y * scalar, a.z * scalar); }
+    @Pure
+    operator-(a: Vector3Int): Vector3Int { return Vector3Int(-a.x, -a.y, -a.z); }
+
+    @Pure
+    inline operator==(a: Vector3Int, b: Vector3Int): bool { return a.x == b.x && a.y == b.y && a.z == b.z; }
+
+    public inline fun equals(other: Vector3Int): bool => x == other.x && y == other.y && z == other.z;
+}

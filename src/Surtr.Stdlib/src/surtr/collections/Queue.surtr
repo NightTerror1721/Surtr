@@ -9,7 +9,7 @@ public interface IQueue<T> default Queue<T> : ICollection<T>
     fun peek(): T;
 }
 
-public interface IDeque<T> : IQueue<T>
+public interface IDeque<T> default Deque<T> : IQueue<T>
 {
     fun enqueueFront(item: T): void;
     fun dequeueBack(): T;
@@ -157,6 +157,22 @@ public class Queue<T> : IQueue<T>
             _index += 1;
             return true;
         }
+    }
+}
+
+// Fase 8, §6.2/O3 + §6.3/P7: same reasoning as List<T>.toDisplayString().
+public extension<T: object> Queue<T>
+{
+    fun toDisplayString(self: Queue<T>): string
+    {
+        var parts: string[] = array<string>(self.length);
+        var i = 0;
+        for (item in self)
+        {
+            parts[i] = item.toString();
+            i += 1;
+        }
+        return "[" + string.join(", ", parts) + "]";
     }
 }
 
@@ -350,5 +366,21 @@ public class Deque<T> : IDeque<T>
             _index += 1;
             return true;
         }
+    }
+}
+
+// Fase 8, §6.2/O3 + §6.3/P7: same reasoning as List<T>.toDisplayString().
+public extension<T: object> Deque<T>
+{
+    fun toDisplayString(self: Deque<T>): string
+    {
+        var parts: string[] = array<string>(self.length);
+        var i = 0;
+        for (item in self)
+        {
+            parts[i] = item.toString();
+            i += 1;
+        }
+        return "[" + string.join(", ", parts) + "]";
     }
 }

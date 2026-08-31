@@ -13,7 +13,7 @@
 // method - only a tuple *parameter* on a method that satisfies a contract. `IMap<K,V>` only needs
 // `IIterable<(K,V)>` (a single no-argument `iterate()`) to give `for (pair in map)` its element type,
 // so nothing here is actually lost by not inheriting the wider interface.
-public interface IReadOnlyMap<K, V> : IIterable<(K, V)>
+public interface IReadOnlyMap<K, V> default Map<K, V> : IIterable<(K, V)>
 {
     length: int { get; }
     isEmpty: bool { get; }
@@ -24,7 +24,7 @@ public interface IReadOnlyMap<K, V> : IIterable<(K, V)>
     fun values(): V[];
 }
 
-public interface IMap<K, V> : IReadOnlyMap<K, V>
+public interface IMap<K, V> default Map<K, V> : IReadOnlyMap<K, V>
 {
     isReadOnly: bool { get; }
 
@@ -40,6 +40,23 @@ public class Map<K, V> : IMap<K, V>
     public constructor()
     {
         _dict = {};
+    }
+
+    // §5.x: the collection-builder form — `Map<string, int>{ "a": 1, "b": 2 }` builds the empty
+    // map through the plain constructor() above, then fills it one key/value pair per call to
+    // `$fill$` below. A second, empty-bodied `constructor()` carries the `each` clause rather than
+    // attaching it to the one above: an `each`-marked constructor is never reachable by a normal
+    // call (docs/Plan-Constructores-Each.md §3.3), and every other collection-builder collection in
+    // this package (List, Set, Queue, Stack, Deque) already pairs a real constructor with a second,
+    // otherwise-unused declaration of the identical signature that only exists to carry `each` -
+    // the runtime keeps a single compiled method for the shared signature either way. `IReadOnlyMap
+    // <K,V>`/`IMap<K,V>` both default to this class (there is no `value class`-free "ReadOnlyMap
+    // with each" candidate: `ReadOnlyMap<K,V>` is a value class, and §3.4 restricts `each` to
+    // ordinary classes) - the same choice `IReadOnlyList<T> default List<T>` already makes.
+    public constructor() { }
+    each (key: K, value: V)
+    {
+        _dict.set(key, value);
     }
 
     public constructor(collection: IIterable<(K, V)>)
@@ -108,4 +125,20 @@ public value class ReadOnlyMap<K, V> : IReadOnlyMap<K, V>
     public fun values(): V[] => _map.values();
 
     public fun iterate(): IIterator<(K, V)> => _map.iterate();
+}
+
+// Fase 8, §6.2/O3 + §6.3/P7: same reasoning as List<T>.toDisplayString().
+public extension<K: object, V: object> Map<K, V>
+{
+    fun toDisplayString(self: Map<K, V>): string
+    {
+        var parts: string[] = array<string>(self.length);
+        var i = 0;
+        for (pair in self)
+        {
+            parts[i] = pair[0].toString() + ": " + pair[1].toString();
+            i += 1;
+        }
+        return "{" + string.join(", ", parts) + "}";
+    }
 }

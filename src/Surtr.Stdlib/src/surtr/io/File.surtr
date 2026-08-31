@@ -1,0 +1,35 @@
+// Fase 8: a scripting language embedded in a game engine needs to read config, write save data and
+// list assets - the three things this module covers. Whole-file operations only (no streaming
+// FileStream/handle yet - see docs/Plan-Revision-Stdlib.md §6 for what a handle-based streaming
+// counterpart would need); most of what a script wants from disk is small enough that "read/write
+// the whole thing" is the right shape, matching System.IO.File's own most-used surface.
+//
+// In-process and synchronous, with no sandboxing beyond what SurtrStdlib.StdlibModules already
+// gives a host: loading this module at all is the decision to let scripts touch the filesystem.
+//
+// KNOWN LIMITATION (docs/Plan-Revision-Stdlib.md §6.4): a failure (missing file, no permission, ...)
+// is NOT catchable by a Surtr script's own `catch` today. There is no established, public API for a
+// native function body to raise a real Surtr-level throw (confirmed: no such method exists on
+// SurtrRuntime/SurtrCallArguments) - the underlying System.IO exception propagates unmodified all
+// the way to the HOST's own try/catch around the `Invoke`/`InvokeClosure` call that reached here.
+// Check `fileExists`/`directoryExists` first where a script needs to branch on presence; a real
+// I/O failure (permissions, disk full, a path that vanishes mid-call) is still a host-level surprise
+// until a native-throw mechanism exists.
+
+public native fun fileExists(path: string): bool;
+public native fun directoryExists(path: string): bool;
+public native fun fileDelete(path: string): void;
+public native fun createDirectory(path: string): void;
+
+public native fun fileReadAllText(path: string): string;
+public native fun fileWriteAllText(path: string, text: string): void;
+public native fun fileAppendAllText(path: string, text: string): void;
+
+public native fun fileReadAllBytes(path: string): bytes;
+public native fun fileWriteAllBytes(path: string, data: bytes): void;
+
+/// The full paths of every file directly inside `path` (not recursive).
+public native fun listFiles(path: string): string[];
+
+/// The full paths of every subdirectory directly inside `path` (not recursive).
+public native fun listDirectories(path: string): string[];

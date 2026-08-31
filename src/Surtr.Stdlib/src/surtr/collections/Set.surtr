@@ -412,3 +412,20 @@ public class Set<T> : ReadOnlySet<T>, ISet<T>
     /// A read-only view over this set; stays live if the set changes underneath it.
     public inline fun asReadOnly(): IReadOnlyCollection<T> => ReadOnlyCollection<T>(this);
 }
+
+// Fase 8, §6.2/O3 + §6.3/P7: same reasoning as List<T>.toDisplayString() - a debug representation
+// once T is known to have a real toString() to call.
+public extension<T: object> ReadOnlySet<T>
+{
+    fun toDisplayString(self: ReadOnlySet<T>): string
+    {
+        var parts: string[] = array<string>(self.length);
+        var i = 0;
+        for (item in self)
+        {
+            parts[i] = item.toString();
+            i += 1;
+        }
+        return "{" + string.join(", ", parts) + "}";
+    }
+}

@@ -1,5 +1,8 @@
 module surtr.core.byte
-  constants: 0   types: 0   fields: 0   methods: 54   modules: 0
+  constants: 0   types: 1   fields: 0   methods: 56   modules: 0
+
+  type table:
+    #0  surtr.core.byte:byte
 
   method table:
     #0  surtr.core.byte:byte.ctor(int) -> void
@@ -56,8 +59,10 @@ module surtr.core.byte
     #51  char.toInt() -> int
     #52  int.parse(string) -> int
     #53  int.parseStrict(string, int) -> int
+    #54  surtr.core.byte:byte.compareTo(unknown) -> int
+    #55  surtr.core.byte:byte.equals(unknown) -> bool
 
-sealed class byte : surtr:ValueType  [public]
+sealed class byte : surtr:ValueType, surtr:IComparable<int>, surtr:IEquatable<int>  [public]
   [private] readonly field _value: int
 
   [public] property raw: int { get; }
@@ -151,6 +156,16 @@ sealed class byte : surtr:ValueType  [public]
       00BE  PushI8 0
       00C0  ReturnValue
 
+  [public] virtual compareTo(other: unknown): int
+    ; entry 47, locals 2, stack 2, code 02C4..02D1
+      02C4  Ldl0
+      02C5  Unbox
+      02C6  Ldl1
+      02C7  Cast 0 (surtr.core.byte:byte)
+      02CA  Unbox
+      02CB  InvokeSpecial 14 (compareTo) args=2 ret=1
+      02D0  ReturnValue
+
   [public] ctor (value: int): void
     ; entry 0, locals 2, stack 0, code 0000..0001
       0000  ReturnVoid
@@ -161,6 +176,16 @@ sealed class byte : surtr:ValueType  [public]
       00AB  Ldl1
       00AC  EQ
       00AD  ReturnValue
+
+  [public] virtual equals(other: unknown): bool
+    ; entry 48, locals 2, stack 2, code 02D1..02DE
+      02D1  Ldl0
+      02D2  Unbox
+      02D3  Ldl1
+      02D4  Cast 0 (surtr.core.byte:byte)
+      02D7  Unbox
+      02D8  InvokeSpecial 13 (equals) args=2 ret=1
+      02DD  ReturnValue
 
   [public] static fromChar(ch: char): int
     ; entry 8, locals 2, stack 2, code 0069..0076

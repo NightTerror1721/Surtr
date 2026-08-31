@@ -101,3 +101,20 @@ public class Stack<T> : IStack<T>
         }
     }
 }
+
+// Fase 8, §6.2/O3 + §6.3/P7: same reasoning as List<T>.toDisplayString(). Order matches iterate()'s
+// own pop order (top-to-bottom, D3), not insertion order.
+public extension<T: object> Stack<T>
+{
+    fun toDisplayString(self: Stack<T>): string
+    {
+        var parts: string[] = array<string>(self.length);
+        var i = 0;
+        for (item in self)
+        {
+            parts[i] = item.toString();
+            i += 1;
+        }
+        return "[" + string.join(", ", parts) + "]";
+    }
+}

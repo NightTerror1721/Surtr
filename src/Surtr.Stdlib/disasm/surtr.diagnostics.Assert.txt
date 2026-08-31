@@ -1,5 +1,9 @@
 module surtr.diagnostics.Assert
-  constants: 0   types: 1   fields: 0   methods: 22   modules: 0
+  constants: 4   types: 1   fields: 0   methods: 25   modules: 0
+  string #0 = "Expected "
+  string #1 = " but got "
+  string #2 = "."
+  string #3 = "Expected values to differ, but both were "
 
   type table:
     #0  surtr.diagnostics.Assert:AssertionException
@@ -9,24 +13,27 @@ module surtr.diagnostics.Assert
     #1  assert(bool, string) -> void
     #2  assertEqual(T0, T0, string) -> void
     #3  assertNotEqual(T0, T0, string) -> void
-    #4  assertTrue(bool, string) -> void
-    #5  assertFalse(bool, string) -> void
-    #6  assertGreaterThan(int, int, string) -> void
-    #7  assertGreaterThan(float, float, string) -> void
-    #8  assertGreaterOrEqual(int, int, string) -> void
-    #9  assertGreaterOrEqual(float, float, string) -> void
-    #10  assertLessThan(int, int, string) -> void
-    #11  assertLessThan(float, float, string) -> void
-    #12  assertLessOrEqual(int, int, string) -> void
-    #13  assertLessOrEqual(float, float, string) -> void
-    #14  assertNotNull(T0, string) -> void
-    #15  assertNull(T0, string) -> void
-    #16  assertEmpty(surtr:IIterable<unknown>, string) -> void
-    #17  assertNotEmpty(surtr:IIterable<unknown>, string) -> void
-    #18  assertThrows(() -> void, string) -> void
-    #19  surtr:Exception.ctor(string) -> void
-    #20  surtr:IIterable<T0>.iterate() -> surtr:IIterator<T0>
-    #21  surtr:IIterator<T0>.moveNext() -> bool
+    #4  assertEqual(T0, T0) -> void
+    #5  assertNotEqual(T0, T0) -> void
+    #6  assertTrue(bool, string) -> void
+    #7  assertFalse(bool, string) -> void
+    #8  assertGreaterThan(int, int, string) -> void
+    #9  assertGreaterThan(float, float, string) -> void
+    #10  assertGreaterOrEqual(int, int, string) -> void
+    #11  assertGreaterOrEqual(float, float, string) -> void
+    #12  assertLessThan(int, int, string) -> void
+    #13  assertLessThan(float, float, string) -> void
+    #14  assertLessOrEqual(int, int, string) -> void
+    #15  assertLessOrEqual(float, float, string) -> void
+    #16  assertNotNull(T0, string) -> void
+    #17  assertNull(T0, string) -> void
+    #18  assertEmpty(surtr:IIterable<unknown>, string) -> void
+    #19  assertNotEmpty(surtr:IIterable<unknown>, string) -> void
+    #20  assertThrows(() -> void, string) -> void
+    #21  surtr:Exception.ctor(string) -> void
+    #22  surtr:object.toString() -> string
+    #23  surtr:IIterable<T0>.iterate() -> surtr:IIterator<T0>
+    #24  surtr:IIterator<T0>.moveNext() -> bool
 
 [public] static assert(condition: bool, message: string = "Assertion failed."): void
   ; entry 0, locals 2, stack 3, code 0000..0011
@@ -42,18 +49,18 @@ module surtr.diagnostics.Assert
     0010  ReturnVoid
 
 [public] static assertEmpty(collection: surtr:IIterable<unknown>, message: string = "Collection is not empty."): void
-  ; entry 15, locals 2, stack 3, code 00FE..0118
-    00FE  Ldl0
-    00FF  InvokeInterface 20 (iterate) args=1 ret=1
-    0104  InvokeInterface 21 (moveNext) args=1 ret=1
-    0109  JPZ +11 -> L0 (0117)
-    010C  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
-    010F  Dup
-    0110  Ldl1
-    0111  InvokeSpecial 0 (ctor) args=2 ret=0
-    0116  Throw
+  ; entry 17, locals 2, stack 3, code 013E..0158
+    013E  Ldl0
+    013F  InvokeInterface 23 (iterate) args=1 ret=1
+    0144  InvokeInterface 24 (moveNext) args=1 ret=1
+    0149  JPZ +11 -> L0 (0157)
+    014C  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
+    014F  Dup
+    0150  Ldl1
+    0151  InvokeSpecial 0 (ctor) args=2 ret=0
+    0156  Throw
   L0:
-    0117  ReturnVoid
+    0157  ReturnVoid
 
 [public] static assertEqual(expected: T0, actual: T0, message: string = "Values are not equal."): void
   ; entry 1, locals 3, stack 3, code 0011..0023
@@ -69,136 +76,159 @@ module surtr.diagnostics.Assert
   L0:
     0022  ReturnVoid
 
-[public] static assertFalse(value: bool, message: string = "Expected false."): void
-  ; entry 4, locals 2, stack 3, code 0046..0056
-    0046  Ldl0
-    0047  JPZ +11 -> L0 (0055)
-    004A  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
-    004D  Dup
-    004E  Ldl1
-    004F  InvokeSpecial 0 (ctor) args=2 ret=0
-    0054  Throw
+[public] static assertEqual(expected: T0, actual: T0): void
+  ; entry 3, locals 2, stack 7, code 0035..0059
+    0035  Ldl0
+    0036  Ldl1
+    0037  DynNE
+    0038  JPZ +29 -> L0 (0058)
+    003B  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
+    003E  Dup
+    003F  Ldc0
+    0040  Ldl0
+    0041  BoxDynamic
+    0042  InvokeVirtual 22 (toString) args=1 ret=1
+    0047  Ldc1
+    0048  Ldl1
+    0049  BoxDynamic
+    004A  InvokeVirtual 22 (toString) args=1 ret=1
+    004F  Ldc2
+    0050  StrCat 5
+    0052  InvokeSpecial 0 (ctor) args=2 ret=0
+    0057  Throw
   L0:
-    0055  ReturnVoid
+    0058  ReturnVoid
+
+[public] static assertFalse(value: bool, message: string = "Expected false."): void
+  ; entry 6, locals 2, stack 3, code 0086..0096
+    0086  Ldl0
+    0087  JPZ +11 -> L0 (0095)
+    008A  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
+    008D  Dup
+    008E  Ldl1
+    008F  InvokeSpecial 0 (ctor) args=2 ret=0
+    0094  Throw
+  L0:
+    0095  ReturnVoid
 
 [public] static assertGreaterOrEqual(left: int, right: int, message: string = "Left is not greater than or equal to right."): void
-  ; entry 7, locals 3, stack 3, code 0078..0089
-    0078  Ldl0
-    0079  Ldl1
-    007A  JPGE +11 -> L0 (0088)
-    007D  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
-    0080  Dup
-    0081  Ldl2
-    0082  InvokeSpecial 0 (ctor) args=2 ret=0
-    0087  Throw
+  ; entry 9, locals 3, stack 3, code 00B8..00C9
+    00B8  Ldl0
+    00B9  Ldl1
+    00BA  JPGE +11 -> L0 (00C8)
+    00BD  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
+    00C0  Dup
+    00C1  Ldl2
+    00C2  InvokeSpecial 0 (ctor) args=2 ret=0
+    00C7  Throw
   L0:
-    0088  ReturnVoid
+    00C8  ReturnVoid
 
 [public] static assertGreaterOrEqual(left: float, right: float, message: string = "Left is not greater than or equal to right."): void
-  ; entry 8, locals 3, stack 3, code 0089..009A
-    0089  Ldl0
-    008A  Ldl1
-    008B  JPFGE +11 -> L0 (0099)
-    008E  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
-    0091  Dup
-    0092  Ldl2
-    0093  InvokeSpecial 0 (ctor) args=2 ret=0
-    0098  Throw
+  ; entry 10, locals 3, stack 3, code 00C9..00DA
+    00C9  Ldl0
+    00CA  Ldl1
+    00CB  JPFGE +11 -> L0 (00D9)
+    00CE  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
+    00D1  Dup
+    00D2  Ldl2
+    00D3  InvokeSpecial 0 (ctor) args=2 ret=0
+    00D8  Throw
   L0:
-    0099  ReturnVoid
+    00D9  ReturnVoid
 
 [public] static assertGreaterThan(left: int, right: int, message: string = "Left is not greater than right."): void
-  ; entry 5, locals 3, stack 3, code 0056..0067
-    0056  Ldl0
-    0057  Ldl1
-    0058  JPGT +11 -> L0 (0066)
-    005B  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
-    005E  Dup
-    005F  Ldl2
-    0060  InvokeSpecial 0 (ctor) args=2 ret=0
-    0065  Throw
+  ; entry 7, locals 3, stack 3, code 0096..00A7
+    0096  Ldl0
+    0097  Ldl1
+    0098  JPGT +11 -> L0 (00A6)
+    009B  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
+    009E  Dup
+    009F  Ldl2
+    00A0  InvokeSpecial 0 (ctor) args=2 ret=0
+    00A5  Throw
   L0:
-    0066  ReturnVoid
+    00A6  ReturnVoid
 
 [public] static assertGreaterThan(left: float, right: float, message: string = "Left is not greater than right."): void
-  ; entry 6, locals 3, stack 3, code 0067..0078
-    0067  Ldl0
-    0068  Ldl1
-    0069  JPFGT +11 -> L0 (0077)
-    006C  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
-    006F  Dup
-    0070  Ldl2
-    0071  InvokeSpecial 0 (ctor) args=2 ret=0
-    0076  Throw
+  ; entry 8, locals 3, stack 3, code 00A7..00B8
+    00A7  Ldl0
+    00A8  Ldl1
+    00A9  JPFGT +11 -> L0 (00B7)
+    00AC  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
+    00AF  Dup
+    00B0  Ldl2
+    00B1  InvokeSpecial 0 (ctor) args=2 ret=0
+    00B6  Throw
   L0:
-    0077  ReturnVoid
+    00B7  ReturnVoid
 
 [public] static assertLessOrEqual(left: int, right: int, message: string = "Left is not less than or equal to right."): void
-  ; entry 11, locals 3, stack 3, code 00BC..00CD
-    00BC  Ldl0
-    00BD  Ldl1
-    00BE  JPLE +11 -> L0 (00CC)
-    00C1  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
-    00C4  Dup
-    00C5  Ldl2
-    00C6  InvokeSpecial 0 (ctor) args=2 ret=0
-    00CB  Throw
+  ; entry 13, locals 3, stack 3, code 00FC..010D
+    00FC  Ldl0
+    00FD  Ldl1
+    00FE  JPLE +11 -> L0 (010C)
+    0101  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
+    0104  Dup
+    0105  Ldl2
+    0106  InvokeSpecial 0 (ctor) args=2 ret=0
+    010B  Throw
   L0:
-    00CC  ReturnVoid
+    010C  ReturnVoid
 
 [public] static assertLessOrEqual(left: float, right: float, message: string = "Left is not less than or equal to right."): void
-  ; entry 12, locals 3, stack 3, code 00CD..00DE
-    00CD  Ldl0
-    00CE  Ldl1
-    00CF  JPFLE +11 -> L0 (00DD)
-    00D2  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
-    00D5  Dup
-    00D6  Ldl2
-    00D7  InvokeSpecial 0 (ctor) args=2 ret=0
-    00DC  Throw
+  ; entry 14, locals 3, stack 3, code 010D..011E
+    010D  Ldl0
+    010E  Ldl1
+    010F  JPFLE +11 -> L0 (011D)
+    0112  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
+    0115  Dup
+    0116  Ldl2
+    0117  InvokeSpecial 0 (ctor) args=2 ret=0
+    011C  Throw
   L0:
-    00DD  ReturnVoid
+    011D  ReturnVoid
 
 [public] static assertLessThan(left: int, right: int, message: string = "Left is not less than right."): void
-  ; entry 9, locals 3, stack 3, code 009A..00AB
-    009A  Ldl0
-    009B  Ldl1
-    009C  JPLT +11 -> L0 (00AA)
-    009F  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
-    00A2  Dup
-    00A3  Ldl2
-    00A4  InvokeSpecial 0 (ctor) args=2 ret=0
-    00A9  Throw
+  ; entry 11, locals 3, stack 3, code 00DA..00EB
+    00DA  Ldl0
+    00DB  Ldl1
+    00DC  JPLT +11 -> L0 (00EA)
+    00DF  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
+    00E2  Dup
+    00E3  Ldl2
+    00E4  InvokeSpecial 0 (ctor) args=2 ret=0
+    00E9  Throw
   L0:
-    00AA  ReturnVoid
+    00EA  ReturnVoid
 
 [public] static assertLessThan(left: float, right: float, message: string = "Left is not less than right."): void
-  ; entry 10, locals 3, stack 3, code 00AB..00BC
-    00AB  Ldl0
-    00AC  Ldl1
-    00AD  JPFLT +11 -> L0 (00BB)
-    00B0  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
-    00B3  Dup
-    00B4  Ldl2
-    00B5  InvokeSpecial 0 (ctor) args=2 ret=0
-    00BA  Throw
+  ; entry 12, locals 3, stack 3, code 00EB..00FC
+    00EB  Ldl0
+    00EC  Ldl1
+    00ED  JPFLT +11 -> L0 (00FB)
+    00F0  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
+    00F3  Dup
+    00F4  Ldl2
+    00F5  InvokeSpecial 0 (ctor) args=2 ret=0
+    00FA  Throw
   L0:
-    00BB  ReturnVoid
+    00FB  ReturnVoid
 
 [public] static assertNotEmpty(collection: surtr:IIterable<unknown>, message: string = "Collection is empty."): void
-  ; entry 16, locals 2, stack 3, code 0118..0133
-    0118  Ldl0
-    0119  InvokeInterface 20 (iterate) args=1 ret=1
-    011E  InvokeInterface 21 (moveNext) args=1 ret=1
-    0123  Inv
-    0124  JPZ +11 -> L0 (0132)
-    0127  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
-    012A  Dup
-    012B  Ldl1
-    012C  InvokeSpecial 0 (ctor) args=2 ret=0
-    0131  Throw
+  ; entry 18, locals 2, stack 3, code 0158..0173
+    0158  Ldl0
+    0159  InvokeInterface 23 (iterate) args=1 ret=1
+    015E  InvokeInterface 24 (moveNext) args=1 ret=1
+    0163  Inv
+    0164  JPZ +11 -> L0 (0172)
+    0167  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
+    016A  Dup
+    016B  Ldl1
+    016C  InvokeSpecial 0 (ctor) args=2 ret=0
+    0171  Throw
   L0:
-    0132  ReturnVoid
+    0172  ReturnVoid
 
 [public] static assertNotEqual(left: T0, right: T0, message: string = "Values are equal."): void
   ; entry 2, locals 3, stack 3, code 0023..0035
@@ -214,75 +244,94 @@ module surtr.diagnostics.Assert
   L0:
     0034  ReturnVoid
 
-[public] static assertNotNull(value: T0, message: string = "Value is null."): void
-  ; entry 13, locals 2, stack 3, code 00DE..00EE
-    00DE  Ldl0
-    00DF  JPNN +11 -> L0 (00ED)
-    00E2  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
-    00E5  Dup
-    00E6  Ldl1
-    00E7  InvokeSpecial 0 (ctor) args=2 ret=0
-    00EC  Throw
+[public] static assertNotEqual(left: T0, right: T0): void
+  ; entry 4, locals 2, stack 5, code 0059..0075
+    0059  Ldl0
+    005A  Ldl1
+    005B  DynEQ
+    005C  JPZ +21 -> L0 (0074)
+    005F  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
+    0062  Dup
+    0063  Ldc3
+    0064  Ldl0
+    0065  BoxDynamic
+    0066  InvokeVirtual 22 (toString) args=1 ret=1
+    006B  Ldc2
+    006C  StrCat 3
+    006E  InvokeSpecial 0 (ctor) args=2 ret=0
+    0073  Throw
   L0:
-    00ED  ReturnVoid
+    0074  ReturnVoid
+
+[public] static assertNotNull(value: T0, message: string = "Value is null."): void
+  ; entry 15, locals 2, stack 3, code 011E..012E
+    011E  Ldl0
+    011F  JPNN +11 -> L0 (012D)
+    0122  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
+    0125  Dup
+    0126  Ldl1
+    0127  InvokeSpecial 0 (ctor) args=2 ret=0
+    012C  Throw
+  L0:
+    012D  ReturnVoid
 
 [public] static assertNull(value: T0, message: string = "Value is not null."): void
-  ; entry 14, locals 2, stack 3, code 00EE..00FE
-    00EE  Ldl0
-    00EF  JPN +11 -> L0 (00FD)
-    00F2  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
-    00F5  Dup
-    00F6  Ldl1
-    00F7  InvokeSpecial 0 (ctor) args=2 ret=0
-    00FC  Throw
+  ; entry 16, locals 2, stack 3, code 012E..013E
+    012E  Ldl0
+    012F  JPN +11 -> L0 (013D)
+    0132  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
+    0135  Dup
+    0136  Ldl1
+    0137  InvokeSpecial 0 (ctor) args=2 ret=0
+    013C  Throw
   L0:
-    00FD  ReturnVoid
+    013D  ReturnVoid
 
 [public] static assertThrows(action: () -> void, message: string = "Expected exception was not thrown."): void
-  ; entry 17, locals 4, stack 3, code 0133..0153
-    0133  PushFalse
-    0134  Stl2
+  ; entry 19, locals 4, stack 3, code 0173..0193
+    0173  PushFalse
+    0174  Stl2
   ; try_0 begin
-    0135  Ldl0
-    0136  InvokeClosure args=0 ret=0
+    0175  Ldl0
+    0176  InvokeClosure args=0 ret=0
   ; try_0 end
-    0139  JP +6 -> L0 (0142)
+    0179  JP +6 -> L0 (0182)
   ; catch_0 (surtr:Exception)
-    013C  Stl3
-    013D  PushTrue
-    013E  Stl2
-    013F  JP +0 -> L0 (0142)
+    017C  Stl3
+    017D  PushTrue
+    017E  Stl2
+    017F  JP +0 -> L0 (0182)
   L0:
-    0142  Ldl2
-    0143  Inv
-    0144  JPZ +11 -> L1 (0152)
-    0147  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
-    014A  Dup
-    014B  Ldl1
-    014C  InvokeSpecial 0 (ctor) args=2 ret=0
-    0151  Throw
+    0182  Ldl2
+    0183  Inv
+    0184  JPZ +11 -> L1 (0192)
+    0187  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
+    018A  Dup
+    018B  Ldl1
+    018C  InvokeSpecial 0 (ctor) args=2 ret=0
+    0191  Throw
   L1:
-    0152  ReturnVoid
-  handler [0135, 0139) -> 013C  catch surtr:Exception
+    0192  ReturnVoid
+  handler [0175, 0179) -> 017C  catch surtr:Exception
 
 [public] static assertTrue(value: bool, message: string = "Expected true."): void
-  ; entry 3, locals 2, stack 3, code 0035..0046
-    0035  Ldl0
-    0036  Inv
-    0037  JPZ +11 -> L0 (0045)
-    003A  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
-    003D  Dup
-    003E  Ldl1
-    003F  InvokeSpecial 0 (ctor) args=2 ret=0
-    0044  Throw
+  ; entry 5, locals 2, stack 3, code 0075..0086
+    0075  Ldl0
+    0076  Inv
+    0077  JPZ +11 -> L0 (0085)
+    007A  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
+    007D  Dup
+    007E  Ldl1
+    007F  InvokeSpecial 0 (ctor) args=2 ret=0
+    0084  Throw
   L0:
-    0045  ReturnVoid
+    0085  ReturnVoid
 
 class AssertionException : surtr:Exception  [public]
 
   [public] ctor (message: string = "Assertion failed."): void
-    ; entry 18, locals 2, stack 2, code 0153..015B
-      0153  Ldl0
-      0154  Ldl1
-      0155  InvokeSpecial 19 (ctor) args=2 ret=0
-      015A  ReturnVoid
+    ; entry 20, locals 2, stack 2, code 0193..019B
+      0193  Ldl0
+      0194  Ldl1
+      0195  InvokeSpecial 21 (ctor) args=2 ret=0
+      019A  ReturnVoid

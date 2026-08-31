@@ -2,7 +2,7 @@ import surtr.math.Math;
 
 // Wraps a raw float in radians so a signature can say "this is an angle" instead of "this is a
 // float that happens to be one" - the same reasoning byte.surtr gives for wrapping a raw int.
-public value class Angle
+public value class Angle : IComparable<Angle>, IEquatable<Angle>
 {
     private let _radians: float;
 
@@ -66,4 +66,7 @@ public value class Angle
 
     inline operator==(a: Angle, b: Angle): bool { return a._radians == b._radians; }
     inline operator<=>(a: Angle, b: Angle): int { return a._radians < b._radians ? -1 : (a._radians > b._radians ? 1 : 0); }
+
+    public inline fun equals(other: Angle): bool => _radians == other._radians;
+    public inline fun compareTo(other: Angle): int => this <=> other;
 }

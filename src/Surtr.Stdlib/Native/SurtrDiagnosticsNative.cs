@@ -1,5 +1,6 @@
 #nullable enable
 
+using Surtr.Runtime;
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
 using System;
@@ -86,11 +87,17 @@ namespace Surtr.Stdlib.Native
             => arguments.Return(SurtrValue.CreateReference(arguments.Runtime.NewString(Environment.OSVersion.Platform.ToString()).GetSurtrReference()));
 
         /// <summary>
-        /// Returns the Surtr engine/compiler version string.
+        /// Returns the Surtr.Core assembly's own version. Fase 8: this used to be a hardcoded
+        /// "0.1.0" literal that never changed no matter what actually shipped - reading the real
+        /// assembly version is the whole point of exposing an "EngineVersion" at all.
         /// Link name: <c>surtr.diagnostics.RuntimeInfo.get_EngineVersion</c>.
         /// </summary>
         internal static int RuntimeInfoGetEngineVersion(SurtrCallArguments arguments)
-            => arguments.Return(SurtrValue.CreateReference(arguments.Runtime.NewString("0.1.0").GetSurtrReference()));
+        {
+            var version = typeof(SurtrRuntime).Assembly.GetName().Version;
+            string text = version is null ? "0.0.0" : version.ToString();
+            return arguments.Return(SurtrValue.CreateReference(arguments.Runtime.NewString(text).GetSurtrReference()));
+        }
 
         /// <summary>
         /// Returns the .NET / CLR runtime version string.
@@ -133,5 +140,12 @@ namespace Surtr.Stdlib.Native
         /// </summary>
         internal static int RuntimeInfoGetWorkingSet(SurtrCallArguments arguments)
             => arguments.Return(SurtrValue.CreateInt(Environment.WorkingSet));
+
+        /// <summary>
+        /// Returns how many entities this runtime's registry currently tracks.
+        /// Link name: <c>surtr.diagnostics.RuntimeInfo.get_LiveEntityCount</c>.
+        /// </summary>
+        internal static int RuntimeInfoGetLiveEntityCount(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt(arguments.Runtime.LiveObjectCount));
     }
 }

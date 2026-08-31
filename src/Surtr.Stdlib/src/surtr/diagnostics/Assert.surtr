@@ -19,6 +19,24 @@ public fun assertNotEqual<T>(left: T, right: T, message: string = "Values are eq
     if (left == right) throw AssertionException(message);
 }
 
+// Fase 8, §6.2/O2: a two-argument call (no explicit message) now prefers these over the
+// three-parameter, unconstrained overloads above - an exact-arity match wins over one that would
+// need its trailing default filled in (confirmed empirically: a 2-arg call site resolves to the
+// narrower, non-defaulted candidate). `<T : object>` costs nothing at any real call site (every
+// concrete type extends object, §4.8), and unlocks a message that actually shows the values instead
+// of a fixed string - the whole reason to revisit this file once object was a real root. The
+// unconstrained, explicit-message overloads above are untouched and still the only option from
+// inside another still-generic, unconstrained function (an unconstrained T reaches nothing, §4.8).
+public fun assertEqual<T: object>(expected: T, actual: T): void
+{
+    if (expected != actual) throw AssertionException("Expected " + expected.toString() + " but got " + actual.toString() + ".");
+}
+
+public fun assertNotEqual<T: object>(left: T, right: T): void
+{
+    if (left == right) throw AssertionException("Expected values to differ, but both were " + left.toString() + ".");
+}
+
 public fun assertTrue(value: bool, message: string = "Expected true."): void
 {
     if (!value) throw AssertionException(message);

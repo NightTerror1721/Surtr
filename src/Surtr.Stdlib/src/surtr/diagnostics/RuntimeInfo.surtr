@@ -1,7 +1,17 @@
-native let Platform: string;
-native let EngineVersion: string;
-native let RuntimeVersion: string;
-native let CpuArchitecture: string;
-native let IsDebugBuild: bool;
-native let ProcessorCount: int;
-native let WorkingSet: int;
+// Fase 8: every field here used to lack `public`, defaulting to internal - unusable from any module
+// other than this one, i.e. unusable at all for the reason this module exists (a script elsewhere
+// reading host/runtime facts). Nothing had ever exercised it cross-module before to notice.
+public native let Platform: string;
+public native let EngineVersion: string;
+public native let RuntimeVersion: string;
+public native let CpuArchitecture: string;
+public native let IsDebugBuild: bool;
+public native let ProcessorCount: int;
+public native let WorkingSet: int;
+
+/// The number of entities (boxed values, arrays, dicts, closures, instances, ...) this runtime's
+/// registry currently tracks - what actually drives GC pressure, as opposed to `WorkingSet` (the
+/// whole process's memory, most of which has nothing to do with Surtr). Fase 8: a scripting
+/// language embedded in a game engine wants to see this move (or not) across frames far more than
+/// it wants the OS-level number.
+public native let LiveEntityCount: int;
