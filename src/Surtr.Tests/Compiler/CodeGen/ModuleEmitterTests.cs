@@ -10039,6 +10039,61 @@ using var compilation = Reject(
             Assert.Equal(1, Int(runtime, "run"));
         }
 
+        /// <summary>
+        /// Regression for B11 (docs/Plan-Revision-Stdlib.md §6.3c), now fixed: a generic method
+        /// invoking its own closure parameter with a value of its own generic type, synchronously,
+        /// in the same method - the doc's exact minimal repro. Root cause, confirmed by reading the
+        /// emitted bytecode: a lambda's unwritten parameter type is bound against the *substituted*
+        /// closure type it lands in (<c>apply(5, (v) => v * 100)</c> types <c>v</c> as concrete
+        /// <c>int</c>, which is what lets <c>v * 100</c> type-check at all), so the lifted lambda's
+        /// compiled body reads its parameter raw - but <c>apply</c>'s own body is generic (<c>f: (T0)
+        /// -&gt; T0</c>, fully erased), so its call to <c>f(v)</c> always pushes a boxed value, the
+        /// convention every <c>T0</c>-typed value at rest in a generic body follows. The lambda's raw
+        /// read then multiplies a boxed reference's own raw bits (an entity id) instead of the value
+        /// inside the box. Fix: every lifted lambda body defensively unboxes a primitive or
+        /// single-field-value-class parameter at entry (<c>MethodBodyEmitter.
+        /// EmitLambdaParameterUnboxIfNeeded</c>) - a no-op when the value already arrived raw (an
+        /// ordinary, concretely-typed call), and the missing unbox when it arrived boxed (the
+        /// generic-erased call).
+        /// </summary>
+        /// <remarks>
+        /// Also covers three variants that turned out to matter while narrowing this down: T fixed
+        /// by a class's own generic parameter rather than inferred fresh in this call (closer to
+        /// <c>Sequence&lt;T&gt;</c>'s shape), two separate type parameters instead of reusing one for
+        /// both the value and the closure's return, and an explicit type argument instead of
+        /// inference - all four reproduced identically before the fix. A lambda that only calls a
+        /// method on its parameter (<c>v.toString()</c>) never reproduced this at all: dynamic
+        /// dispatch reads a value's class off its own reference regardless of whether the reader's
+        /// static type is erased or concrete, so it was never a counterexample to the root cause -
+        /// unlike the doc's original "synchronous vs deferred invocation" theory, which this rules
+        /// out (Box&lt;T&gt;.apply here calls its closure synchronously, in the same shape as the
+        /// working theory's "unaffected" examples, and reproduced anyway).
+        /// </remarks>
+        [Fact]
+        public void GenericMethodInvokesItsOwnClosureParameterWithTheRightValue()
+        {
+            var runtime = Run(
+                "fun apply<T>(v: T, f: (T) -> T): T { return f(v); }\n"
+                    + "fun run(): int { return apply(5, (v) => v * 100); }\n"
+                    + "class Box<T> {\n"
+                    + "  private var _value: T;\n"
+                    + "  public constructor(value: T) { this._value = value; }\n"
+                    + "  public fun apply(f: (T) -> T): T { return f(_value); }\n"
+                    + "}\n"
+                    + "fun runClassField(): int { let b = Box<int>(5); return b.apply((v) => v * 100); }\n"
+                    + "fun applyTwoParams<T, U>(v: T, f: (T) -> U): U { return f(v); }\n"
+                    + "fun runTwoTypeParams(): int { return applyTwoParams(5, (v) => v * 100); }\n"
+                    + "fun runExplicitTypeArgument(): int { return apply<int>(5, (v) => v * 100); }\n"
+                    + "fun applyToString<T>(v: T, f: (T) -> string): string { return f(v); }\n"
+                    + "fun runMethodCallOnParam(): int { return applyToString(5, (v) => v.toString()).length; }\n");
+
+            Assert.Equal(500, Int(runtime, "run"));
+            Assert.Equal(500, Int(runtime, "runClassField"));
+            Assert.Equal(500, Int(runtime, "runTwoTypeParams"));
+            Assert.Equal(500, Int(runtime, "runExplicitTypeArgument"));
+            Assert.Equal(1, Int(runtime, "runMethodCallOnParam"));
+        }
+
         #endregion
     }
 }

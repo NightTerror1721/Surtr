@@ -52,18 +52,23 @@ public class Result<T, E>
         return _payload as E;
     }
 
-    // NOTE: `match<U>(onOk, onError)`/`map<U>(mapper)`/`mapError<F>(mapper)` were attempted here and
-    // pulled - docs/Plan-Revision-Stdlib.md B11. A method whose own generic type parameter (`U`) is
-    // a closure's return type, invoked with an argument of the *enclosing* generic (`T`, read back
-    // out of `_payload`), calls the closure with the wrong value - confirmed with a minimal repro
-    // with no `Result`/no field involved at all (`fun apply<T>(v: T, f: (T) -> T): T { return
-    // f(v); }`, called as `apply(5, (v) => v * 100)`, returns 100, not 500 - `v` inside the lambda
-    // is bound to 1). `Sequence<T>.map<U>`/`groupBy<K>` are NOT affected (both already ship and are
-    // tested) because neither calls its callback synchronously inside the method that declares it:
-    // `map` hands the callback to a private generator (`seqMap`) that invokes it later, and
-    // `groupBy` calls it against a *local* (`iter.current`), not a value read back from an erased
-    // field. The exact boundary was not fully pinned down before time ran out on this round - only
-    // that this specific shape (own-generic value, read from a field/cast, fed straight into an
-    // own-generic-return closure parameter, invoked synchronously in the same method) reproduces
-    // reliably. Re-propose these three once B11 is fixed, not before.
+    // B11 (docs/Plan-Revision-Stdlib.md §6.3c) is fixed: match<U>/map<U>/mapError<F> were pulled for
+    // a session because a lambda passed to a generic method's own closure parameter (invoked
+    // synchronously, in the same method) could be called with a corrupted argument - confirmed root
+    // cause was in MethodBodyEmitter.EmitLambda, not the "synchronous vs deferred" boundary first
+    // guessed here (see the doc for what was actually confirmed). Re-added with a real regression
+    // test (ResultMapMapErrorAndMatchInvokeTheirClosureWithTheRightValue,
+    // src/Surtr.Tests/Stdlib/SurtrStdlibBehaviorTests.cs).
+
+    /// Transforms the success value with `mapper`; an error result passes through untouched.
+    public fun map<U>(mapper: (T) -> U): Result<U, E> =>
+        _isOk ? Result<U, E>.ok(mapper(_payload as T)) : Result<U, E>.error(_payload as E);
+
+    /// Transforms the error with `mapper`; an ok result passes through untouched.
+    public fun mapError<F>(mapper: (E) -> F): Result<T, F> =>
+        _isOk ? Result<T, F>.ok(_payload as T) : Result<T, F>.error(mapper(_payload as E));
+
+    /// Runs `onOk` or `onError`, whichever this result is, and returns what it produced.
+    public fun match<U>(onOk: (T) -> U, onError: (E) -> U): U =>
+        _isOk ? onOk(_payload as T) : onError(_payload as E);
 }

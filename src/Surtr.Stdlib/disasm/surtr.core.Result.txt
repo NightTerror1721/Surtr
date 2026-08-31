@@ -1,5 +1,5 @@
 module surtr.core.Result
-  constants: 2   types: 2   fields: 2   methods: 9   modules: 0
+  constants: 2   types: 2   fields: 2   methods: 12   modules: 0
   string #0 = "Called unwrap() on an error Result."
   string #1 = "Called unwrapError() on an ok Result."
 
@@ -20,7 +20,10 @@ module surtr.core.Result
     #5  surtr.core.Result:Result<.unwrap() -> T0
     #6  surtr.core.Result:Result<.unwrapOr(T0) -> T0
     #7  surtr.core.Result:Result<.unwrapError() -> T1
-    #8  surtr:InvalidOperationException.ctor(string) -> void
+    #8  surtr.core.Result:Result<.map((T0) -> T0) -> surtr.core.Result:Result<T0, T1>
+    #9  surtr.core.Result:Result<.mapError((T1) -> T0) -> surtr.core.Result:Result<T0, T0>
+    #10  surtr.core.Result:Result<.match((T0) -> T0, (T1) -> T0) -> T0
+    #11  surtr:InvalidOperationException.ctor(string) -> void
 
 class Result`2<T, E> : surtr:object  [public]
   [private] readonly field _isOk: bool
@@ -61,6 +64,64 @@ class Result`2<T, E> : surtr:object  [public]
       001F  InvokeSpecial 0 (ctor) args=3 ret=0
       0024  ReturnValue
 
+  [public] map(mapper: (T0) -> T0): surtr.core.Result:Result<T0, T1>
+    ; entry 8, locals 2, stack 2, code 006F..0092
+      006F  Ldl0
+      0070  FieldGet 0 (_isOk)
+      0073  JPZ +17 -> L0 (0087)
+      0076  Ldl1
+      0077  Ldl0
+      0078  FieldGet 1 (_payload)
+      007B  InvokeClosure args=1 ret=1
+      007E  BoxDynamic
+      007F  InvokeStatic 1 (ok) args=1 ret=1
+      0084  JP +10 -> L1 (0091)
+    L0:
+      0087  Ldl0
+      0088  FieldGet 1 (_payload)
+      008B  BoxDynamic
+      008C  InvokeStatic 2 (error) args=1 ret=1
+    L1:
+      0091  ReturnValue
+
+  [public] mapError(mapper: (T1) -> T0): surtr.core.Result:Result<T0, T0>
+    ; entry 9, locals 2, stack 2, code 0092..00B5
+      0092  Ldl0
+      0093  FieldGet 0 (_isOk)
+      0096  JPZ +13 -> L0 (00A6)
+      0099  Ldl0
+      009A  FieldGet 1 (_payload)
+      009D  BoxDynamic
+      009E  InvokeStatic 1 (ok) args=1 ret=1
+      00A3  JP +14 -> L1 (00B4)
+    L0:
+      00A6  Ldl1
+      00A7  Ldl0
+      00A8  FieldGet 1 (_payload)
+      00AB  InvokeClosure args=1 ret=1
+      00AE  BoxDynamic
+      00AF  InvokeStatic 2 (error) args=1 ret=1
+    L1:
+      00B4  ReturnValue
+
+  [public] match(onOk: (T0) -> T0, onError: (T1) -> T0): T0
+    ; entry 10, locals 3, stack 2, code 00B5..00D0
+      00B5  Ldl0
+      00B6  FieldGet 0 (_isOk)
+      00B9  JPZ +11 -> L0 (00C7)
+      00BC  Ldl1
+      00BD  Ldl0
+      00BE  FieldGet 1 (_payload)
+      00C1  InvokeClosure args=1 ret=1
+      00C4  JP +8 -> L1 (00CF)
+    L0:
+      00C7  Ldl2
+      00C8  Ldl0
+      00C9  FieldGet 1 (_payload)
+      00CC  InvokeClosure args=1 ret=1
+    L1:
+      00CF  ReturnValue
+
   [public] static ok(value: T0): surtr.core.Result:Result<T0, T1>
     ; entry 1, locals 1, stack 4, code 000B..0018
       000B  ObjNew 0 (surtr.core.Result:Result<T0, T1>)
@@ -80,7 +141,7 @@ class Result`2<T, E> : surtr:object  [public]
       0038  ObjNew 1 (surtr:InvalidOperationException)
       003B  Dup
       003C  Ldc0
-      003D  InvokeSpecial 8 (ctor) args=2 ret=0
+      003D  InvokeSpecial 11 (ctor) args=2 ret=0
       0042  Throw
     L0:
       0043  Ldl0
@@ -95,7 +156,7 @@ class Result`2<T, E> : surtr:object  [public]
       005F  ObjNew 1 (surtr:InvalidOperationException)
       0062  Dup
       0063  Ldc1
-      0064  InvokeSpecial 8 (ctor) args=2 ret=0
+      0064  InvokeSpecial 11 (ctor) args=2 ret=0
       0069  Throw
     L0:
       006A  Ldl0

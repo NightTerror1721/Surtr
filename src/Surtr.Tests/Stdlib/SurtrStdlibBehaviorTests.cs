@@ -2157,6 +2157,47 @@ namespace Surtr.Tests.Stdlib
             Assert.Equal(-99, Int(runtime, "runUnwrapOr"));
         }
 
+        /// <summary>
+        /// Regression for B11 (docs/Plan-Revision-Stdlib.md §6.3c), now fixed:
+        /// <c>Result&lt;T,E&gt;.map()</c>/<c>mapError()</c>/<c>match()</c> each invoke a lambda
+        /// argument with a value read back out of the result's own erased storage
+        /// (<c>_payload as T</c>) - exactly the shape that used to call the lambda with a corrupted
+        /// value (confirmed with the doc's minimal repro: <c>apply(5, (v) => v * 100)</c> returned
+        /// 100, not 500). The lambdas here do real arithmetic on their parameter (not just a
+        /// pass-through or a method call), which is what actually exercises the bug - a lambda that
+        /// only calls a method on its parameter does not.
+        /// </summary>
+        [Fact]
+        public void ResultMapMapErrorAndMatchInvokeTheirClosureWithTheRightValue()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.core.Result;\n"
+                    + "fun divide(a: int, b: int): Result<int, int> {\n"
+                    + "  if (b == 0) return Result<int, int>.error(a);\n"
+                    + "  return Result<int, int>.ok(a / b);\n"
+                    + "}\n"
+                    + "fun runMap(): int {\n"
+                    + "  let r = divide(10, 2).map<int>((v) => v * 100);\n"
+                    + "  return r.unwrap();\n"
+                    + "}\n"
+                    + "fun runMapError(): int {\n"
+                    + "  let r = divide(10, 0).mapError<int>((e) => e * 100);\n"
+                    + "  return r.unwrapError();\n"
+                    + "}\n"
+                    + "fun runMatchOk(): int {\n"
+                    + "  return divide(10, 2).match<int>((v) => v * 100, (e) => -1);\n"
+                    + "}\n"
+                    + "fun runMatchError(): int {\n"
+                    + "  return divide(10, 0).match<int>((v) => -1, (e) => e * 100);\n"
+                    + "}\n",
+                "core/Result.surtr");
+
+            Assert.Equal(500, Int(runtime, "runMap"));
+            Assert.Equal(1000, Int(runtime, "runMapError"));
+            Assert.Equal(500, Int(runtime, "runMatchOk"));
+            Assert.Equal(1000, Int(runtime, "runMatchError"));
+        }
+
         // ── Fase 8: RuntimeInfo review ───────────────────────────────────────────────
 
         /// <summary>

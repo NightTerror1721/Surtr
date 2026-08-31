@@ -179,12 +179,89 @@ namespace Surtr.Compiler.CodeGen
         public void Emit(BoundStatement body)
         {
             EmitReceiverUnpackIfNeeded();
+            EmitLambdaParameterUnboxIfNeeded();
             Statement(body);
 
             // Flow analysis already rejected a value-returning method that can fall off its end, so
             // whatever reaches here returns nothing and needs the instruction saying so.
             if (Code.IsReachable)
                 Code.ReturnVoid();
+        }
+
+        /// <summary>
+        /// One-time prologue for a lifted lambda body only (B11,
+        /// docs/Plan-Revision-Stdlib.md §6.3c): defensively unboxes every parameter whose type is a
+        /// primitive or a single-field value class, in place.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A lambda's unwritten parameter type is bound against whatever it lands in (§8) - the
+        /// *substituted* view of the parameter it is passed to, so <c>apply&lt;T&gt;(v: T, f: (T)
+        /// -&gt; T)</c> called as <c>apply(5, (v) =&gt; v * 100)</c> types the lambda's own
+        /// <c>v</c> as a concrete <c>int</c>, which is what lets <c>v * 100</c> type-check at all -
+        /// an unconstrained <c>T</c> supports no arithmetic. But <c>apply</c>'s own body is compiled
+        /// once, generically: its parameter <c>f</c> is declared <c>(T0) -&gt; T0</c>, fully erased,
+        /// so calling <c>f(v)</c> always pushes <c>v</c> the way every <c>T0</c>-typed value at rest
+        /// in a generic body is carried - boxed. The lifted lambda's own compiled body, though, was
+        /// emitted against its concrete <c>int</c> parameter and reads it raw (<c>Mul</c> straight
+        /// off the slot, no unbox) - so a boxed reference's own raw bits (an entity id) is what gets
+        /// multiplied by 100, not the value inside the box. The same closure called directly,
+        /// through a genuinely concrete <c>(int) -&gt; int</c>-typed value, never hits this: the
+        /// caller there pushes a raw <c>int</c> to begin with.
+        /// </para>
+        /// <para>
+        /// <see cref="Surtr.Bytecode.OpCode.UnboxDynamic"/> is exactly the opcode both cases need at
+        /// once: a no-op on an already-raw value (the ordinary, concretely-typed call), and the
+        /// missing unbox on a boxed one (the generic-erased call). Running it once per parameter at
+        /// entry, rather than trying to tell which calling convention a given invocation used, is
+        /// what keeps one compiled lambda body correct under both - the same trick
+        /// <c>MethodBodyEmitter.Unerase</c> plays reading a value class or primitive back out of an
+        /// erased slot (B10, same doc, §6.3b).
+        /// </para>
+        /// <para>
+        /// Scoped to lifted lambda bodies only - <see cref="_captures"/> is non-null for exactly
+        /// those - not every function with a primitive parameter: an ordinary named function's body
+        /// is shared by every direct call to it, the overwhelming majority of which never cross an
+        /// erasure boundary, so paying this check there would tax the common case for a gap that is
+        /// unique to how a lambda's parameter type is inferred. A named function converted to a
+        /// closure and passed through the same erased slot (<c>apply(5, someIntToIntFunction)</c>)
+        /// is not covered by this fix and remains open - see the doc for what was and was not
+        /// confirmed.
+        /// </para>
+        /// </remarks>
+        private void EmitLambdaParameterUnboxIfNeeded()
+        {
+            if (_captures is null)
+                return;
+
+            for (int i = 0; i < _symbol.Parameters.Count; i++)
+            {
+                var parameter = _symbol.Parameters[i];
+                if (!NeedsDefensiveUnboxOnEntry(parameter.Type))
+                    continue;
+
+                var slot = ParameterSlot(parameter);
+                EmitLoadLocal(slot);
+                Code.UnboxDynamic();
+                EmitStoreLocal(slot);
+            }
+        }
+
+        /// <summary>
+        /// Whether a value of this type is bit-identical whether raw or "at rest" inside a generic
+        /// body - a true primitive, or a single-field value class erased to the field it wraps
+        /// (§2.9) - which is exactly what makes <see cref="Surtr.Bytecode.OpCode.UnboxDynamic"/>
+        /// safe and sufficient to normalise it regardless of which representation arrived.
+        /// </summary>
+        private static bool NeedsDefensiveUnboxOnEntry(TypeSymbol type)
+        {
+            var bare = type.NonNullable;
+
+            if (bare.IsPrimitive && !bare.IsVoid)
+                return true;
+
+            return bare.TypeKind == TypeSymbolKind.ValueClass
+                && !ValueTypeLayout.IsMultiField((NamedTypeSymbol)bare);
         }
 
         /// <summary>
