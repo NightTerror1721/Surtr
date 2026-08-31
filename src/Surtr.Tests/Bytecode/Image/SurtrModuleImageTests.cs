@@ -245,7 +245,7 @@ namespace Surtr.Tests.Bytecode.Image
         {
             var builder = new SurtrModuleBuilder("cards");
 
-            var suit = builder.DefineEnum("Suit");
+            var suit = builder.DefineEnum("Suit", SurtrBuiltIns.Enum.SelfReference);
             suit.DefineEnumCase("Hearts", 0);
             suit.DefineEnumCase("Spades", 1);
             suit.DefineEnumCase("Clubs", 4);

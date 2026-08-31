@@ -1,0 +1,129 @@
+// Fase 8, §6.3/P1 + "investiga más usos de corrutinas". The language already ships full coroutines
+// (generator, docs `CLAUDE.md`'s generator section) - a suspension that survives across calls, with
+// deterministic close on every exit. What nothing in the stdlib did before this file: connect that
+// to what a game loop actually wants a coroutine *for* - running a sequence of timed steps without
+// blocking the frame, Unity's `StartCoroutine`/`WaitForSeconds` being the direct precedent.
+//
+// The protocol is deliberately the simplest one that works: a scheduled coroutine is a
+// `generator<float>`, and every `yield <seconds>` is "pause for at least this many seconds of
+// `update(deltaTime)` time before resuming". `yield 0.0` resumes on the very next `update()` call -
+// "wait one frame". The coroutine returning (falling off the end, or an explicit `return;`) retires
+// it from the scheduler with no special call needed.
+//
+// Stored as `generator<float>[]` directly (B12, docs/Plan-Revision-Stdlib.md §6.3d, fixed): earlier
+// sessions worked around a parser gap that rejected `generator<T>` nested inside another type's own
+// `<...>` - `array<generator<float>>(n)` failed to parse, "Expected an expression, found
+// KeywordGenerator" - by storing `unknown[]` and casting back on every read. The lookahead that
+// disambiguates a generic call from a chain of comparisons did not know `generator` could appear
+// mid-scan; it does now, so the array can name its real element type.
+//
+// Backed by two parallel arrays with swap-removal: a scheduler's iteration order across coroutines
+// is never meaningful (each one only cares about its own wait timer), so an O(1) swap-with-last on
+// completion costs nothing a shifting removal would have bought.
+public class Scheduler
+{
+    private var _coroutines: generator<float>[];
+    private var _remaining: float[];
+    private var _count: int;
+
+    public constructor()
+    {
+        this._coroutines = array<generator<float>>(4);
+        this._remaining = array<float>(4);
+        this._count = 0;
+    }
+
+    public inline activeCount: int => _count;
+
+    /// Registers `coroutine`, ready to run on the next `update()` call.
+    public fun start(coroutine: generator<float>): void
+    {
+        if (_count == _coroutines.length)
+        {
+            let newCapacity = _count == 0 ? 4 : _count * 2;
+            var newCoroutines = array<generator<float>>(newCapacity);
+            var newRemaining = array<float>(newCapacity);
+            for (var i = 0; i < _count; i++)
+            {
+                newCoroutines[i] = _coroutines[i];
+                newRemaining[i] = _remaining[i];
+            }
+            _coroutines = newCoroutines;
+            _remaining = newRemaining;
+        }
+
+        _coroutines[_count] = coroutine;
+        _remaining[_count] = 0.0;
+        _count = _count + 1;
+    }
+
+    /// Advances every scheduled coroutine by `deltaTime` seconds, resuming each whose wait has
+    /// elapsed. Call once per frame with the frame's delta time.
+    public fun update(deltaTime: float): void
+    {
+        var i = 0;
+        while (i < _count)
+        {
+            let left = _remaining[i] - deltaTime;
+            if (left > 0.0)
+            {
+                _remaining[i] = left;
+                i += 1;
+                continue;
+            }
+
+            let coroutine = _coroutines[i];
+            if (coroutine.moveNext())
+            {
+                _remaining[i] = coroutine.current;
+                i += 1;
+            }
+            else
+            {
+                _count = _count - 1;
+                _coroutines[i] = _coroutines[_count];
+                _remaining[i] = _remaining[_count];
+            }
+        }
+    }
+
+    /// Stops and disposes every scheduled coroutine, running their pending `finally` blocks.
+    public fun stopAll(): void
+    {
+        for (var i = 0; i < _count; i++)
+            _coroutines[i].dispose();
+        _count = 0;
+    }
+}
+
+// Three ready-made coroutines, safe to hand straight to Scheduler.start() - the recipes a game
+// script reaches for immediately: run something once after a delay, or repeatedly on an interval.
+
+/// Waits `seconds`, then runs `action` once.
+public generator delay(seconds: float, action: () -> void): float
+{
+    yield seconds;
+    action();
+}
+
+/// Runs `action`, then waits `interval` seconds, forever. Register with `Scheduler.start()`; call
+/// `Scheduler.stopAll()` (or let the scheduler itself be dropped) to end it - it never returns on
+/// its own.
+public generator repeatEvery(interval: float, action: () -> void): float
+{
+    while (true)
+    {
+        action();
+        yield interval;
+    }
+}
+
+/// Runs `action` immediately and then `times - 1` more times, `interval` seconds apart.
+public generator repeatTimes(interval: float, times: int, action: () -> void): float
+{
+    for (var i = 0; i < times; i++)
+    {
+        action();
+        yield interval;
+    }
+}

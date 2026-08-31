@@ -1,6 +1,6 @@
 import surtr.collections.Collection;
 
-public interface IReadOnlySet<T> : IReadOnlyCollection<T>
+public interface IReadOnlySet<T> default ReadOnlySet<T> : IReadOnlyCollection<T>
 {
     isEmpty: bool { get; }
 
@@ -13,7 +13,7 @@ public interface IReadOnlySet<T> : IReadOnlyCollection<T>
     fun equals(other: IReadOnlySet<T>): bool;
 }
 
-public interface ISet<T> : IReadOnlySet<T>, ICollection<T>
+public interface ISet<T> default Set<T> : IReadOnlySet<T>, ICollection<T>
 {
     isEmpty: bool { get; }
 
@@ -41,8 +41,15 @@ public class ReadOnlySet<T> : IReadOnlySet<T>
 
     public constructor(items: T...)
     {
+        _dict = {};
         for (item in items)
             _dict[item] = true;
+    }
+
+    public constructor() { }
+    each (item: T)
+    {
+        _dict[item] = true;
     }
 
     public inline length: int => _dict.length;
@@ -106,7 +113,10 @@ public class ReadOnlySet<T> : IReadOnlySet<T>
     
     public fun copyTo(array : T[], arrayIndex : int): void
     {
-        if (arrayIndex < 0 || arrayIndex >= array.length)
+        // Only `< 0` is checked here, matching List.copyTo: `arrayIndex == array.length` is valid
+        // when there is nothing to copy (an empty set into an empty array), and the space check
+        // below already rejects it once `length > 0`.
+        if (arrayIndex < 0)
             throw IndexOutOfRangeException("arrayIndex is out of range.");
         if (array.length - arrayIndex < length)
             throw ArgumentException("The number of elements in the source set is greater than the available space from arrayIndex to the end of the destination array.");
@@ -226,11 +236,25 @@ public class Set<T> : ReadOnlySet<T>, ISet<T>
 
     public constructor(items: T...) : super(items) {}
 
+    public constructor() : super() { }
+    each (item: T)
+    {
+        _dict[item] = true;
+    }
+
     public static inline fun of(): Set<T> => Set<T>();
     public static inline fun of(item: T): Set<T> => Set<T>(item);
     public static inline fun of(item1: T, item2: T): Set<T> => Set<T>(item1, item2);
     public static inline fun of(item1: T, item2: T, item3: T): Set<T> => Set<T>(item1, item2, item3);
-    //public static inline fun of(items: T...): Set<T> => Set<T>(items);
+
+    // No `of(items: T...)` overload for 4+ elements: `SignatureSet` erases a varargs parameter's
+    // element type the same way it erases a single one of that type, so `of(items: T...)` and
+    // `of(item: T)` above both key to the emitted signature `of(E)` and collide in the method
+    // table - confirmed by trying it (SURTR4001, "already declares a member with the signature
+    // 'of(E)'"). Renaming one to dodge the collision isn't worth the asymmetry; a 4+ literal can
+    // still reach a Set through `Set<T>(a, b, c, d, ...)`'s own constructor(items: T...), or
+    // `[a, b, c, d].toSet()` (Sequence.surtr's IIterable<T> extension).
+
 
     public inline fun add(item: T): void
     {
@@ -383,5 +407,25 @@ public class Set<T> : ReadOnlySet<T>, ISet<T>
                 result.add(item);
         }
         return result;
+    }
+
+    /// A read-only view over this set; stays live if the set changes underneath it.
+    public inline fun asReadOnly(): IReadOnlyCollection<T> => ReadOnlyCollection<T>(this);
+}
+
+// Fase 8, §6.2/O3 + §6.3/P7: same reasoning as List<T>.toDisplayString() - a debug representation
+// once T is known to have a real toString() to call.
+public extension<T: object> ReadOnlySet<T>
+{
+    fun toDisplayString(self: ReadOnlySet<T>): string
+    {
+        var parts: string[] = array<string>(self.length);
+        var i = 0;
+        for (item in self)
+        {
+            parts[i] = item.toString();
+            i += 1;
+        }
+        return "{" + string.join(", ", parts) + "}";
     }
 }

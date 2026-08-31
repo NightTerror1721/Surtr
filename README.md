@@ -90,8 +90,9 @@ SurtrValue result = runtime.Invoke(overloads[0], entityValue); // "entity #1 at 
 ## The language
 
 The surface syntax is TypeScript/Kotlin-flavoured: braces for blocks, `name: Type` annotation
-order, a modern keyword set, mandatory `;` statement terminators, and trailing commas allowed
-everywhere a comma-separated list appears. Source files use the **`.surtr`** extension.
+order, a modern keyword set, optional `;` statement terminators (a line break ends a statement),
+and trailing commas allowed everywhere a comma-separated list appears. Source files use the
+**`.surtr`** extension.
 
 ### Modules and imports
 
@@ -132,8 +133,9 @@ be cast before use). Composites:
 
 Generics are written `Box<int>` with constraints like `T : IComparable<T> & IEquatable<T>`; they
 are **erased** at compile time the way Java's are — checked and then discarded, with the runtime
-only ever seeing one class per declaration. There is no root `object` class: a bare
-`class Foo { }` sits at depth 0 in its own hierarchy.
+only ever seeing one class per declaration. `object` is the stateless root every class extends by
+default: a bare `class Foo { }` extends it implicitly, with real `equals`/`hashCode`/`toString`
+inherited from it.
 
 ### Declarations
 

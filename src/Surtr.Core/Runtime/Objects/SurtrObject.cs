@@ -1,5 +1,6 @@
 #nullable enable
 
+using Surtr.Runtime.BuiltIns;
 using Surtr.Runtime.Classes;
 using System.Runtime.CompilerServices;
 
@@ -54,6 +55,74 @@ namespace Surtr.Runtime.Objects
         /// <summary>Whether this object is an instance of <paramref name="type"/> or of anything deriving from it.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool IsInstanceOf(SurtrClass type) => Class.IsSubclassOf(type);
+
+        /// <summary>
+        /// <c>equals</c>, resolved once against this object's own class and taken the fast way
+        /// where nothing overrode it.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// For C# code holding an untyped/erased value - a dictionary keyed by <c>unknown</c>, an
+        /// array searched by <c>indexOf</c> over an erased element type, anywhere the static type
+        /// that would pick a specialised comparison is already gone - this is the one place to ask
+        /// "does this object's class actually override <c>equals</c>, and if so, what does it say".
+        /// A statically-typed call site never reaches this at all: the compiler already resolved
+        /// <c>x.equals(y)</c> to a real <c>InvokeVirtual</c> at compile time, the same as any other
+        /// virtual call, and this exists for the C# side of the boundary that has no such site to
+        /// resolve.
+        /// </para>
+        /// <para>
+        /// <b>The fast path is the common case.</b> <c>Class.VirtualMethods[slot]</c> is still
+        /// <see cref="SurtrObjectBuiltIn.EqualsMethod"/> itself - the same reference every class
+        /// inherits until something overrides it - for the overwhelming majority of objects, which
+        /// answers with a bare reference compare and no VM call at all - the same thing the
+        /// inherited default's own native body would have answered, just without paying to get
+        /// there. It deliberately does <b>not</b> reach back into <see cref="SurtrValueComparer"/>
+        /// for that: <see cref="SurtrValueComparer.ReferencesEqual"/>'s own default case is what
+        /// calls here, so looping back into the comparer would be this method calling its own
+        /// caller. Only when the slot resolves to something else - a real override a class wrote -
+        /// does this reach for <see cref="SurtrRuntime.Invoke(SurtrMethodInfo, SurtrValue[])"/>,
+        /// which is the one path genuinely able to run whatever that override says.
+        /// </para>
+        /// </remarks>
+        public bool EqualsOverridable(SurtrRuntime runtime, SurtrValue other)
+        {
+            var resolved = Class.VirtualMethods[SurtrObjectBuiltIn.EqualsMethod.VTableSlot];
+
+            if (ReferenceEquals(resolved, SurtrObjectBuiltIn.EqualsMethod))
+                return other.IsReference && GetSurtrReference() == other.AsReference;
+
+            var self = SurtrValue.CreateReference(GetSurtrReference());
+            return runtime.Invoke(resolved, self, other).AsBool;
+        }
+
+        /// <summary>The <c>hashCode</c> counterpart of <see cref="EqualsOverridable"/>, same rule and same reason not to call back into the comparer on the fast path.</summary>
+        public int HashCodeOverridable(SurtrRuntime runtime)
+        {
+            var resolved = Class.VirtualMethods[SurtrObjectBuiltIn.HashCodeMethod.VTableSlot];
+
+            if (ReferenceEquals(resolved, SurtrObjectBuiltIn.HashCodeMethod))
+                return GetSurtrReference();
+
+            var self = SurtrValue.CreateReference(GetSurtrReference());
+            return runtime.Invoke(resolved, self).AsInt;
+        }
+
+        /// <summary>
+        /// The <c>toString</c> counterpart of <see cref="EqualsOverridable"/>, same rule - the fast
+        /// path is the class's bare name, matching what the inherited default's own body answers.
+        /// </summary>
+        public string ToStringOverridable(SurtrRuntime runtime)
+        {
+            var resolved = Class.VirtualMethods[SurtrObjectBuiltIn.ToStringMethod.VTableSlot];
+
+            if (ReferenceEquals(resolved, SurtrObjectBuiltIn.ToStringMethod))
+                return Class.Name;
+
+            var self = SurtrValue.CreateReference(GetSurtrReference());
+            var result = runtime.Invoke(resolved, self);
+            return runtime.Resolve<SurtrString>(result)?.Value ?? Class.Name;
+        }
 
         // Deliberately empty rather than marking Class. Class metadata is not a collectable
         // value: modules, classes and members are owned by the runtime's managed tables for its

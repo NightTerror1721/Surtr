@@ -196,7 +196,16 @@ namespace Surtr.LanguageServer.Workspace
             for (int i = 0; i < segments.Length; i++)
             {
                 string segment = segments[i];
-                if (segment is "obj" or "bin" or ".git" or ".vs" or "node_modules")
+
+                // .claude: Claude Code's own scratch and worktree state (docs/tmp is separate and
+                // already the user's own choice of ignore, not this server's to assume). A worktree
+                // under here is a full second checkout of the repo, so without this a workspace
+                // opened at the repo root would compile every .surtr file twice - once for real,
+                // once more per worktree - and (worse) each copy's module path would fold in the
+                // worktree's own directory name, which is never a legal Surtr identifier, so every
+                // single one of those duplicates fails with a spurious "not a legal identifier"
+                // diagnostic that has nothing to do with the user's own code.
+                if (segment is "obj" or "bin" or ".git" or ".vs" or ".claude" or "node_modules")
                     return true;
             }
 

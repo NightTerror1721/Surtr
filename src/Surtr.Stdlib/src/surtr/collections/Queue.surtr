@@ -1,6 +1,6 @@
 import surtr.collections.Collection;
 
-public interface IQueue<T> : ICollection<T>
+public interface IQueue<T> default Queue<T> : ICollection<T>
 {
     isEmpty: bool { get; }
 
@@ -9,7 +9,7 @@ public interface IQueue<T> : ICollection<T>
     fun peek(): T;
 }
 
-public interface IDeque<T> : IQueue<T>
+public interface IDeque<T> default Deque<T> : IQueue<T>
 {
     fun enqueueFront(item: T): void;
     fun dequeueBack(): T;
@@ -26,6 +26,15 @@ public class Queue<T> : IQueue<T>
         this._front = null;
         this._back = null;
         this._count = 0;
+    }
+
+    // §5.x: the collection-builder form — `Queue<int>[1, 2, 3]` fills through this $fill$ method.
+    public constructor() : this()
+    {
+    }
+    each (item: T)
+    {
+        enqueue(item);
     }
 
     public inline length: int => _count;
@@ -110,7 +119,6 @@ public class Queue<T> : IQueue<T>
             this.next = null;
         }
     }
-    protected static inline fun makeNode(value: T) => Node<T>(value);
 
     private sealed class Iterator<T> : IIterator<T>
     {
@@ -143,64 +151,236 @@ public class Queue<T> : IQueue<T>
             if (_index + 1 >= _count)
                 return false;
 
-            if (_index == -1)
-                _current = _current; // Start at the front
-            else
+            if (_index != -1)
                 _current = _current!!.next;
 
             _index += 1;
             return true;
         }
-
-        public fun reset(): void
-        {
-            _current = null;
-            _index = -1;
-        }
     }
 }
 
-public class Deque<T> : Queue<T>, IDeque<T>
+// Fase 8, §6.2/O3 + §6.3/P7: same reasoning as List<T>.toDisplayString().
+public extension<T: object> Queue<T>
 {
-    public fun enqueueFront(item: T): void
+    fun toDisplayString(self: Queue<T>): string
     {
-        var node = makeNode(item);
-        if (this._front != null)
-            node.next = this._front;
-        this._front = node;
-        if (this._back == null)
-            this._back = node;
-        this._count += 1;
+        var parts: string[] = array<string>(self.length);
+        var i = 0;
+        for (item in self)
+        {
+            parts[i] = item.toString();
+            i += 1;
+        }
+        return "[" + string.join(", ", parts) + "]";
+    }
+}
+
+// A standalone doubly-linked implementation, deliberately independent from Queue<T> rather than
+// extending it (Plan-Revision-Stdlib.md D2). Queue<T>.Node<T> is singly-linked (`next` only), which
+// made the old Deque<T> : Queue<T> subclass's dequeueBack() an O(n) walk to find the node before
+// `_back` - a "deque" whose whole point is O(1) at both ends failing at one of them. Its own Node<T>
+// carries `prev` too, so both dequeueFront() and dequeueBack() are O(1). The cost is that Deque<T>
+// is no longer a subtype of the concrete Queue<T> class (only of IQueue<T>/IDeque<T>, which it still
+// implements in full) - anything written against the interfaces is unaffected.
+public class Deque<T> : IDeque<T>
+{
+    protected sealed class Node<T>
+    {
+        public var value: T;
+        public var next: Node<T>?;
+        public var prev: Node<T>?;
+
+        public constructor(value: T)
+        {
+            this.value = value;
+            this.next = null;
+            this.prev = null;
+        }
     }
 
-    public inline fun enqueueBack(item: T): void => enqueue(item);
+    private var _front: Node<T>?;
+    private var _back: Node<T>?;
+    private var _count: int;
+
+    public constructor()
+    {
+        this._front = null;
+        this._back = null;
+        this._count = 0;
+    }
+
+    // §5.x: the collection-builder form — `Deque<int>[1, 2, 3]` fills through this $fill$ method.
+    public constructor() : this()
+    {
+    }
+    each (item: T)
+    {
+        enqueue(item);
+    }
+
+    public inline length: int => _count;
+    public inline isReadOnly: bool => false;
+    public inline isEmpty: bool => _count == 0;
+
+    public inline front: T => _front?.value ?? throw InvalidOperationException("Deque is empty.");
+    public inline back: T => _back?.value ?? throw InvalidOperationException("Deque is empty.");
+
+    public inline fun enqueue(item: T): void => enqueueBack(item);
+
+    public fun enqueueBack(item: T): void
+    {
+        var node = Node<T>(item);
+        if (_back != null)
+        {
+            node.prev = _back;
+            _back!!.next = node;
+        }
+        else
+        {
+            _front = node;
+        }
+        _back = node;
+        _count += 1;
+    }
+
+    public fun enqueueFront(item: T): void
+    {
+        var node = Node<T>(item);
+        if (_front != null)
+        {
+            node.next = _front;
+            _front!!.prev = node;
+        }
+        else
+        {
+            _back = node;
+        }
+        _front = node;
+        _count += 1;
+    }
+
+    public inline fun dequeue(): T => dequeueFront();
+
+    public fun dequeueFront(): T
+    {
+        if (isEmpty)
+            throw InvalidOperationException("Deque is empty.");
+
+        var value = _front!!.value;
+        _front = _front!!.next;
+        if (_front == null)
+            _back = null;
+        else
+            _front!!.prev = null;
+        _count -= 1;
+        return value;
+    }
 
     public fun dequeueBack(): T
     {
         if (isEmpty)
             throw InvalidOperationException("Deque is empty.");
 
-        if (this._front == this._back)
-        {
-            var value = this._back!!.value;
-            this._front = null;
-            this._back = null;
-            this._count -= 1;
-            return value;
-        }
-
-        var current = this._front;
-        while (current!!.next != this._back)
-        {
-            current = current.next;
-        }
-
-        var value = this._back!!.value;
-        current.next = null;
-        this._back = current;
-        this._count -= 1;
+        var value = _back!!.value;
+        _back = _back!!.prev;
+        if (_back == null)
+            _front = null;
+        else
+            _back!!.next = null;
+        _count -= 1;
         return value;
     }
 
-    public inline fun dequeueFront(): T => dequeue();
+    public inline fun peek(): T => front;
+
+    public inline fun add(item: T): void => enqueueBack(item);
+    public inline fun remove(item: T): bool { throw InvalidOperationException("Deque does not support removing arbitrary items."); }
+    public inline fun clear(): void
+    {
+        _front = null;
+        _back = null;
+        _count = 0;
+    }
+
+    public fun contains(item: T): bool
+    {
+        var current = _front;
+        while (current != null)
+        {
+            if (current.value == item)
+                return true;
+            current = current.next;
+        }
+        return false;
+    }
+
+    public fun copyTo(array: T[], arrayIndex: int): void
+    {
+        var current = _front;
+        var i = 0;
+        while (current != null)
+        {
+            array[arrayIndex + i] = current.value;
+            current = current.next;
+            i += 1;
+        }
+    }
+
+    public inline fun iterate(): IIterator<T> => Iterator(_front, _count);
+
+    private sealed class Iterator<T> : IIterator<T>
+    {
+        private var _current: Node<T>?;
+        private var _count: int;
+        private var _index: int;
+
+        public constructor(start: Node<T>?, count: int)
+        {
+            _current = start;
+            _count = count;
+            _index = -1;
+        }
+
+        public current: T
+        {
+            get
+            {
+                if (_index < 0 || _index >= _count)
+                    throw InvalidOperationException("Iterator is not at a valid position.");
+                return _current!!.value;
+            }
+        }
+
+        // Nothing held that outlives this cursor, so the contract slot is filled and empty.
+        public fun dispose(): void { }
+
+        public fun moveNext(): bool
+        {
+            if (_index + 1 >= _count)
+                return false;
+
+            if (_index != -1)
+                _current = _current!!.next;
+
+            _index += 1;
+            return true;
+        }
+    }
+}
+
+// Fase 8, §6.2/O3 + §6.3/P7: same reasoning as List<T>.toDisplayString().
+public extension<T: object> Deque<T>
+{
+    fun toDisplayString(self: Deque<T>): string
+    {
+        var parts: string[] = array<string>(self.length);
+        var i = 0;
+        for (item in self)
+        {
+            parts[i] = item.toString();
+            i += 1;
+        }
+        return "[" + string.join(", ", parts) + "]";
+    }
 }

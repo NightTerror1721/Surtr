@@ -61,6 +61,30 @@ namespace Surtr.Compiler.Compilation
                 : (IReadOnlyCollection<string>)Array.Empty<string>();
 
         /// <summary>
+        /// Every module that depends directly on <paramref name="modulePath"/> - the reverse of
+        /// <see cref="DependenciesOf"/>.
+        /// </summary>
+        /// <remarks>
+        /// Nothing here keeps a reverse index, so this walks every edge on each call - fine for the
+        /// tooling this graph already serves (compile-time, once per build), and for what it exists
+        /// for now: incremental invalidation asks "who breaks if this module's signature changes",
+        /// which is exactly this direction, and only needs asking when a module's content or its
+        /// own dependents just changed.
+        /// </remarks>
+        public IReadOnlyCollection<string> Dependents(string modulePath)
+        {
+            var result = new List<string>();
+
+            foreach (var pair in _edges)
+            {
+                if (pair.Value.Contains(modulePath))
+                    result.Add(pair.Key);
+            }
+
+            return result;
+        }
+
+        /// <summary>
         /// Orders the modules so every one comes after everything it depends on.
         /// </summary>
         /// <param name="order">The load order, or empty when a cycle was found.</param>

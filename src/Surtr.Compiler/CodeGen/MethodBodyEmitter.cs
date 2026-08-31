@@ -178,12 +178,90 @@ namespace Surtr.Compiler.CodeGen
         /// <exception cref="SurtrEmitException">The body uses something not lowered yet.</exception>
         public void Emit(BoundStatement body)
         {
+            EmitReceiverUnpackIfNeeded();
+            EmitLambdaParameterUnboxIfNeeded();
             Statement(body);
 
             // Flow analysis already rejected a value-returning method that can fall off its end, so
             // whatever reaches here returns nothing and needs the instruction saying so.
             if (Code.IsReachable)
                 Code.ReturnVoid();
+        }
+
+        /// <summary>
+        /// One-time prologue for a lifted lambda body only (B11,
+        /// docs/Plan-Revision-Stdlib.md §6.3c): defensively unboxes every parameter whose type is a
+        /// primitive or a single-field value class, in place.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A lambda's unwritten parameter type is bound against whatever it lands in (§8) - the
+        /// *substituted* view of the parameter it is passed to, so <c>apply&lt;T&gt;(v: T, f: (T)
+        /// -&gt; T)</c> called as <c>apply(5, (v) =&gt; v * 100)</c> types the lambda's own
+        /// <c>v</c> as a concrete <c>int</c>, which is what lets <c>v * 100</c> type-check at all -
+        /// an unconstrained <c>T</c> supports no arithmetic. But <c>apply</c>'s own body is compiled
+        /// once, generically: its parameter <c>f</c> is declared <c>(T0) -&gt; T0</c>, fully erased,
+        /// so calling <c>f(v)</c> always pushes <c>v</c> the way every <c>T0</c>-typed value at rest
+        /// in a generic body is carried - boxed. The lifted lambda's own compiled body, though, was
+        /// emitted against its concrete <c>int</c> parameter and reads it raw (<c>Mul</c> straight
+        /// off the slot, no unbox) - so a boxed reference's own raw bits (an entity id) is what gets
+        /// multiplied by 100, not the value inside the box. The same closure called directly,
+        /// through a genuinely concrete <c>(int) -&gt; int</c>-typed value, never hits this: the
+        /// caller there pushes a raw <c>int</c> to begin with.
+        /// </para>
+        /// <para>
+        /// <see cref="Surtr.Bytecode.OpCode.UnboxDynamic"/> is exactly the opcode both cases need at
+        /// once: a no-op on an already-raw value (the ordinary, concretely-typed call), and the
+        /// missing unbox on a boxed one (the generic-erased call). Running it once per parameter at
+        /// entry, rather than trying to tell which calling convention a given invocation used, is
+        /// what keeps one compiled lambda body correct under both - the same trick
+        /// <c>MethodBodyEmitter.Unerase</c> plays reading a value class or primitive back out of an
+        /// erased slot (B10, same doc, §6.3b).
+        /// </para>
+        /// <para>
+        /// Scoped to lifted lambda bodies only - <see cref="_captures"/> is non-null for exactly
+        /// those - not every function with a primitive parameter: an ordinary named function's body
+        /// is shared by every direct call to it, the overwhelming majority of which never cross an
+        /// erasure boundary, so paying this check there would tax the common case for a gap that is
+        /// unique to how a lambda's parameter type is inferred. A named function converted to a
+        /// closure and passed through the same erased slot (<c>apply(5, someIntToIntFunction)</c>)
+        /// is not covered by this fix and remains open - see the doc for what was and was not
+        /// confirmed.
+        /// </para>
+        /// </remarks>
+        private void EmitLambdaParameterUnboxIfNeeded()
+        {
+            if (_captures is null)
+                return;
+
+            for (int i = 0; i < _symbol.Parameters.Count; i++)
+            {
+                var parameter = _symbol.Parameters[i];
+                if (!NeedsDefensiveUnboxOnEntry(parameter.Type))
+                    continue;
+
+                var slot = ParameterSlot(parameter);
+                EmitLoadLocal(slot);
+                Code.UnboxDynamic();
+                EmitStoreLocal(slot);
+            }
+        }
+
+        /// <summary>
+        /// Whether a value of this type is bit-identical whether raw or "at rest" inside a generic
+        /// body - a true primitive, or a single-field value class erased to the field it wraps
+        /// (§2.9) - which is exactly what makes <see cref="Surtr.Bytecode.OpCode.UnboxDynamic"/>
+        /// safe and sufficient to normalise it regardless of which representation arrived.
+        /// </summary>
+        private static bool NeedsDefensiveUnboxOnEntry(TypeSymbol type)
+        {
+            var bare = type.NonNullable;
+
+            if (bare.IsPrimitive && !bare.IsVoid)
+                return true;
+
+            return bare.TypeKind == TypeSymbolKind.ValueClass
+                && !ValueTypeLayout.IsMultiField((NamedTypeSymbol)bare);
         }
 
         /// <summary>
@@ -195,6 +273,89 @@ namespace Surtr.Compiler.CodeGen
         /// statement and goes through the same lowering, but none of them ends a method.
         /// </remarks>
         public void EmitFragment(BoundStatement fragment) => Statement(fragment);
+
+        /// <summary>
+        /// One-time prologue for a non-<c>Direct</c> instance method on a multi-field value class:
+        /// spreads the boxed receiver the caller had to pass (<c>InvokeVirtual</c>/<c>InvokeInterface</c>
+        /// resolve a class through the entity registry, which only a boxed reference is in) back
+        /// into the raw per-field slots every other read of <c>this</c> in this body already
+        /// assumes, via <see cref="EnsureFrameWidths"/>.
+        /// </summary>
+        /// <remarks>
+        /// Runs once, before the body's first statement, rather than at every <c>this</c> access:
+        /// unlike a single-field value class - which erases to its one field, so unboxing on each
+        /// read is unboxing the very value being asked for - a multi-field receiver's fields live at
+        /// different offsets inside the block, which only works if slot 0 already holds the raw
+        /// block by the time anything indexes into it. A direct dispatch never boxes the receiver on
+        /// the way in (§6.3), so there is nothing to unpack for one.
+        /// </remarks>
+        private void EmitReceiverUnpackIfNeeded()
+        {
+            if (!_method.HasReceiver
+                || _symbol.Dispatch == MethodDispatch.Direct
+                || _symbol.ContainingType is not NamedTypeSymbol receiverType
+                || ValueTypeLayout.WidthOfType(receiverType) <= 1)
+            {
+                return;
+            }
+
+            EnsureFrameWidths();
+
+            // ApplyValueLayout (ModuleEmitter.cs) laid this frame's slots out against the
+            // receiver's full block width, since every field read of `this` in the body indexes
+            // into that block - but the call site only ever pushed one slot for it (§6.3). Every
+            // parameter therefore landed packed one slot to the left of where its own logical
+            // offset says it lives, by exactly this many slots.
+            int shift = ValueTypeLayout.WidthOfType(receiverType) - 1;
+
+            if (shift > 0 && _symbol.Parameters.Count > 0)
+            {
+                // Read every parameter out of its physical (unshifted) position into a fresh temp
+                // before the receiver is spread into the room its logical layout reserves for it -
+                // that spread writes over exactly the slots a packed parameter is still sitting in,
+                // so it has to happen after this, not before.
+                var temps = new SurtrLocal[_symbol.Parameters.Count];
+                for (int i = 0; i < _symbol.Parameters.Count; i++)
+                {
+                    var parameter = _symbol.Parameters[i];
+                    var logical = ParameterSlot(parameter);
+                    int width = _slotWidthsByIndex.TryGetValue(logical.Index, out int w) ? w : 1;
+                    int physical = logical.Index - shift;
+
+                    if (width > 1)
+                        Code.LoadValueLocal(physical, width);
+                    else
+                        Code.LoadLocal(physical);
+
+                    var temp = DeclareTemp("$paramShift", parameter.Type);
+                    EmitStoreLocal(temp);
+                    temps[i] = temp;
+                }
+
+                Code.LoadLocal(_method.Receiver);
+                UnpackIfMultiSlot(receiverType);
+                EmitStoreLocal(_method.Receiver);
+
+                for (int i = 0; i < _symbol.Parameters.Count; i++)
+                {
+                    EmitLoadLocal(temps[i]);
+                    EmitStoreLocal(ParameterSlot(_symbol.Parameters[i]));
+                }
+
+                return;
+            }
+
+            // Slot 0 holds exactly the one boxed reference the caller passed - a raw single-slot
+            // load, not EmitLoadLocal, which would already consult the width EnsureFrameWidths is
+            // about to register and read (and fail to find) a block that is not there yet.
+            Code.LoadLocal(_method.Receiver);
+            UnpackIfMultiSlot(receiverType);
+
+            // The first call into the width-aware store, which is what makes EnsureFrameWidths
+            // register slot 0 as this value's whole width - every later EmitLoadLocal/EmitStoreLocal
+            // of the receiver agrees with it from here on.
+            EmitStoreLocal(_method.Receiver);
+        }
 
         #region Statements
         /// <summary>The node being lowered, which is the span a failure here belongs to.</summary>
@@ -2254,6 +2415,10 @@ namespace Surtr.Compiler.CodeGen
                     EmitObjectCreation(creation);
                     return;
 
+                case BoundCollectionBuildExpression build:
+                    EmitCollectionBuild(build);
+                    return;
+
                 case BoundFieldExpression field:
                     EmitFieldRead(field);
                     return;
@@ -2537,6 +2702,15 @@ namespace Surtr.Compiler.CodeGen
                     }
 
                     Code.CastTo(Descriptors.Emit(to.NonNullable));
+
+                    // A cast landing on a genuinely different multi-field value type/enum - not the
+                    // `T? -> T` case above, which already named the same class - still has to
+                    // unbox: `object.equals(other: object?)`'s real override narrows `other` this
+                    // way before reading a field off it, and CastTo alone only checks the type and
+                    // leaves the one boxed reference on the stack.
+                    if (TryMultiSlotWidth(to, out _))
+                        UnpackIfMultiSlot(to);
+
                     return;
                 }
 
@@ -2571,8 +2745,24 @@ namespace Surtr.Compiler.CodeGen
 
             if (bare.TypeKind == TypeSymbolKind.ValueClass)
             {
-                Code.CastTo(Descriptors.EmitBoxedForm((NamedTypeSymbol)bare));
-                Code.Unbox();
+                // A single-field value class (byte, say) erases to the field it wraps (§2.9), so
+                // its unboxed form is bit-for-bit its wrapped primitive - the same ambiguity
+                // `UnboxDynamic`'s primitive branch below already reads by tag rather than by a
+                // static type. A `CastTo` + `Unbox` pair here used to insist the value already be
+                // boxed, which held only as long as everywhere a T-typed value crossed into a
+                // collection's own raw storage also boxed it back on the way out - and one writer
+                // doesn't: `UnboxIfStillErased` (its own doc comment) deliberately keeps a
+                // generic body's array/dict storage raw wherever the concrete instantiation might
+                // be a true primitive, which is indistinguishable from this value class at rest.
+                // Reading it back with a strict cast then threw `SurtrExecutionException: 'int'
+                // cannot be cast to 'byte'` on perfectly correct code (B10,
+                // docs/Plan-Revision-Stdlib.md §6.3b) - the class was never wrong, the check was
+                // asking a question storage doesn't promise an answer to. `UnboxDynamic` asks
+                // instead "is this already a reference": boxed, it unwraps (any class - the type
+                // checker already settled what this call site expects, so there is nothing left
+                // to verify at run time); raw, it is already exactly the field this class wraps,
+                // so it is left alone rather than reboxed and re-read.
+                Code.UnboxDynamic();
                 return;
             }
 
@@ -2811,16 +3001,10 @@ namespace Surtr.Compiler.CodeGen
         /// </remarks>
         private void BoxReceiverForCall(MethodSymbol method, TypeSymbol receiverType)
         {
-            // A multi-field value class's box crosses the call as one reference slot while its
-            // callee frame claims the whole width - the two conventions cannot both hold (�6.3).
-            // Refused at the call site rather than emitted into a mis-sliced frame.
-            if (method.Dispatch != MethodDispatch.Direct
-                && receiverType.NonNullable is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass } boxed
-                && ValueTypeLayout.WidthOfType(boxed) > 1)
-            {
-                throw Unsupported(
-                    "a non-Direct call whose receiver is a multi-field value class: that receiver convention does not exist yet");
-            }
+            // A multi-field value class's box now crosses the call as one reference slot, exactly
+            // like a single-field one - BoxIfValueClass below already builds it with BoxValue over
+            // the whole width, and EmitReceiverUnpackIfNeeded is the callee-side half that unpacks
+            // it back out at the top of the body.
 
             // A range receiver crosses as its three-slot block for a direct call - that is the
             // convention its own native members are built against - and packs only where the
@@ -4522,6 +4706,36 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
+        /// Lowers a collection literal built over an <c>each</c> constructor (§5.x):
+        /// <c>ObjNew</c>, then the constructor (which allocates the empty object), then one
+        /// <c>$fill$</c> call per element/entry. The <c>dup</c> idiom keeps exactly one copy on the
+        /// stack as the expression's value, the same way <see cref="EmitObjectCreation"/> keeps one
+        /// past the constructor call. The fill is direct (private, non-virtual): no dispatch per
+        /// element, and the box conversions were already inserted at bind time.
+        /// </summary>
+        private void EmitCollectionBuild(BoundCollectionBuildExpression build)
+        {
+            var type = (NamedTypeSymbol)build.Type.NonNullable;
+
+            Code.NewObject(Descriptors.Emit(type));
+            Code.Dup();
+
+            foreach (var argument in build.ConstructorArguments)
+                Expression(argument);
+
+            EmitResolvedCall(build.Constructor, virtualCall: false, discardResult: true);
+
+            foreach (var fillArgs in build.FillArguments)
+            {
+                Code.Dup();
+                foreach (var argument in fillArgs)
+                    Expression(argument);
+
+                EmitResolvedCall(build.FillMethod, virtualCall: false, discardResult: true);
+            }
+        }
+
+        /// <summary>
         /// Builds an enum case (§2.2): a value class whose first field is the synthetic
         /// <c>value</c>, filled from the case's own value rather than from any constructor
         /// parameter.
@@ -4890,8 +5104,48 @@ namespace Surtr.Compiler.CodeGen
         private void UnerasedCallResult(MethodSymbol method)
         {
             var original = method.OriginalDefinition ?? method;
-            if (original.ReturnType.NonNullable is TypeParameterSymbol)
-                Unerase(method.ReturnType);
+            if (original.ReturnType.NonNullable is not TypeParameterSymbol)
+                return;
+
+            var target = method.ReturnType;
+
+            // B9 (docs/Plan-Revision-Stdlib.md §2.9): a generic method's own `T?` still compiles
+            // `return null;` as an ordinary null reference - IsNullablePrimitive reads false while
+            // T is unconstrained, so the absent tag PushAbsent would use never gets a chance to run.
+            // Unerase's own primitive branch (UnboxDynamic) leaves that null reference exactly as it
+            // found it, since it is not a box, so a caller's `getNull<int>() == null` - which
+            // TryEmitAbsenceTest lowers to a tag test against TagMaskAbsent once the substituted
+            // type is known concrete - compares a reference tag against an absent tag and reads
+            // false. The fix has to run here rather than widen Unerase itself: everywhere else
+            // Unerase is used the erased value can legitimately already be a raw primitive (an
+            // array's own storage, an iterator's `current`), where a payload-only null test would
+            // misread a genuine `0` as absence. A result crossing back out of an ordinary call has
+            // no such ambiguity - a T?-typed value "at rest" inside a still-generic body is always
+            // produced as a reference, boxed (present) or null (absent), by the same convention
+            // BoxIfStillErased/UnboxIfStillErased enforce at every other erasure boundary - so
+            // testing the reference's own payload for zero *before* unboxing safely tells the two
+            // apart here, then either replaces the null with a properly-tagged absent primitive or
+            // unboxes the present one.
+            if (target.IsNullable && target.NonNullable.IsPrimitive && !target.NonNullable.IsVoid)
+            {
+                var present = Code.NewLabel();
+                var done = Code.NewLabel();
+
+                Code.Dup();
+                Code.IsNull();
+                Code.JPZ(present);
+
+                Code.Pop();
+                Code.PushAbsent(TypeCodeOf(target.NonNullable));
+                Code.JP(done);
+
+                Code.MarkLabel(present);
+                Code.UnboxDynamic();
+                Code.MarkLabel(done);
+                return;
+            }
+
+            Unerase(target);
         }
 
         /// <summary>
@@ -5018,6 +5272,20 @@ namespace Surtr.Compiler.CodeGen
             {
                 Expression(conversion.Operand);
                 BoxIfMultiSlot(conversion.Operand.Type);
+
+                // B8 (docs/Plan-Revision-Stdlib.md §2.8): stripping the conversion's own box is only
+                // half the story. It is correct when conversion.Operand is a concrete type - a
+                // literal or a value that was never boxed to begin with, where "restore the
+                // pre-erasure expression" already IS the raw value the opcode wants. But when the
+                // operand's own static type is *itself* a still-open type parameter (a field or
+                // method of a generic class writing its own K/V into a dict/array whose declared
+                // element is a DIFFERENT, built-in type parameter of the same erased shape - the
+                // scenario dict<K,V> keys()/values() and iteration corrupted for a primitive V),
+                // conversion.Operand is a value "at rest" in a still-generic body, which is *always*
+                // boxed regardless of what it converts into (UnboxIfStillErased's own doc comment).
+                // Skipping this left the boxed reference sitting in raw collection storage, which a
+                // later read handed back as if it were the primitive itself.
+                UnboxIfStillErased(conversion.Operand.Type);
                 return;
             }
 
@@ -5663,7 +5931,7 @@ namespace Surtr.Compiler.CodeGen
                 return true;
             }
 
-            var result = hasResult ? DeclareTemp("$inlineResult", _symbol.ReturnType) : default;
+            var result = hasResult ? DeclareTemp("$inlineResult", call.Method.ReturnType) : default;
             var exit = Code.NewLabel();
 
             _inlines.Add(new InlineFrame(call.Method, exit, result, hasResult, receiver, _finallies.Count));
@@ -5846,7 +6114,16 @@ namespace Surtr.Compiler.CodeGen
                 return;
             }
 
+            // TupGet pops [tupleRef, index], so a dynamic tuple index has to have its target
+            // packed into the reference <em>before</em> the index lands on top of it — PackTuple
+            // consumes the block's slots from the top of the stack, and the index would sit
+            // there. The constant-index path above never reaches here, so a tuple that needs
+            // packing is exactly the one whose index did not fold.
+            bool packTupleTarget = target.TypeKind == TypeSymbolKind.Tuple;
+
             Expression(index.Target);
+            if (packTupleTarget)
+                BoxIfTuple(index.Target.Type);
             Expression(index.Index);
             // A key of an inline type reaches the collection packed, mirroring the write side.
             BoxIfMultiSlot(index.Index.Type);
@@ -6485,11 +6762,20 @@ namespace Surtr.Compiler.CodeGen
                 SurtrValueTypeCode.Float => SurtrBuiltIns.Float,
                 SurtrValueTypeCode.Boolean => SurtrBuiltIns.Boolean,
                 SurtrValueTypeCode.Character => SurtrBuiltIns.Character,
+                SurtrValueTypeCode.Bytes => SurtrBuiltIns.Bytes,
                 _ => throw Unsupported($"interpolating a '{part.Type.ToDisplayString()}'"),
             };
 
             if (!owner.TryGetMethods("toString", out var overloads) || overloads.Length != 1)
                 throw Unsupported($"interpolating a '{part.Type.ToDisplayString()}', whose toString could not be found");
+
+            // toString is Virtual now that it overrides object.toString (§6.3's rule for any
+            // non-Direct dispatch): InvokeVirtual resolves the receiver's class through the entity
+            // registry, which only a boxed value is in, so the raw primitive Expression(part) just
+            // pushed has to be boxed first - the same box BoxReceiverForCall emits for an ordinary
+            // call through this exact method.
+            if (overloads[0].Dispatch != SurtrMethodDispatch.Direct)
+                Code.Box(typeCode);
 
             Code.Call(overloads[0]);
         }
@@ -6798,8 +7084,12 @@ namespace Surtr.Compiler.CodeGen
             // BoxReceiverForCall makes at every call site, so the two can never disagree about
             // which convention this body was compiled against. A direct dispatch never boxes on
             // the way in, so there is nothing here to unwrap.
-            if (_symbol.ContainingType is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass }
-                && _symbol.Dispatch != MethodDispatch.Direct)
+            // A multi-field receiver is excluded: EmitReceiverUnpackIfNeeded already unpacked it
+            // once, at the top of the body, into the raw per-field slots EmitLoadLocal just read -
+            // unboxing again here would try to unbox a value that is no longer a box.
+            if (_symbol.ContainingType is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass or TypeSymbolKind.Enum } receiverClass
+                && _symbol.Dispatch != MethodDispatch.Direct
+                && ValueTypeLayout.WidthOfType(receiverClass) <= 1)
                 Code.Unbox();
         }
 
@@ -6977,6 +7267,7 @@ namespace Surtr.Compiler.CodeGen
                 case SpecialType.Bool: return SurtrValueTypeCode.Boolean;
                 case SpecialType.Char: return SurtrValueTypeCode.Character;
                 case SpecialType.String: return SurtrValueTypeCode.String;
+                case SpecialType.Bytes: return SurtrValueTypeCode.Bytes;
                 case SpecialType.Range: return SurtrValueTypeCode.Range;
                 case SpecialType.Void: return SurtrValueTypeCode.Void;
                 case SpecialType.Unknown: return SurtrValueTypeCode.Erased;

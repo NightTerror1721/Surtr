@@ -1,12 +1,45 @@
 module surtr.math.Angle
-  constants: 0   types: 0   fields: 0   methods: 2   modules: 0
+  constants: 8   types: 1   fields: 0   methods: 22   modules: 0
+  string #6 = " rad"
+
+  type table:
+    #0  surtr.math.Angle:Angle
 
   method table:
     #0  surtr.math.Angle:Angle.ctor(float) -> void
     #1  surtr.math.Angle:Angle.get_radians() -> float
+    #2  surtr.math.Angle:Angle.get_degrees() -> float
+    #3  surtr.math.Angle:Angle.get_zero() -> float
+    #4  surtr.math.Angle:Angle.fromRadians(float) -> float
+    #5  surtr.math.Angle:Angle.fromDegrees(float) -> float
+    #6  surtr.math.Angle:Angle.normalized() -> float
+    #7  surtr.math.Angle:Angle.shortestDeltaTo(float) -> float
+    #8  surtr.math.Angle:Angle.toString() -> string
+    #9  surtr.math.Angle:Angle.lerp(float, float, float) -> float
+    #10  surtr.math.Angle:Angle.op_+(float, float) -> float
+    #11  surtr.math.Angle:Angle.op_-(float, float) -> float
+    #12  surtr.math.Angle:Angle.op_*(float, float) -> float
+    #13  surtr.math.Angle:Angle.op_/(float, float) -> float
+    #14  surtr.math.Angle:Angle.op_-u(float) -> float
+    #15  surtr.math.Angle:Angle.op_==(float, float) -> bool
+    #16  surtr.math.Angle:Angle.op_<=>(float, float) -> int
+    #17  surtr.math.Angle:Angle.equals(float) -> bool
+    #18  surtr.math.Angle:Angle.compareTo(float) -> int
+    #19  float.toString() -> string
+    #20  surtr.math.Angle:Angle.compareTo(unknown) -> int
+    #21  surtr.math.Angle:Angle.equals(unknown) -> bool
 
-sealed class Angle  [public]
+sealed class Angle : surtr:ValueType, surtr:IComparable<float>, surtr:IEquatable<float>  [public]
   [private] readonly field _radians: float
+
+  @surtr:Pure
+  [public] property degrees: float { get; }
+    get:
+      ; entry 2, locals 1, stack 2, code 0003..0007
+        0003  Ldl0
+        0004  Ldc0
+        0005  FMul
+        0006  ReturnValue
 
   @surtr:Pure
   [public] property radians: float { get; }
@@ -15,6 +48,207 @@ sealed class Angle  [public]
         0001  Ldl0
         0002  ReturnValue
 
+  [public] static property zero: float { get; }
+    get:
+      ; entry 3, locals 0, stack 1, code 0007..0009
+        0007  Ldc1
+        0008  ReturnValue
+
+  [public] compareTo(other: float): int
+    ; entry 18, locals 2, stack 2, code 009D..00A5
+      009D  Ldl0
+      009E  Ldl1
+      009F  InvokeStatic 16 (op_<=>) args=2 ret=1
+      00A4  ReturnValue
+
+  [public] virtual compareTo(other: unknown): int
+    ; entry 19, locals 2, stack 2, code 00A5..00B2
+      00A5  Ldl0
+      00A6  Unbox
+      00A7  Ldl1
+      00A8  Cast 0 (surtr.math.Angle:Angle)
+      00AB  Unbox
+      00AC  InvokeSpecial 18 (compareTo) args=2 ret=1
+      00B1  ReturnValue
+
   [public] ctor (radians: float): void
     ; entry 0, locals 2, stack 0, code 0000..0001
       0000  ReturnVoid
+
+  [public] equals(other: float): bool
+    ; entry 17, locals 2, stack 2, code 0099..009D
+      0099  Ldl0
+      009A  Ldl1
+      009B  FEQ
+      009C  ReturnValue
+
+  [public] virtual equals(other: unknown): bool
+    ; entry 20, locals 2, stack 2, code 00B2..00BF
+      00B2  Ldl0
+      00B3  Unbox
+      00B4  Ldl1
+      00B5  Cast 0 (surtr.math.Angle:Angle)
+      00B8  Unbox
+      00B9  InvokeSpecial 17 (equals) args=2 ret=1
+      00BE  ReturnValue
+
+  [public] static fromDegrees(degrees: float): float
+    ; entry 5, locals 1, stack 2, code 000B..000F
+      000B  Ldl0
+      000C  Ldc2
+      000D  FMul
+      000E  ReturnValue
+
+  [public] static fromRadians(radians: float): float
+    ; entry 4, locals 1, stack 1, code 0009..000B
+      0009  Ldl0
+      000A  ReturnValue
+
+  [public] static lerp(a: float, b: float, t: float): float
+    ; entry 9, locals 6, stack 3, code 0044..0069
+      0044  Ldl2
+      0045  Stl4
+      0046  Ldl4
+      0047  Ldc1
+      0048  JPFGE +5 -> L0 (0050)
+      004B  Ldc1
+      004C  Stl5
+      004D  JP +15 -> L2 (005F)
+    L0:
+      0050  Ldl4
+      0051  Ldc7
+      0052  JPFLE +5 -> L1 (005A)
+      0055  Ldc7
+      0056  Stl5
+      0057  JP +5 -> L2 (005F)
+    L1:
+      005A  Ldl4
+      005B  Stl5
+      005C  JP +0 -> L2 (005F)
+    L2:
+      005F  Ldl5
+      0060  Stl3
+      0061  Ldl0
+      0062  Ldl1
+      0063  Ldl0
+      0064  FSub
+      0065  Ldl3
+      0066  FMul
+      0067  FAdd
+      0068  ReturnValue
+
+  [public] normalized(): float
+    ; entry 6, locals 2, stack 2, code 000F..001E
+      000F  Ldl0
+      0010  Ldc3
+      0011  FMod
+      0012  Stl1
+      0013  Ldl1
+      0014  Ldc1
+      0015  JPFGE +4 -> L0 (001C)
+      0018  Ldl1
+      0019  Ldc3
+      001A  FAdd
+      001B  ReturnValue
+    L0:
+      001C  Ldl1
+      001D  ReturnValue
+
+  [public] static op_*(a: float, scalar: float): float
+    ; entry 12, locals 2, stack 2, code 0071..0075
+      0071  Ldl0
+      0072  Ldl1
+      0073  FMul
+      0074  ReturnValue
+
+  [public] static op_+(a: float, b: float): float
+    ; entry 10, locals 2, stack 2, code 0069..006D
+      0069  Ldl0
+      006A  Ldl1
+      006B  FAdd
+      006C  ReturnValue
+
+  [public] static op_-(a: float, b: float): float
+    ; entry 11, locals 2, stack 2, code 006D..0071
+      006D  Ldl0
+      006E  Ldl1
+      006F  FSub
+      0070  ReturnValue
+
+  [public] static op_-u(a: float): float
+    ; entry 14, locals 1, stack 1, code 0079..007C
+      0079  Ldl0
+      007A  FNeg
+      007B  ReturnValue
+
+  [public] static op_/(a: float, scalar: float): float
+    ; entry 13, locals 2, stack 2, code 0075..0079
+      0075  Ldl0
+      0076  Ldl1
+      0077  FDiv
+      0078  ReturnValue
+
+  [public] static op_<=>(a: float, b: float): int
+    ; entry 16, locals 2, stack 2, code 0080..0099
+      0080  Ldl0
+      0081  Ldl1
+      0082  FLT
+      0083  JPZ +5 -> L0 (008B)
+      0086  PushI8 -1
+      0088  JP +13 -> L2 (0098)
+    L0:
+      008B  Ldl0
+      008C  Ldl1
+      008D  FGT
+      008E  JPZ +5 -> L1 (0096)
+      0091  PushI8 1
+      0093  JP +2 -> L2 (0098)
+    L1:
+      0096  PushI8 0
+    L2:
+      0098  ReturnValue
+
+  [public] static op_==(a: float, b: float): bool
+    ; entry 15, locals 2, stack 2, code 007C..0080
+      007C  Ldl0
+      007D  Ldl1
+      007E  FEQ
+      007F  ReturnValue
+
+  [public] shortestDeltaTo(other: float): float
+    ; entry 7, locals 3, stack 2, code 001E..0038
+      001E  Ldl1
+      001F  Ldl0
+      0020  FSub
+      0021  Ldc3
+      0022  FMod
+      0023  Stl2
+      0024  Ldl2
+      0025  Ldc4
+      0026  JPFLE +4 -> L0 (002D)
+      0029  Ldl2
+      002A  Ldc3
+      002B  FSub
+      002C  Stl2
+    L0:
+      002D  Ldl2
+      002E  Ldc5
+      002F  JPFGE +4 -> L1 (0036)
+      0032  Ldl2
+      0033  Ldc3
+      0034  FAdd
+      0035  Stl2
+    L1:
+      0036  Ldl2
+      0037  ReturnValue
+
+  @surtr:Pure
+  [public] virtual override toString(): string
+    ; entry 8, locals 1, stack 2, code 0038..0044
+      0038  Ldl0
+      0039  Unbox
+      003A  BoxFloat
+      003B  InvokeVirtual 19 (toString) args=1 ret=1
+      0040  Ldc6
+      0041  StrCat 2
+      0043  ReturnValue

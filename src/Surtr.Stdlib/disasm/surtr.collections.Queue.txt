@@ -1,18 +1,24 @@
 module surtr.collections.Queue
-  constants: 5   types: 6   fields: 8   methods: 51   modules: 0
+  constants: 9   types: 8   fields: 17   methods: 93   modules: 0
   string #0 = "Queue is empty."
   string #1 = "'Node<T>?' was null where '!!' asserted it was not."
   string #2 = "Queue does not support removing arbitrary items."
   string #3 = "Iterator is not at a valid position."
   string #4 = "Deque is empty."
+  string #5 = "Deque does not support removing arbitrary items."
+  string #6 = "["
+  string #7 = ", "
+  string #8 = "]"
 
   type table:
     #0  surtr:InvalidOperationException
     #1  surtr.collections.Queue:Queue.Node<T0>
     #2  surtr:NullReferenceException
     #3  surtr.collections.Queue:Queue.Iterator<T0>
-    #4  T0
-    #5  T0[]
+    #4  T0[]
+    #5  surtr.collections.Queue:Deque.Node<T0>
+    #6  surtr.collections.Queue:Deque.Iterator<T0>
+    #7  string[]
 
   field table:
     #0  surtr.collections.Queue:Queue<._front: surtr.collections.Queue:Queue.Node<T0>
@@ -23,6 +29,15 @@ module surtr.collections.Queue
     #5  surtr.collections.Queue:Queue.Iterator<._current: surtr.collections.Queue:Queue.Node<T0>
     #6  surtr.collections.Queue:Queue.Iterator<._count: int
     #7  surtr.collections.Queue:Queue.Iterator<._index: int
+    #8  surtr.collections.Queue:Deque<._front: surtr.collections.Queue:Deque.Node<T0>
+    #9  surtr.collections.Queue:Deque<._back: surtr.collections.Queue:Deque.Node<T0>
+    #10  surtr.collections.Queue:Deque<._count: int
+    #11  surtr.collections.Queue:Deque.Node<.value: T0
+    #12  surtr.collections.Queue:Deque.Node<.prev: surtr.collections.Queue:Deque.Node<T0>
+    #13  surtr.collections.Queue:Deque.Node<.next: surtr.collections.Queue:Deque.Node<T0>
+    #14  surtr.collections.Queue:Deque.Iterator<._current: surtr.collections.Queue:Deque.Node<T0>
+    #15  surtr.collections.Queue:Deque.Iterator<._count: int
+    #16  surtr.collections.Queue:Deque.Iterator<._index: int
 
   method table:
     #0  surtr.collections.Queue:IQueue<.get_isEmpty() -> bool
@@ -32,50 +47,192 @@ module surtr.collections.Queue
     #4  surtr.collections.Queue:IDeque<.enqueueFront(T0) -> void
     #5  surtr.collections.Queue:IDeque<.dequeueBack() -> T0
     #6  surtr.collections.Queue:Queue<.ctor() -> void
-    #7  surtr.collections.Queue:Queue<.get_length() -> int
-    #8  surtr.collections.Queue:Queue<.get_isReadOnly() -> bool
-    #9  surtr.collections.Queue:Queue<.get_isEmpty() -> bool
-    #10  surtr.collections.Queue:Queue<.get_front() -> T0
-    #11  surtr.collections.Queue:Queue<.enqueue(T0) -> void
-    #12  surtr.collections.Queue:Queue<.dequeue() -> T0
-    #13  surtr.collections.Queue:Queue<.peek() -> T0
-    #14  surtr.collections.Queue:Queue<.add(T0) -> void
-    #15  surtr.collections.Queue:Queue<.remove(T0) -> bool
-    #16  surtr.collections.Queue:Queue<.clear() -> void
-    #17  surtr.collections.Queue:Queue<.contains(T0) -> bool
-    #18  surtr.collections.Queue:Queue<.copyTo(T0[], int) -> void
-    #19  surtr.collections.Queue:Queue<.iterate() -> surtr:IIterator<T0>
-    #20  surtr.collections.Queue:Queue<.makeNode(T0) -> surtr.collections.Queue:Queue.Node<T0>
+    #7  surtr.collections.Queue:Queue<.$fill$Queue$0(T0) -> void
+    #8  surtr.collections.Queue:Queue<.get_length() -> int
+    #9  surtr.collections.Queue:Queue<.get_isReadOnly() -> bool
+    #10  surtr.collections.Queue:Queue<.get_isEmpty() -> bool
+    #11  surtr.collections.Queue:Queue<.get_front() -> T0
+    #12  surtr.collections.Queue:Queue<.enqueue(T0) -> void
+    #13  surtr.collections.Queue:Queue<.dequeue() -> T0
+    #14  surtr.collections.Queue:Queue<.peek() -> T0
+    #15  surtr.collections.Queue:Queue<.add(T0) -> void
+    #16  surtr.collections.Queue:Queue<.remove(T0) -> bool
+    #17  surtr.collections.Queue:Queue<.clear() -> void
+    #18  surtr.collections.Queue:Queue<.contains(T0) -> bool
+    #19  surtr.collections.Queue:Queue<.copyTo(T0[], int) -> void
+    #20  surtr.collections.Queue:Queue<.iterate() -> surtr:IIterator<T0>
     #21  surtr.collections.Queue:Queue.Node<.ctor(T0) -> void
     #22  surtr.collections.Queue:Queue.Iterator<.ctor(surtr.collections.Queue:Queue.Node<T0>, int) -> void
     #23  surtr.collections.Queue:Queue.Iterator<.get_current() -> T0
     #24  surtr.collections.Queue:Queue.Iterator<.dispose() -> void
     #25  surtr.collections.Queue:Queue.Iterator<.moveNext() -> bool
-    #26  surtr.collections.Queue:Queue.Iterator<.reset() -> void
-    #27  surtr.collections.Queue:Deque<.enqueueFront(T0) -> void
-    #28  surtr.collections.Queue:Deque<.enqueueBack(T0) -> void
-    #29  surtr.collections.Queue:Deque<.dequeueBack() -> T0
-    #30  surtr.collections.Queue:Deque<.dequeueFront() -> T0
-    #31  surtr.collections.Queue:Deque<.ctor() -> void
-    #32  surtr:InvalidOperationException.ctor(string) -> void
-    #33  surtr:NullReferenceException.ctor(string) -> void
-    #34  surtr.collections.Queue:Queue<.get_isEmpty() -> bool
-    #35  surtr.collections.Queue:Queue<.enqueue(unknown) -> void
-    #36  surtr.collections.Queue:Queue<.dequeue() -> unknown
-    #37  surtr.collections.Queue:Queue<.peek() -> unknown
-    #38  surtr.collections.Queue:Queue<.get_isReadOnly() -> bool
-    #39  surtr.collections.Queue:Queue<.add(unknown) -> void
-    #40  surtr.collections.Queue:Queue<.remove(unknown) -> bool
-    #41  surtr.collections.Queue:Queue<.clear() -> void
-    #42  surtr.collections.Queue:Queue<.get_length() -> int
-    #43  surtr.collections.Queue:Queue<.contains(unknown) -> bool
-    #44  surtr.collections.Queue:Queue<.copyTo(unknown[], int) -> void
-    #45  surtr.collections.Queue:Queue<.iterate() -> surtr:IIterator<unknown>
-    #46  surtr.collections.Queue:Queue.Iterator<.moveNext() -> bool
-    #47  surtr.collections.Queue:Queue.Iterator<.get_current() -> unknown
-    #48  surtr.collections.Queue:Queue.Iterator<.dispose() -> void
-    #49  surtr.collections.Queue:Deque<.enqueueFront(unknown) -> void
-    #50  surtr.collections.Queue:Deque<.dequeueBack() -> unknown
+    #26  surtr.collections.Queue:Deque<.ctor() -> void
+    #27  surtr.collections.Queue:Deque<.$fill$Deque$0(T0) -> void
+    #28  surtr.collections.Queue:Deque<.get_length() -> int
+    #29  surtr.collections.Queue:Deque<.get_isReadOnly() -> bool
+    #30  surtr.collections.Queue:Deque<.get_isEmpty() -> bool
+    #31  surtr.collections.Queue:Deque<.get_front() -> T0
+    #32  surtr.collections.Queue:Deque<.get_back() -> T0
+    #33  surtr.collections.Queue:Deque<.enqueue(T0) -> void
+    #34  surtr.collections.Queue:Deque<.enqueueBack(T0) -> void
+    #35  surtr.collections.Queue:Deque<.enqueueFront(T0) -> void
+    #36  surtr.collections.Queue:Deque<.dequeue() -> T0
+    #37  surtr.collections.Queue:Deque<.dequeueFront() -> T0
+    #38  surtr.collections.Queue:Deque<.dequeueBack() -> T0
+    #39  surtr.collections.Queue:Deque<.peek() -> T0
+    #40  surtr.collections.Queue:Deque<.add(T0) -> void
+    #41  surtr.collections.Queue:Deque<.remove(T0) -> bool
+    #42  surtr.collections.Queue:Deque<.clear() -> void
+    #43  surtr.collections.Queue:Deque<.contains(T0) -> bool
+    #44  surtr.collections.Queue:Deque<.copyTo(T0[], int) -> void
+    #45  surtr.collections.Queue:Deque<.iterate() -> surtr:IIterator<T0>
+    #46  surtr.collections.Queue:Deque.Node<.ctor(T0) -> void
+    #47  surtr.collections.Queue:Deque.Iterator<.ctor(surtr.collections.Queue:Deque.Node<T0>, int) -> void
+    #48  surtr.collections.Queue:Deque.Iterator<.get_current() -> T0
+    #49  surtr.collections.Queue:Deque.Iterator<.dispose() -> void
+    #50  surtr.collections.Queue:Deque.Iterator<.moveNext() -> bool
+    #51  toDisplayString(surtr.collections.Queue:Queue<T0>) -> string
+    #52  toDisplayString(surtr.collections.Queue:Deque<T0>) -> string
+    #53  surtr:InvalidOperationException.ctor(string) -> void
+    #54  surtr:NullReferenceException.ctor(string) -> void
+    #55  surtr.collections.Queue:Queue<.get_isEmpty() -> bool
+    #56  surtr.collections.Queue:Queue<.enqueue(unknown) -> void
+    #57  surtr.collections.Queue:Queue<.dequeue() -> unknown
+    #58  surtr.collections.Queue:Queue<.peek() -> unknown
+    #59  surtr.collections.Queue:Queue<.get_isReadOnly() -> bool
+    #60  surtr.collections.Queue:Queue<.add(unknown) -> void
+    #61  surtr.collections.Queue:Queue<.remove(unknown) -> bool
+    #62  surtr.collections.Queue:Queue<.clear() -> void
+    #63  surtr.collections.Queue:Queue<.get_length() -> int
+    #64  surtr.collections.Queue:Queue<.contains(unknown) -> bool
+    #65  surtr.collections.Queue:Queue<.copyTo(unknown[], int) -> void
+    #66  surtr.collections.Queue:Queue<.iterate() -> surtr:IIterator<unknown>
+    #67  surtr.collections.Queue:Queue.Iterator<.moveNext() -> bool
+    #68  surtr.collections.Queue:Queue.Iterator<.get_current() -> unknown
+    #69  surtr.collections.Queue:Queue.Iterator<.dispose() -> void
+    #70  surtr.collections.Queue:Deque<.enqueueFront(unknown) -> void
+    #71  surtr.collections.Queue:Deque<.dequeueBack() -> unknown
+    #72  surtr.collections.Queue:Deque<.get_isEmpty() -> bool
+    #73  surtr.collections.Queue:Deque<.enqueue(unknown) -> void
+    #74  surtr.collections.Queue:Deque<.dequeue() -> unknown
+    #75  surtr.collections.Queue:Deque<.peek() -> unknown
+    #76  surtr.collections.Queue:Deque<.get_isReadOnly() -> bool
+    #77  surtr.collections.Queue:Deque<.add(unknown) -> void
+    #78  surtr.collections.Queue:Deque<.remove(unknown) -> bool
+    #79  surtr.collections.Queue:Deque<.clear() -> void
+    #80  surtr.collections.Queue:Deque<.get_length() -> int
+    #81  surtr.collections.Queue:Deque<.contains(unknown) -> bool
+    #82  surtr.collections.Queue:Deque<.copyTo(unknown[], int) -> void
+    #83  surtr.collections.Queue:Deque<.iterate() -> surtr:IIterator<unknown>
+    #84  surtr.collections.Queue:Deque.Iterator<.moveNext() -> bool
+    #85  surtr.collections.Queue:Deque.Iterator<.get_current() -> unknown
+    #86  surtr.collections.Queue:Deque.Iterator<.dispose() -> void
+    #87  surtr:IIterable<T0>.iterate() -> surtr:IIterator<T0>
+    #88  surtr:IIterator<T0>.moveNext() -> bool
+    #89  surtr:IIterator<T0>.get_current() -> T0
+    #90  surtr:object.toString() -> string
+    #91  surtr:IDisposable.dispose() -> void
+    #92  string.join(string, string[]) -> string
+
+[public] static toDisplayString(self: surtr.collections.Queue:Queue<T0>): string
+  ; entry 0, locals 7, stack 3, code 0000..0054
+    0000  Ldl0
+    0001  Stl2
+    0002  Ldl2
+    0003  FieldGet 2 (_count)
+    0006  ArrNew 7 (string[])
+    0009  Stl1
+    000A  PushI8 0
+    000C  Stl3
+    000D  Ldl0
+    000E  InvokeInterface 87 (iterate) args=1 ret=1
+    0013  Stl4
+  ; try_0 begin
+  L0:
+    0014  Ldl4
+    0015  InvokeInterface 88 (moveNext) args=1 ret=1
+    001A  JPZ +23 -> L1 (0034)
+    001D  Ldl4
+    001E  InvokeInterface 89 (get_current) args=1 ret=1
+    0023  Stl5
+    0024  Ldl1
+    0025  Ldl3
+    0026  Ldl5
+    0027  BoxDynamic
+    0028  InvokeVirtual 90 (toString) args=1 ret=1
+    002D  ArrSet
+    002E  IncLocal 3 by 1
+    0031  JP -32 -> L0 (0014)
+  ; try_0 end
+  L1:
+    0034  Ldl4
+    0035  InvokeInterface 91 (dispose) args=1 ret=0
+    003A  JP +11 -> L2 (0048)
+  ; catch_0 (*)
+    003D  StlS 6
+    003F  Ldl4
+    0040  InvokeInterface 91 (dispose) args=1 ret=0
+    0045  LdlS 6
+    0047  Throw
+  L2:
+    0048  Ldc6
+    0049  Ldc7
+    004A  Ldl1
+    004B  InvokeStatic 92 (join) args=2 ret=1
+    0050  Ldc8
+    0051  StrCat 3
+    0053  ReturnValue
+  handler [0014, 0034) -> 003D  catch *
+
+[public] static toDisplayString(self: surtr.collections.Queue:Deque<T0>): string
+  ; entry 1, locals 7, stack 3, code 0054..00A8
+    0054  Ldl0
+    0055  Stl2
+    0056  Ldl2
+    0057  FieldGet 10 (_count)
+    005A  ArrNew 7 (string[])
+    005D  Stl1
+    005E  PushI8 0
+    0060  Stl3
+    0061  Ldl0
+    0062  InvokeInterface 87 (iterate) args=1 ret=1
+    0067  Stl4
+  ; try_0 begin
+  L0:
+    0068  Ldl4
+    0069  InvokeInterface 88 (moveNext) args=1 ret=1
+    006E  JPZ +23 -> L1 (0088)
+    0071  Ldl4
+    0072  InvokeInterface 89 (get_current) args=1 ret=1
+    0077  Stl5
+    0078  Ldl1
+    0079  Ldl3
+    007A  Ldl5
+    007B  BoxDynamic
+    007C  InvokeVirtual 90 (toString) args=1 ret=1
+    0081  ArrSet
+    0082  IncLocal 3 by 1
+    0085  JP -32 -> L0 (0068)
+  ; try_0 end
+  L1:
+    0088  Ldl4
+    0089  InvokeInterface 91 (dispose) args=1 ret=0
+    008E  JP +11 -> L2 (009C)
+  ; catch_0 (*)
+    0091  StlS 6
+    0093  Ldl4
+    0094  InvokeInterface 91 (dispose) args=1 ret=0
+    0099  LdlS 6
+    009B  Throw
+  L2:
+    009C  Ldc6
+    009D  Ldc7
+    009E  Ldl1
+    009F  InvokeStatic 92 (join) args=2 ret=1
+    00A4  Ldc8
+    00A5  StrCat 3
+    00A7  ReturnValue
+  handler [0068, 0088) -> 0091  catch *
 
 interface IDeque`1<T> : surtr.collections.Queue:IQueue<T0>  [public]
 
@@ -95,708 +252,1258 @@ interface IQueue`1<T> : surtr.collections.Collection:ICollection<T0>  [public]
 
   [public] abstract peek(): T0
 
-class Deque`1<T> : surtr.collections.Queue:Queue<T0>, surtr.collections.Queue:IDeque<T0>  [public]
+class Deque`1<T> : surtr:object, surtr.collections.Queue:IDeque<T0>  [public]
+  [private] field _back: surtr.collections.Queue:Deque.Node<T0>
+  [private] field _count: int
+  [private] field _front: surtr.collections.Queue:Deque.Node<T0>
+
+  [public] property back: T0 { get; }
+    get:
+      ; entry 43, locals 3, stack 3, code 03C4..03F9
+        03C4  Ldl0
+        03C5  FieldGet 9 (_back)
+        03C8  Stl1
+        03C9  Ldl1
+        03CA  JPN +7 -> L0 (03D4)
+        03CD  Ldl1
+        03CE  FieldGet 11 (value)
+        03D1  JP +1 -> L1 (03D5)
+      L0:
+        03D4  PushNull
+      L1:
+        03D5  IsNotNull
+        03D6  JPZ +20 -> L4 (03ED)
+        03D9  Ldl0
+        03DA  FieldGet 9 (_back)
+        03DD  Stl2
+        03DE  Ldl2
+        03DF  JPN +7 -> L2 (03E9)
+        03E2  Ldl2
+        03E3  FieldGet 11 (value)
+        03E6  JP +1 -> L3 (03EA)
+      L2:
+        03E9  PushNull
+      L3:
+        03EA  JP +11 -> L5 (03F8)
+      L4:
+        03ED  ObjNew 0 (surtr:InvalidOperationException)
+        03F0  Dup
+        03F1  Ldc4
+        03F2  InvokeSpecial 53 (ctor) args=2 ret=0
+        03F7  Throw
+      L5:
+        03F8  ReturnValue
+
+  [public] property front: T0 { get; }
+    get:
+      ; entry 42, locals 3, stack 3, code 038F..03C4
+        038F  Ldl0
+        0390  FieldGet 8 (_front)
+        0393  Stl1
+        0394  Ldl1
+        0395  JPN +7 -> L0 (039F)
+        0398  Ldl1
+        0399  FieldGet 11 (value)
+        039C  JP +1 -> L1 (03A0)
+      L0:
+        039F  PushNull
+      L1:
+        03A0  IsNotNull
+        03A1  JPZ +20 -> L4 (03B8)
+        03A4  Ldl0
+        03A5  FieldGet 8 (_front)
+        03A8  Stl2
+        03A9  Ldl2
+        03AA  JPN +7 -> L2 (03B4)
+        03AD  Ldl2
+        03AE  FieldGet 11 (value)
+        03B1  JP +1 -> L3 (03B5)
+      L2:
+        03B4  PushNull
+      L3:
+        03B5  JP +11 -> L5 (03C3)
+      L4:
+        03B8  ObjNew 0 (surtr:InvalidOperationException)
+        03BB  Dup
+        03BC  Ldc4
+        03BD  InvokeSpecial 53 (ctor) args=2 ret=0
+        03C2  Throw
+      L5:
+        03C3  ReturnValue
+
+  [public] property isEmpty: bool { get; }
+    get:
+      ; entry 41, locals 1, stack 2, code 0387..038F
+        0387  Ldl0
+        0388  FieldGet 10 (_count)
+        038B  PushI8 0
+        038D  EQ
+        038E  ReturnValue
+
+  [public] property isReadOnly: bool { get; }
+    get:
+      ; entry 40, locals 1, stack 1, code 0385..0387
+        0385  PushFalse
+        0386  ReturnValue
+
+  [public] property length: int { get; }
+    get:
+      ; entry 39, locals 1, stack 1, code 0380..0385
+        0380  Ldl0
+        0381  FieldGet 10 (_count)
+        0384  ReturnValue
+
+  [private] $fill$Deque$0(item: T0): void
+    ; entry 38, locals 4, stack 2, code 036F..0380
+      036F  Ldl0
+      0370  Stl2
+      0371  Ldl1
+      0372  BoxDynamic
+      0373  Stl3
+      0374  Ldl2
+      0375  Ldl3
+      0376  BoxDynamic
+      0377  InvokeSpecial 34 (enqueueBack) args=2 ret=0
+      037C  JP +0 -> L0 (037F)
+    L0:
+      037F  ReturnVoid
+
+  [public] add(item: T0): void
+    ; entry 51, locals 2, stack 2, code 05D4..05DD
+      05D4  Ldl0
+      05D5  Ldl1
+      05D6  BoxDynamic
+      05D7  InvokeSpecial 34 (enqueueBack) args=2 ret=0
+      05DC  ReturnVoid
+
+  [public] virtual add(item: unknown): void
+    ; entry 64, locals 2, stack 2, code 0681..0689
+      0681  Ldl0
+      0682  Ldl1
+      0683  InvokeSpecial 40 (add) args=2 ret=0
+      0688  ReturnVoid
+
+  [public] clear(): void
+    ; entry 53, locals 1, stack 2, code 05E8..05F9
+      05E8  Ldl0
+      05E9  PushNull
+      05EA  FieldSet 8 (_front)
+      05ED  Ldl0
+      05EE  PushNull
+      05EF  FieldSet 9 (_back)
+      05F2  Ldl0
+      05F3  PushI8 0
+      05F5  FieldSet 10 (_count)
+      05F8  ReturnVoid
+
+  [public] virtual clear(): void
+    ; entry 66, locals 1, stack 1, code 0691..0698
+      0691  Ldl0
+      0692  InvokeSpecial 42 (clear) args=1 ret=0
+      0697  ReturnVoid
+
+  [public] contains(item: T0): bool
+    ; entry 54, locals 3, stack 2, code 05F9..0617
+      05F9  Ldl0
+      05FA  FieldGet 8 (_front)
+      05FD  Stl2
+    L0:
+      05FE  Ldl2
+      05FF  JPN +19 -> L2 (0615)
+      0602  Ldl2
+      0603  FieldGet 11 (value)
+      0606  Ldl1
+      0607  DynEQ
+      0608  JPZ +2 -> L1 (060D)
+      060B  PushTrue
+      060C  ReturnValue
+    L1:
+      060D  Ldl2
+      060E  FieldGet 13 (next)
+      0611  Stl2
+      0612  JP -23 -> L0 (05FE)
+    L2:
+      0615  PushFalse
+      0616  ReturnValue
+
+  [public] virtual contains(item: unknown): bool
+    ; entry 68, locals 2, stack 2, code 069F..06A7
+      069F  Ldl0
+      06A0  Ldl1
+      06A1  InvokeSpecial 43 (contains) args=2 ret=1
+      06A6  ReturnValue
+
+  [public] copyTo(array: T0[], arrayIndex: int): void
+    ; entry 55, locals 5, stack 3, code 0617..0639
+      0617  Ldl0
+      0618  FieldGet 8 (_front)
+      061B  Stl3
+      061C  PushI8 0
+      061E  Stl4
+    L0:
+      061F  Ldl3
+      0620  JPN +21 -> L1 (0638)
+      0623  Ldl1
+      0624  Ldl2
+      0625  Ldl4
+      0626  Add
+      0627  Ldl3
+      0628  FieldGet 11 (value)
+      062B  UnboxDynamic
+      062C  ArrSet
+      062D  Ldl3
+      062E  FieldGet 13 (next)
+      0631  Stl3
+      0632  IncLocal 4 by 1
+      0635  JP -25 -> L0 (061F)
+    L1:
+      0638  ReturnVoid
+
+  [public] virtual copyTo(array: unknown[], arrayIndex: int): void
+    ; entry 69, locals 3, stack 3, code 06A7..06B3
+      06A7  Ldl0
+      06A8  Ldl1
+      06A9  Cast 4 (T0[])
+      06AC  Ldl2
+      06AD  InvokeSpecial 44 (copyTo) args=3 ret=0
+      06B2  ReturnVoid
 
   [public] ctor (): void
-    ; entry 40, locals 1, stack 1, code 03C8..03CF
-      03C8  Ldl0
-      03C9  InvokeSpecial 6 (ctor) args=1 ret=0
-      03CE  ReturnVoid
+    ; entry 37, locals 1, stack 2, code 035E..036F
+      035E  Ldl0
+      035F  PushNull
+      0360  FieldSet 8 (_front)
+      0363  Ldl0
+      0364  PushNull
+      0365  FieldSet 9 (_back)
+      0368  Ldl0
+      0369  PushI8 0
+      036B  FieldSet 10 (_count)
+      036E  ReturnVoid
+
+  [public] dequeue(): T0
+    ; entry 47, locals 1, stack 1, code 049A..04A1
+      049A  Ldl0
+      049B  InvokeSpecial 37 (dequeueFront) args=1 ret=1
+      04A0  ReturnValue
+
+  [public] virtual dequeue(): unknown
+    ; entry 61, locals 1, stack 1, code 066A..0672
+      066A  Ldl0
+      066B  InvokeSpecial 36 (dequeue) args=1 ret=1
+      0670  BoxDynamic
+      0671  ReturnValue
 
   [public] dequeueBack(): T0
-    ; entry 38, locals 5, stack 3, code 0319..03C1
-      0319  Ldl0
-      031A  Stl1
-      031B  Ldl1
-      031C  FieldGet 2 (_count)
-      031F  PushI8 0
-      0321  EQ
-      0322  JPZ +11 -> L0 (0330)
-      0325  ObjNew 0 (surtr:InvalidOperationException)
-      0328  Dup
-      0329  Ldc4
-      032A  InvokeSpecial 32 (ctor) args=2 ret=0
-      032F  Throw
+    ; entry 49, locals 3, stack 4, code 051F..059D
+      051F  Ldl0
+      0520  Stl1
+      0521  Ldl1
+      0522  FieldGet 10 (_count)
+      0525  PushI8 0
+      0527  EQ
+      0528  JPZ +11 -> L0 (0536)
+      052B  ObjNew 0 (surtr:InvalidOperationException)
+      052E  Dup
+      052F  Ldc4
+      0530  InvokeSpecial 53 (ctor) args=2 ret=0
+      0535  Throw
     L0:
-      0330  Ldl0
-      0331  FieldGet 0 (_front)
-      0334  Ldl0
-      0335  FieldGet 1 (_back)
-      0338  JPRNE +47 -> L2 (036A)
-      033B  Ldl0
-      033C  FieldGet 1 (_back)
-      033F  Dup
-      0340  JPNN +12 -> L1 (034F)
-      0343  Pop
-      0344  ObjNew 2 (surtr:NullReferenceException)
-      0347  Dup
-      0348  Ldc1
-      0349  InvokeSpecial 33 (ctor) args=2 ret=0
-      034E  Throw
+      0536  Ldl0
+      0537  FieldGet 9 (_back)
+      053A  Dup
+      053B  JPNN +12 -> L1 (054A)
+      053E  Pop
+      053F  ObjNew 2 (surtr:NullReferenceException)
+      0542  Dup
+      0543  Ldc1
+      0544  InvokeSpecial 54 (ctor) args=2 ret=0
+      0549  Throw
     L1:
-      034F  FieldGet 3 (value)
-      0352  Stl2
-      0353  Ldl0
-      0354  PushNull
-      0355  FieldSet 0 (_front)
-      0358  Ldl0
-      0359  PushNull
-      035A  FieldSet 1 (_back)
-      035D  Ldl0
-      035E  Ldl0
-      035F  FieldGet 2 (_count)
-      0362  PushI8 1
-      0364  Sub
-      0365  FieldSet 2 (_count)
-      0368  Ldl2
-      0369  ReturnValue
+      054A  FieldGet 11 (value)
+      054D  Stl2
+      054E  Ldl0
+      054F  Ldl0
+      0550  FieldGet 9 (_back)
+      0553  Dup
+      0554  JPNN +12 -> L2 (0563)
+      0557  Pop
+      0558  ObjNew 2 (surtr:NullReferenceException)
+      055B  Dup
+      055C  Ldc1
+      055D  InvokeSpecial 54 (ctor) args=2 ret=0
+      0562  Throw
     L2:
-      036A  Ldl0
-      036B  FieldGet 0 (_front)
-      036E  Stl3
+      0563  FieldGet 12 (prev)
+      0566  FieldSet 9 (_back)
+      0569  Ldl0
+      056A  FieldGet 9 (_back)
+      056D  JPNN +8 -> L3 (0578)
+      0570  Ldl0
+      0571  PushNull
+      0572  FieldSet 8 (_front)
+      0575  JP +24 -> L5 (0590)
     L3:
-      036F  Ldl3
-      0370  Dup
-      0371  JPNN +12 -> L4 (0380)
-      0374  Pop
-      0375  ObjNew 2 (surtr:NullReferenceException)
-      0378  Dup
-      0379  Ldc1
-      037A  InvokeSpecial 33 (ctor) args=2 ret=0
-      037F  Throw
+      0578  Ldl0
+      0579  FieldGet 9 (_back)
+      057C  Dup
+      057D  JPNN +12 -> L4 (058C)
+      0580  Pop
+      0581  ObjNew 2 (surtr:NullReferenceException)
+      0584  Dup
+      0585  Ldc1
+      0586  InvokeSpecial 54 (ctor) args=2 ret=0
+      058B  Throw
     L4:
-      0380  FieldGet 4 (next)
-      0383  Ldl0
-      0384  FieldGet 1 (_back)
-      0387  JPREQ +8 -> L5 (0392)
-      038A  Ldl3
-      038B  FieldGet 4 (next)
-      038E  Stl3
-      038F  JP -35 -> L3 (036F)
+      058C  PushNull
+      058D  FieldSet 13 (next)
     L5:
-      0392  Ldl0
-      0393  FieldGet 1 (_back)
-      0396  Dup
-      0397  JPNN +12 -> L6 (03A6)
-      039A  Pop
-      039B  ObjNew 2 (surtr:NullReferenceException)
-      039E  Dup
-      039F  Ldc1
-      03A0  InvokeSpecial 33 (ctor) args=2 ret=0
-      03A5  Throw
-    L6:
-      03A6  FieldGet 3 (value)
-      03A9  Stl4
-      03AA  Ldl3
-      03AB  PushNull
-      03AC  FieldSet 4 (next)
-      03AF  Ldl0
-      03B0  Ldl3
-      03B1  FieldSet 1 (_back)
-      03B4  Ldl0
-      03B5  Ldl0
-      03B6  FieldGet 2 (_count)
-      03B9  PushI8 1
-      03BB  Sub
-      03BC  FieldSet 2 (_count)
-      03BF  Ldl4
-      03C0  ReturnValue
+      0590  Ldl0
+      0591  Ldl0
+      0592  FieldGet 10 (_count)
+      0595  PushI8 1
+      0597  Sub
+      0598  FieldSet 10 (_count)
+      059B  Ldl2
+      059C  ReturnValue
 
   [public] virtual dequeueBack(): unknown
-    ; entry 42, locals 1, stack 1, code 03DA..03E2
-      03DA  Ldl0
-      03DB  InvokeSpecial 29 (dequeueBack) args=1 ret=1
-      03E0  BoxDynamic
-      03E1  ReturnValue
+    ; entry 58, locals 1, stack 1, code 0653..065B
+      0653  Ldl0
+      0654  InvokeSpecial 38 (dequeueBack) args=1 ret=1
+      0659  BoxDynamic
+      065A  ReturnValue
 
   [public] dequeueFront(): T0
-    ; entry 39, locals 1, stack 1, code 03C1..03C8
-      03C1  Ldl0
-      03C2  InvokeSpecial 12 (dequeue) args=1 ret=1
-      03C7  ReturnValue
+    ; entry 48, locals 3, stack 4, code 04A1..051F
+      04A1  Ldl0
+      04A2  Stl1
+      04A3  Ldl1
+      04A4  FieldGet 10 (_count)
+      04A7  PushI8 0
+      04A9  EQ
+      04AA  JPZ +11 -> L0 (04B8)
+      04AD  ObjNew 0 (surtr:InvalidOperationException)
+      04B0  Dup
+      04B1  Ldc4
+      04B2  InvokeSpecial 53 (ctor) args=2 ret=0
+      04B7  Throw
+    L0:
+      04B8  Ldl0
+      04B9  FieldGet 8 (_front)
+      04BC  Dup
+      04BD  JPNN +12 -> L1 (04CC)
+      04C0  Pop
+      04C1  ObjNew 2 (surtr:NullReferenceException)
+      04C4  Dup
+      04C5  Ldc1
+      04C6  InvokeSpecial 54 (ctor) args=2 ret=0
+      04CB  Throw
+    L1:
+      04CC  FieldGet 11 (value)
+      04CF  Stl2
+      04D0  Ldl0
+      04D1  Ldl0
+      04D2  FieldGet 8 (_front)
+      04D5  Dup
+      04D6  JPNN +12 -> L2 (04E5)
+      04D9  Pop
+      04DA  ObjNew 2 (surtr:NullReferenceException)
+      04DD  Dup
+      04DE  Ldc1
+      04DF  InvokeSpecial 54 (ctor) args=2 ret=0
+      04E4  Throw
+    L2:
+      04E5  FieldGet 13 (next)
+      04E8  FieldSet 8 (_front)
+      04EB  Ldl0
+      04EC  FieldGet 8 (_front)
+      04EF  JPNN +8 -> L3 (04FA)
+      04F2  Ldl0
+      04F3  PushNull
+      04F4  FieldSet 9 (_back)
+      04F7  JP +24 -> L5 (0512)
+    L3:
+      04FA  Ldl0
+      04FB  FieldGet 8 (_front)
+      04FE  Dup
+      04FF  JPNN +12 -> L4 (050E)
+      0502  Pop
+      0503  ObjNew 2 (surtr:NullReferenceException)
+      0506  Dup
+      0507  Ldc1
+      0508  InvokeSpecial 54 (ctor) args=2 ret=0
+      050D  Throw
+    L4:
+      050E  PushNull
+      050F  FieldSet 12 (prev)
+    L5:
+      0512  Ldl0
+      0513  Ldl0
+      0514  FieldGet 10 (_count)
+      0517  PushI8 1
+      0519  Sub
+      051A  FieldSet 10 (_count)
+      051D  Ldl2
+      051E  ReturnValue
+
+  [public] enqueue(item: T0): void
+    ; entry 44, locals 2, stack 2, code 03F9..0402
+      03F9  Ldl0
+      03FA  Ldl1
+      03FB  BoxDynamic
+      03FC  InvokeSpecial 34 (enqueueBack) args=2 ret=0
+      0401  ReturnVoid
+
+  [public] virtual enqueue(item: unknown): void
+    ; entry 60, locals 2, stack 2, code 0662..066A
+      0662  Ldl0
+      0663  Ldl1
+      0664  InvokeSpecial 33 (enqueue) args=2 ret=0
+      0669  ReturnVoid
 
   [public] enqueueBack(item: T0): void
-    ; entry 37, locals 2, stack 2, code 0310..0319
-      0310  Ldl0
-      0311  Ldl1
-      0312  BoxDynamic
-      0313  InvokeSpecial 11 (enqueue) args=2 ret=0
-      0318  ReturnVoid
+    ; entry 45, locals 3, stack 3, code 0402..044E
+      0402  ObjNew 5 (surtr.collections.Queue:Deque.Node<T0>)
+      0405  Dup
+      0406  Ldl1
+      0407  BoxDynamic
+      0408  InvokeSpecial 46 (ctor) args=2 ret=0
+      040D  Stl2
+      040E  Ldl0
+      040F  FieldGet 9 (_back)
+      0412  JPN +35 -> L1 (0438)
+      0415  Ldl2
+      0416  Ldl0
+      0417  FieldGet 9 (_back)
+      041A  FieldSet 12 (prev)
+      041D  Ldl0
+      041E  FieldGet 9 (_back)
+      0421  Dup
+      0422  JPNN +12 -> L0 (0431)
+      0425  Pop
+      0426  ObjNew 2 (surtr:NullReferenceException)
+      0429  Dup
+      042A  Ldc1
+      042B  InvokeSpecial 54 (ctor) args=2 ret=0
+      0430  Throw
+    L0:
+      0431  Ldl2
+      0432  FieldSet 13 (next)
+      0435  JP +5 -> L2 (043D)
+    L1:
+      0438  Ldl0
+      0439  Ldl2
+      043A  FieldSet 8 (_front)
+    L2:
+      043D  Ldl0
+      043E  Ldl2
+      043F  FieldSet 9 (_back)
+      0442  Ldl0
+      0443  Ldl0
+      0444  FieldGet 10 (_count)
+      0447  PushI8 1
+      0449  Add
+      044A  FieldSet 10 (_count)
+      044D  ReturnVoid
 
   [public] enqueueFront(item: T0): void
-    ; entry 36, locals 3, stack 3, code 02DC..0310
-      02DC  Ldl1
-      02DD  BoxDynamic
-      02DE  InvokeStatic 20 (makeNode) args=1 ret=1
-      02E3  Stl2
-      02E4  Ldl0
-      02E5  FieldGet 0 (_front)
-      02E8  JPN +8 -> L0 (02F3)
-      02EB  Ldl2
-      02EC  Ldl0
-      02ED  FieldGet 0 (_front)
-      02F0  FieldSet 4 (next)
+    ; entry 46, locals 3, stack 3, code 044E..049A
+      044E  ObjNew 5 (surtr.collections.Queue:Deque.Node<T0>)
+      0451  Dup
+      0452  Ldl1
+      0453  BoxDynamic
+      0454  InvokeSpecial 46 (ctor) args=2 ret=0
+      0459  Stl2
+      045A  Ldl0
+      045B  FieldGet 8 (_front)
+      045E  JPN +35 -> L1 (0484)
+      0461  Ldl2
+      0462  Ldl0
+      0463  FieldGet 8 (_front)
+      0466  FieldSet 13 (next)
+      0469  Ldl0
+      046A  FieldGet 8 (_front)
+      046D  Dup
+      046E  JPNN +12 -> L0 (047D)
+      0471  Pop
+      0472  ObjNew 2 (surtr:NullReferenceException)
+      0475  Dup
+      0476  Ldc1
+      0477  InvokeSpecial 54 (ctor) args=2 ret=0
+      047C  Throw
     L0:
-      02F3  Ldl0
-      02F4  Ldl2
-      02F5  FieldSet 0 (_front)
-      02F8  Ldl0
-      02F9  FieldGet 1 (_back)
-      02FC  JPNN +5 -> L1 (0304)
-      02FF  Ldl0
-      0300  Ldl2
-      0301  FieldSet 1 (_back)
+      047D  Ldl2
+      047E  FieldSet 12 (prev)
+      0481  JP +5 -> L2 (0489)
     L1:
-      0304  Ldl0
-      0305  Ldl0
-      0306  FieldGet 2 (_count)
-      0309  PushI8 1
-      030B  Add
-      030C  FieldSet 2 (_count)
-      030F  ReturnVoid
+      0484  Ldl0
+      0485  Ldl2
+      0486  FieldSet 9 (_back)
+    L2:
+      0489  Ldl0
+      048A  Ldl2
+      048B  FieldSet 8 (_front)
+      048E  Ldl0
+      048F  Ldl0
+      0490  FieldGet 10 (_count)
+      0493  PushI8 1
+      0495  Add
+      0496  FieldSet 10 (_count)
+      0499  ReturnVoid
 
   [public] virtual enqueueFront(item: unknown): void
-    ; entry 41, locals 2, stack 2, code 03CF..03DA
-      03CF  Ldl0
-      03D0  Ldl1
-      03D1  Cast 4 (T0)
-      03D4  InvokeSpecial 27 (enqueueFront) args=2 ret=0
-      03D9  ReturnVoid
+    ; entry 57, locals 2, stack 2, code 064B..0653
+      064B  Ldl0
+      064C  Ldl1
+      064D  InvokeSpecial 35 (enqueueFront) args=2 ret=0
+      0652  ReturnVoid
 
-class Queue`1<T> : surtr.collections.Queue:IQueue<T0>  [public]
+  [public] virtual get_isEmpty(): bool
+    ; entry 59, locals 1, stack 1, code 065B..0662
+      065B  Ldl0
+      065C  InvokeSpecial 30 (get_isEmpty) args=1 ret=1
+      0661  ReturnValue
+
+  [public] virtual get_isReadOnly(): bool
+    ; entry 63, locals 1, stack 1, code 067A..0681
+      067A  Ldl0
+      067B  InvokeSpecial 29 (get_isReadOnly) args=1 ret=1
+      0680  ReturnValue
+
+  [public] virtual get_length(): int
+    ; entry 67, locals 1, stack 1, code 0698..069F
+      0698  Ldl0
+      0699  InvokeSpecial 28 (get_length) args=1 ret=1
+      069E  ReturnValue
+
+  [public] iterate(): surtr:IIterator<T0>
+    ; entry 56, locals 1, stack 4, code 0639..064B
+      0639  ObjNew 6 (surtr.collections.Queue:Deque.Iterator<T0>)
+      063C  Dup
+      063D  Ldl0
+      063E  FieldGet 8 (_front)
+      0641  Ldl0
+      0642  FieldGet 10 (_count)
+      0645  InvokeSpecial 47 (ctor) args=3 ret=0
+      064A  ReturnValue
+
+  [public] virtual iterate(): surtr:IIterator<unknown>
+    ; entry 70, locals 1, stack 1, code 06B3..06BA
+      06B3  Ldl0
+      06B4  InvokeSpecial 45 (iterate) args=1 ret=1
+      06B9  ReturnValue
+
+  [public] peek(): T0
+    ; entry 50, locals 4, stack 3, code 059D..05D4
+      059D  Ldl0
+      059E  Stl1
+      059F  Ldl1
+      05A0  FieldGet 8 (_front)
+      05A3  Stl2
+      05A4  Ldl2
+      05A5  JPN +7 -> L0 (05AF)
+      05A8  Ldl2
+      05A9  FieldGet 11 (value)
+      05AC  JP +1 -> L1 (05B0)
+    L0:
+      05AF  PushNull
+    L1:
+      05B0  IsNotNull
+      05B1  JPZ +20 -> L4 (05C8)
+      05B4  Ldl1
+      05B5  FieldGet 8 (_front)
+      05B8  Stl3
+      05B9  Ldl3
+      05BA  JPN +7 -> L2 (05C4)
+      05BD  Ldl3
+      05BE  FieldGet 11 (value)
+      05C1  JP +1 -> L3 (05C5)
+    L2:
+      05C4  PushNull
+    L3:
+      05C5  JP +11 -> L5 (05D3)
+    L4:
+      05C8  ObjNew 0 (surtr:InvalidOperationException)
+      05CB  Dup
+      05CC  Ldc4
+      05CD  InvokeSpecial 53 (ctor) args=2 ret=0
+      05D2  Throw
+    L5:
+      05D3  ReturnValue
+
+  [public] virtual peek(): unknown
+    ; entry 62, locals 1, stack 1, code 0672..067A
+      0672  Ldl0
+      0673  InvokeSpecial 39 (peek) args=1 ret=1
+      0678  BoxDynamic
+      0679  ReturnValue
+
+  [public] remove(item: T0): bool
+    ; entry 52, locals 2, stack 3, code 05DD..05E8
+      05DD  ObjNew 0 (surtr:InvalidOperationException)
+      05E0  Dup
+      05E1  Ldc5
+      05E2  InvokeSpecial 53 (ctor) args=2 ret=0
+      05E7  Throw
+
+  [public] virtual remove(item: unknown): bool
+    ; entry 65, locals 2, stack 2, code 0689..0691
+      0689  Ldl0
+      068A  Ldl1
+      068B  InvokeSpecial 41 (remove) args=2 ret=1
+      0690  ReturnValue
+
+  sealed class Iterator`1<T> : surtr:object, surtr:IIterator<T0>  [private]
+    [private] field _count: int
+    [private] field _current: surtr.collections.Queue:Deque.Node<T0>
+    [private] field _index: int
+
+    [public] property current: T0 { get; }
+      get:
+        ; entry 73, locals 1, stack 3, code 06DB..0719
+          06DB  Ldl0
+          06DC  FieldGet 16 (_index)
+          06DF  PushI8 0
+          06E1  LT
+          06E2  Dup
+          06E3  JPNZ +13 -> L0 (06F3)
+          06E6  Pop
+          06E7  Ldl0
+          06E8  FieldGet 16 (_index)
+          06EB  Ldl0
+          06EC  FieldGet 15 (_count)
+          06EF  GE
+          06F0  JP +0 -> L0 (06F3)
+        L0:
+          06F3  JPZ +11 -> L1 (0701)
+          06F6  ObjNew 0 (surtr:InvalidOperationException)
+          06F9  Dup
+          06FA  Ldc3
+          06FB  InvokeSpecial 53 (ctor) args=2 ret=0
+          0700  Throw
+        L1:
+          0701  Ldl0
+          0702  FieldGet 14 (_current)
+          0705  Dup
+          0706  JPNN +12 -> L2 (0715)
+          0709  Pop
+          070A  ObjNew 2 (surtr:NullReferenceException)
+          070D  Dup
+          070E  Ldc1
+          070F  InvokeSpecial 54 (ctor) args=2 ret=0
+          0714  Throw
+        L2:
+          0715  FieldGet 11 (value)
+          0718  ReturnValue
+
+    [public] ctor (start: surtr.collections.Queue:Deque.Node<T0>, count: int): void
+      ; entry 72, locals 3, stack 2, code 06CA..06DB
+        06CA  Ldl0
+        06CB  Ldl1
+        06CC  FieldSet 14 (_current)
+        06CF  Ldl0
+        06D0  Ldl2
+        06D1  FieldSet 15 (_count)
+        06D4  Ldl0
+        06D5  PushI8 -1
+        06D7  FieldSet 16 (_index)
+        06DA  ReturnVoid
+
+    [public] dispose(): void
+      ; entry 74, locals 1, stack 0, code 0719..071A
+        0719  ReturnVoid
+
+    [public] virtual dispose(): void
+      ; entry 78, locals 1, stack 1, code 076A..0771
+        076A  Ldl0
+        076B  InvokeSpecial 49 (dispose) args=1 ret=0
+        0770  ReturnVoid
+
+    [public] virtual get_current(): unknown
+      ; entry 77, locals 1, stack 1, code 0762..076A
+        0762  Ldl0
+        0763  InvokeSpecial 48 (get_current) args=1 ret=1
+        0768  BoxDynamic
+        0769  ReturnValue
+
+    [public] moveNext(): bool
+      ; entry 75, locals 1, stack 4, code 071A..075B
+        071A  Ldl0
+        071B  FieldGet 16 (_index)
+        071E  PushI8 1
+        0720  Add
+        0721  Ldl0
+        0722  FieldGet 15 (_count)
+        0725  JPLT +2 -> L0 (072A)
+        0728  PushFalse
+        0729  ReturnValue
+      L0:
+        072A  Ldl0
+        072B  FieldGet 16 (_index)
+        072E  PushI8 -1
+        0730  JPEQ +27 -> L2 (074E)
+        0733  Ldl0
+        0734  Ldl0
+        0735  FieldGet 14 (_current)
+        0738  Dup
+        0739  JPNN +12 -> L1 (0748)
+        073C  Pop
+        073D  ObjNew 2 (surtr:NullReferenceException)
+        0740  Dup
+        0741  Ldc1
+        0742  InvokeSpecial 54 (ctor) args=2 ret=0
+        0747  Throw
+      L1:
+        0748  FieldGet 13 (next)
+        074B  FieldSet 14 (_current)
+      L2:
+        074E  Ldl0
+        074F  Ldl0
+        0750  FieldGet 16 (_index)
+        0753  PushI8 1
+        0755  Add
+        0756  FieldSet 16 (_index)
+        0759  PushTrue
+        075A  ReturnValue
+
+    [public] virtual moveNext(): bool
+      ; entry 76, locals 1, stack 1, code 075B..0762
+        075B  Ldl0
+        075C  InvokeSpecial 50 (moveNext) args=1 ret=1
+        0761  ReturnValue
+
+  sealed class Node`1<T> : surtr:object  [protected]
+    [public] field next: surtr.collections.Queue:Deque.Node<T0>
+    [public] field prev: surtr.collections.Queue:Deque.Node<T0>
+    [public] field value: T0
+
+    [public] ctor (value: T0): void
+      ; entry 71, locals 2, stack 2, code 06BA..06CA
+        06BA  Ldl0
+        06BB  Ldl1
+        06BC  FieldSet 11 (value)
+        06BF  Ldl0
+        06C0  PushNull
+        06C1  FieldSet 13 (next)
+        06C4  Ldl0
+        06C5  PushNull
+        06C6  FieldSet 12 (prev)
+        06C9  ReturnVoid
+
+class Queue`1<T> : surtr:object, surtr.collections.Queue:IQueue<T0>  [public]
   [protected] field _back: surtr.collections.Queue:Queue.Node<T0>
   [protected] field _count: int
   [protected] field _front: surtr.collections.Queue:Queue.Node<T0>
 
   [public] property front: T0 { get; }
     get:
-      ; entry 4, locals 3, stack 3, code 0020..0055
-        0020  Ldl0
-        0021  FieldGet 0 (_front)
-        0024  Stl1
-        0025  Ldl1
-        0026  JPN +7 -> L0 (0030)
-        0029  Ldl1
-        002A  FieldGet 3 (value)
-        002D  JP +1 -> L1 (0031)
+      ; entry 7, locals 3, stack 3, code 00D1..0106
+        00D1  Ldl0
+        00D2  FieldGet 0 (_front)
+        00D5  Stl1
+        00D6  Ldl1
+        00D7  JPN +7 -> L0 (00E1)
+        00DA  Ldl1
+        00DB  FieldGet 3 (value)
+        00DE  JP +1 -> L1 (00E2)
       L0:
-        0030  PushNull
+        00E1  PushNull
       L1:
-        0031  IsNotNull
-        0032  JPZ +20 -> L4 (0049)
-        0035  Ldl0
-        0036  FieldGet 0 (_front)
-        0039  Stl2
-        003A  Ldl2
-        003B  JPN +7 -> L2 (0045)
-        003E  Ldl2
-        003F  FieldGet 3 (value)
-        0042  JP +1 -> L3 (0046)
+        00E2  IsNotNull
+        00E3  JPZ +20 -> L4 (00FA)
+        00E6  Ldl0
+        00E7  FieldGet 0 (_front)
+        00EA  Stl2
+        00EB  Ldl2
+        00EC  JPN +7 -> L2 (00F6)
+        00EF  Ldl2
+        00F0  FieldGet 3 (value)
+        00F3  JP +1 -> L3 (00F7)
       L2:
-        0045  PushNull
+        00F6  PushNull
       L3:
-        0046  JP +11 -> L5 (0054)
+        00F7  JP +11 -> L5 (0105)
       L4:
-        0049  ObjNew 0 (surtr:InvalidOperationException)
-        004C  Dup
-        004D  Ldc0
-        004E  InvokeSpecial 32 (ctor) args=2 ret=0
-        0053  Throw
+        00FA  ObjNew 0 (surtr:InvalidOperationException)
+        00FD  Dup
+        00FE  Ldc0
+        00FF  InvokeSpecial 53 (ctor) args=2 ret=0
+        0104  Throw
       L5:
-        0054  ReturnValue
+        0105  ReturnValue
 
   [public] property isEmpty: bool { get; }
     get:
-      ; entry 3, locals 1, stack 2, code 0018..0020
-        0018  Ldl0
-        0019  FieldGet 2 (_count)
-        001C  PushI8 0
-        001E  EQ
-        001F  ReturnValue
+      ; entry 6, locals 1, stack 2, code 00C9..00D1
+        00C9  Ldl0
+        00CA  FieldGet 2 (_count)
+        00CD  PushI8 0
+        00CF  EQ
+        00D0  ReturnValue
 
   [public] property isReadOnly: bool { get; }
     get:
-      ; entry 2, locals 1, stack 1, code 0016..0018
-        0016  PushFalse
-        0017  ReturnValue
+      ; entry 5, locals 1, stack 1, code 00C7..00C9
+        00C7  PushFalse
+        00C8  ReturnValue
 
   [public] property length: int { get; }
     get:
-      ; entry 1, locals 1, stack 1, code 0011..0016
-        0011  Ldl0
-        0012  FieldGet 2 (_count)
-        0015  ReturnValue
+      ; entry 4, locals 1, stack 1, code 00C2..00C7
+        00C2  Ldl0
+        00C3  FieldGet 2 (_count)
+        00C6  ReturnValue
+
+  [private] $fill$Queue$0(item: T0): void
+    ; entry 3, locals 2, stack 2, code 00B9..00C2
+      00B9  Ldl0
+      00BA  Ldl1
+      00BB  BoxDynamic
+      00BC  InvokeSpecial 12 (enqueue) args=2 ret=0
+      00C1  ReturnVoid
 
   [public] add(item: T0): void
-    ; entry 8, locals 2, stack 2, code 0125..012E
-      0125  Ldl0
-      0126  Ldl1
-      0127  BoxDynamic
-      0128  InvokeSpecial 11 (enqueue) args=2 ret=0
-      012D  ReturnVoid
+    ; entry 11, locals 2, stack 2, code 01D6..01DF
+      01D6  Ldl0
+      01D7  Ldl1
+      01D8  BoxDynamic
+      01D9  InvokeSpecial 12 (enqueue) args=2 ret=0
+      01DE  ReturnVoid
 
   [public] virtual add(item: unknown): void
-    ; entry 20, locals 2, stack 2, code 01D1..01DC
-      01D1  Ldl0
-      01D2  Ldl1
-      01D3  Cast 4 (T0)
-      01D6  InvokeSpecial 14 (add) args=2 ret=0
-      01DB  ReturnVoid
+    ; entry 22, locals 2, stack 2, code 0273..027B
+      0273  Ldl0
+      0274  Ldl1
+      0275  InvokeSpecial 15 (add) args=2 ret=0
+      027A  ReturnVoid
 
   [public] clear(): void
-    ; entry 10, locals 1, stack 2, code 0139..014A
-      0139  Ldl0
-      013A  PushNull
-      013B  FieldSet 0 (_front)
-      013E  Ldl0
-      013F  PushNull
-      0140  FieldSet 1 (_back)
-      0143  Ldl0
-      0144  PushI8 0
-      0146  FieldSet 2 (_count)
-      0149  ReturnVoid
+    ; entry 13, locals 1, stack 2, code 01EA..01FB
+      01EA  Ldl0
+      01EB  PushNull
+      01EC  FieldSet 0 (_front)
+      01EF  Ldl0
+      01F0  PushNull
+      01F1  FieldSet 1 (_back)
+      01F4  Ldl0
+      01F5  PushI8 0
+      01F7  FieldSet 2 (_count)
+      01FA  ReturnVoid
 
   [public] virtual clear(): void
-    ; entry 22, locals 1, stack 1, code 01E7..01EE
-      01E7  Ldl0
-      01E8  InvokeSpecial 16 (clear) args=1 ret=0
-      01ED  ReturnVoid
+    ; entry 24, locals 1, stack 1, code 0283..028A
+      0283  Ldl0
+      0284  InvokeSpecial 17 (clear) args=1 ret=0
+      0289  ReturnVoid
 
   [public] contains(item: T0): bool
-    ; entry 11, locals 3, stack 2, code 014A..0168
-      014A  Ldl0
-      014B  FieldGet 0 (_front)
-      014E  Stl2
+    ; entry 14, locals 3, stack 2, code 01FB..0219
+      01FB  Ldl0
+      01FC  FieldGet 0 (_front)
+      01FF  Stl2
     L0:
-      014F  Ldl2
-      0150  JPN +19 -> L2 (0166)
-      0153  Ldl2
-      0154  FieldGet 3 (value)
-      0157  Ldl1
-      0158  DynEQ
-      0159  JPZ +2 -> L1 (015E)
-      015C  PushTrue
-      015D  ReturnValue
+      0200  Ldl2
+      0201  JPN +19 -> L2 (0217)
+      0204  Ldl2
+      0205  FieldGet 3 (value)
+      0208  Ldl1
+      0209  DynEQ
+      020A  JPZ +2 -> L1 (020F)
+      020D  PushTrue
+      020E  ReturnValue
     L1:
-      015E  Ldl2
-      015F  FieldGet 4 (next)
-      0162  Stl2
-      0163  JP -23 -> L0 (014F)
+      020F  Ldl2
+      0210  FieldGet 4 (next)
+      0213  Stl2
+      0214  JP -23 -> L0 (0200)
     L2:
-      0166  PushFalse
-      0167  ReturnValue
+      0217  PushFalse
+      0218  ReturnValue
 
   [public] virtual contains(item: unknown): bool
-    ; entry 24, locals 2, stack 2, code 01F5..0200
-      01F5  Ldl0
-      01F6  Ldl1
-      01F7  Cast 4 (T0)
-      01FA  InvokeSpecial 17 (contains) args=2 ret=1
-      01FF  ReturnValue
+    ; entry 26, locals 2, stack 2, code 0291..0299
+      0291  Ldl0
+      0292  Ldl1
+      0293  InvokeSpecial 18 (contains) args=2 ret=1
+      0298  ReturnValue
 
   [public] copyTo(array: T0[], arrayIndex: int): void
-    ; entry 12, locals 5, stack 3, code 0168..018A
-      0168  Ldl0
-      0169  FieldGet 0 (_front)
-      016C  Stl3
-      016D  PushI8 0
-      016F  Stl4
+    ; entry 15, locals 5, stack 3, code 0219..023B
+      0219  Ldl0
+      021A  FieldGet 0 (_front)
+      021D  Stl3
+      021E  PushI8 0
+      0220  Stl4
     L0:
-      0170  Ldl3
-      0171  JPN +21 -> L1 (0189)
-      0174  Ldl1
-      0175  Ldl2
-      0176  Ldl4
-      0177  Add
-      0178  Ldl3
-      0179  FieldGet 3 (value)
-      017C  UnboxDynamic
-      017D  ArrSet
-      017E  Ldl3
-      017F  FieldGet 4 (next)
-      0182  Stl3
-      0183  IncLocal 4 by 1
-      0186  JP -25 -> L0 (0170)
+      0221  Ldl3
+      0222  JPN +21 -> L1 (023A)
+      0225  Ldl1
+      0226  Ldl2
+      0227  Ldl4
+      0228  Add
+      0229  Ldl3
+      022A  FieldGet 3 (value)
+      022D  UnboxDynamic
+      022E  ArrSet
+      022F  Ldl3
+      0230  FieldGet 4 (next)
+      0233  Stl3
+      0234  IncLocal 4 by 1
+      0237  JP -25 -> L0 (0221)
     L1:
-      0189  ReturnVoid
+      023A  ReturnVoid
 
   [public] virtual copyTo(array: unknown[], arrayIndex: int): void
-    ; entry 25, locals 3, stack 3, code 0200..020C
-      0200  Ldl0
-      0201  Ldl1
-      0202  Cast 5 (T0[])
-      0205  Ldl2
-      0206  InvokeSpecial 18 (copyTo) args=3 ret=0
-      020B  ReturnVoid
+    ; entry 27, locals 3, stack 3, code 0299..02A5
+      0299  Ldl0
+      029A  Ldl1
+      029B  Cast 4 (T0[])
+      029E  Ldl2
+      029F  InvokeSpecial 19 (copyTo) args=3 ret=0
+      02A4  ReturnVoid
 
   [public] ctor (): void
-    ; entry 0, locals 1, stack 2, code 0000..0011
-      0000  Ldl0
-      0001  PushNull
-      0002  FieldSet 0 (_front)
-      0005  Ldl0
-      0006  PushNull
-      0007  FieldSet 1 (_back)
-      000A  Ldl0
-      000B  PushI8 0
-      000D  FieldSet 2 (_count)
-      0010  ReturnVoid
+    ; entry 2, locals 1, stack 2, code 00A8..00B9
+      00A8  Ldl0
+      00A9  PushNull
+      00AA  FieldSet 0 (_front)
+      00AD  Ldl0
+      00AE  PushNull
+      00AF  FieldSet 1 (_back)
+      00B2  Ldl0
+      00B3  PushI8 0
+      00B5  FieldSet 2 (_count)
+      00B8  ReturnVoid
 
   [public] dequeue(): T0
-    ; entry 6, locals 3, stack 4, code 008D..00F0
-      008D  Ldl0
-      008E  Stl1
-      008F  Ldl1
-      0090  FieldGet 2 (_count)
-      0093  PushI8 0
-      0095  EQ
-      0096  JPZ +11 -> L0 (00A4)
-      0099  ObjNew 0 (surtr:InvalidOperationException)
-      009C  Dup
-      009D  Ldc0
-      009E  InvokeSpecial 32 (ctor) args=2 ret=0
-      00A3  Throw
+    ; entry 9, locals 3, stack 4, code 013E..01A1
+      013E  Ldl0
+      013F  Stl1
+      0140  Ldl1
+      0141  FieldGet 2 (_count)
+      0144  PushI8 0
+      0146  EQ
+      0147  JPZ +11 -> L0 (0155)
+      014A  ObjNew 0 (surtr:InvalidOperationException)
+      014D  Dup
+      014E  Ldc0
+      014F  InvokeSpecial 53 (ctor) args=2 ret=0
+      0154  Throw
     L0:
-      00A4  Ldl0
-      00A5  FieldGet 0 (_front)
-      00A8  Dup
-      00A9  JPNN +12 -> L1 (00B8)
-      00AC  Pop
-      00AD  ObjNew 2 (surtr:NullReferenceException)
-      00B0  Dup
-      00B1  Ldc1
-      00B2  InvokeSpecial 33 (ctor) args=2 ret=0
-      00B7  Throw
+      0155  Ldl0
+      0156  FieldGet 0 (_front)
+      0159  Dup
+      015A  JPNN +12 -> L1 (0169)
+      015D  Pop
+      015E  ObjNew 2 (surtr:NullReferenceException)
+      0161  Dup
+      0162  Ldc1
+      0163  InvokeSpecial 54 (ctor) args=2 ret=0
+      0168  Throw
     L1:
-      00B8  FieldGet 3 (value)
-      00BB  Stl2
-      00BC  Ldl0
-      00BD  Ldl0
-      00BE  FieldGet 0 (_front)
-      00C1  Dup
-      00C2  JPNN +12 -> L2 (00D1)
-      00C5  Pop
-      00C6  ObjNew 2 (surtr:NullReferenceException)
-      00C9  Dup
-      00CA  Ldc1
-      00CB  InvokeSpecial 33 (ctor) args=2 ret=0
-      00D0  Throw
+      0169  FieldGet 3 (value)
+      016C  Stl2
+      016D  Ldl0
+      016E  Ldl0
+      016F  FieldGet 0 (_front)
+      0172  Dup
+      0173  JPNN +12 -> L2 (0182)
+      0176  Pop
+      0177  ObjNew 2 (surtr:NullReferenceException)
+      017A  Dup
+      017B  Ldc1
+      017C  InvokeSpecial 54 (ctor) args=2 ret=0
+      0181  Throw
     L2:
-      00D1  FieldGet 4 (next)
-      00D4  FieldSet 0 (_front)
-      00D7  Ldl0
-      00D8  FieldGet 0 (_front)
-      00DB  JPNN +5 -> L3 (00E3)
-      00DE  Ldl0
-      00DF  PushNull
-      00E0  FieldSet 1 (_back)
+      0182  FieldGet 4 (next)
+      0185  FieldSet 0 (_front)
+      0188  Ldl0
+      0189  FieldGet 0 (_front)
+      018C  JPNN +5 -> L3 (0194)
+      018F  Ldl0
+      0190  PushNull
+      0191  FieldSet 1 (_back)
     L3:
-      00E3  Ldl0
-      00E4  Ldl0
-      00E5  FieldGet 2 (_count)
-      00E8  PushI8 1
-      00EA  Sub
-      00EB  FieldSet 2 (_count)
-      00EE  Ldl2
-      00EF  ReturnValue
+      0194  Ldl0
+      0195  Ldl0
+      0196  FieldGet 2 (_count)
+      0199  PushI8 1
+      019B  Sub
+      019C  FieldSet 2 (_count)
+      019F  Ldl2
+      01A0  ReturnValue
 
   [public] virtual dequeue(): unknown
-    ; entry 17, locals 1, stack 1, code 01BA..01C2
-      01BA  Ldl0
-      01BB  InvokeSpecial 12 (dequeue) args=1 ret=1
-      01C0  BoxDynamic
-      01C1  ReturnValue
+    ; entry 19, locals 1, stack 1, code 025C..0264
+      025C  Ldl0
+      025D  InvokeSpecial 13 (dequeue) args=1 ret=1
+      0262  BoxDynamic
+      0263  ReturnValue
 
   [public] enqueue(item: T0): void
-    ; entry 5, locals 3, stack 3, code 0055..008D
-      0055  ObjNew 1 (surtr.collections.Queue:Queue.Node<T0>)
-      0058  Dup
-      0059  Ldl1
-      005A  BoxDynamic
-      005B  InvokeSpecial 21 (ctor) args=2 ret=0
-      0060  Stl2
-      0061  Ldl0
-      0062  FieldGet 1 (_back)
-      0065  JPN +8 -> L0 (0070)
-      0068  Ldl0
-      0069  FieldGet 1 (_back)
-      006C  Ldl2
-      006D  FieldSet 4 (next)
+    ; entry 8, locals 3, stack 3, code 0106..013E
+      0106  ObjNew 1 (surtr.collections.Queue:Queue.Node<T0>)
+      0109  Dup
+      010A  Ldl1
+      010B  BoxDynamic
+      010C  InvokeSpecial 21 (ctor) args=2 ret=0
+      0111  Stl2
+      0112  Ldl0
+      0113  FieldGet 1 (_back)
+      0116  JPN +8 -> L0 (0121)
+      0119  Ldl0
+      011A  FieldGet 1 (_back)
+      011D  Ldl2
+      011E  FieldSet 4 (next)
     L0:
-      0070  Ldl0
-      0071  Ldl2
-      0072  FieldSet 1 (_back)
-      0075  Ldl0
-      0076  FieldGet 0 (_front)
-      0079  JPNN +5 -> L1 (0081)
-      007C  Ldl0
-      007D  Ldl2
-      007E  FieldSet 0 (_front)
+      0121  Ldl0
+      0122  Ldl2
+      0123  FieldSet 1 (_back)
+      0126  Ldl0
+      0127  FieldGet 0 (_front)
+      012A  JPNN +5 -> L1 (0132)
+      012D  Ldl0
+      012E  Ldl2
+      012F  FieldSet 0 (_front)
     L1:
-      0081  Ldl0
-      0082  Ldl0
-      0083  FieldGet 2 (_count)
-      0086  PushI8 1
-      0088  Add
-      0089  FieldSet 2 (_count)
-      008C  ReturnVoid
+      0132  Ldl0
+      0133  Ldl0
+      0134  FieldGet 2 (_count)
+      0137  PushI8 1
+      0139  Add
+      013A  FieldSet 2 (_count)
+      013D  ReturnVoid
 
   [public] virtual enqueue(item: unknown): void
-    ; entry 16, locals 2, stack 2, code 01AF..01BA
-      01AF  Ldl0
-      01B0  Ldl1
-      01B1  Cast 4 (T0)
-      01B4  InvokeSpecial 11 (enqueue) args=2 ret=0
-      01B9  ReturnVoid
+    ; entry 18, locals 2, stack 2, code 0254..025C
+      0254  Ldl0
+      0255  Ldl1
+      0256  InvokeSpecial 12 (enqueue) args=2 ret=0
+      025B  ReturnVoid
 
   [public] virtual get_isEmpty(): bool
-    ; entry 15, locals 1, stack 1, code 01A8..01AF
-      01A8  Ldl0
-      01A9  InvokeSpecial 9 (get_isEmpty) args=1 ret=1
-      01AE  ReturnValue
+    ; entry 17, locals 1, stack 1, code 024D..0254
+      024D  Ldl0
+      024E  InvokeSpecial 10 (get_isEmpty) args=1 ret=1
+      0253  ReturnValue
 
   [public] virtual get_isReadOnly(): bool
-    ; entry 19, locals 1, stack 1, code 01CA..01D1
-      01CA  Ldl0
-      01CB  InvokeSpecial 8 (get_isReadOnly) args=1 ret=1
-      01D0  ReturnValue
+    ; entry 21, locals 1, stack 1, code 026C..0273
+      026C  Ldl0
+      026D  InvokeSpecial 9 (get_isReadOnly) args=1 ret=1
+      0272  ReturnValue
 
   [public] virtual get_length(): int
-    ; entry 23, locals 1, stack 1, code 01EE..01F5
-      01EE  Ldl0
-      01EF  InvokeSpecial 7 (get_length) args=1 ret=1
-      01F4  ReturnValue
+    ; entry 25, locals 1, stack 1, code 028A..0291
+      028A  Ldl0
+      028B  InvokeSpecial 8 (get_length) args=1 ret=1
+      0290  ReturnValue
 
   [public] iterate(): surtr:IIterator<T0>
-    ; entry 13, locals 1, stack 4, code 018A..019C
-      018A  ObjNew 3 (surtr.collections.Queue:Queue.Iterator<T0>)
-      018D  Dup
-      018E  Ldl0
-      018F  FieldGet 0 (_front)
-      0192  Ldl0
-      0193  FieldGet 2 (_count)
-      0196  InvokeSpecial 22 (ctor) args=3 ret=0
-      019B  ReturnValue
+    ; entry 16, locals 1, stack 4, code 023B..024D
+      023B  ObjNew 3 (surtr.collections.Queue:Queue.Iterator<T0>)
+      023E  Dup
+      023F  Ldl0
+      0240  FieldGet 0 (_front)
+      0243  Ldl0
+      0244  FieldGet 2 (_count)
+      0247  InvokeSpecial 22 (ctor) args=3 ret=0
+      024C  ReturnValue
 
   [public] virtual iterate(): surtr:IIterator<unknown>
-    ; entry 26, locals 1, stack 1, code 020C..0213
-      020C  Ldl0
-      020D  InvokeSpecial 19 (iterate) args=1 ret=1
-      0212  ReturnValue
-
-  [protected] static makeNode(value: T0): surtr.collections.Queue:Queue.Node<T0>
-    ; entry 14, locals 1, stack 3, code 019C..01A8
-      019C  ObjNew 1 (surtr.collections.Queue:Queue.Node<T0>)
-      019F  Dup
-      01A0  Ldl0
-      01A1  BoxDynamic
-      01A2  InvokeSpecial 21 (ctor) args=2 ret=0
-      01A7  ReturnValue
+    ; entry 28, locals 1, stack 1, code 02A5..02AC
+      02A5  Ldl0
+      02A6  InvokeSpecial 20 (iterate) args=1 ret=1
+      02AB  ReturnValue
 
   [public] peek(): T0
-    ; entry 7, locals 3, stack 3, code 00F0..0125
-      00F0  Ldl0
-      00F1  FieldGet 0 (_front)
-      00F4  Stl1
-      00F5  Ldl1
-      00F6  JPN +7 -> L0 (0100)
-      00F9  Ldl1
-      00FA  FieldGet 3 (value)
-      00FD  JP +1 -> L1 (0101)
+    ; entry 10, locals 3, stack 3, code 01A1..01D6
+      01A1  Ldl0
+      01A2  FieldGet 0 (_front)
+      01A5  Stl1
+      01A6  Ldl1
+      01A7  JPN +7 -> L0 (01B1)
+      01AA  Ldl1
+      01AB  FieldGet 3 (value)
+      01AE  JP +1 -> L1 (01B2)
     L0:
-      0100  PushNull
+      01B1  PushNull
     L1:
-      0101  IsNotNull
-      0102  JPZ +20 -> L4 (0119)
-      0105  Ldl0
-      0106  FieldGet 0 (_front)
-      0109  Stl2
-      010A  Ldl2
-      010B  JPN +7 -> L2 (0115)
-      010E  Ldl2
-      010F  FieldGet 3 (value)
-      0112  JP +1 -> L3 (0116)
+      01B2  IsNotNull
+      01B3  JPZ +20 -> L4 (01CA)
+      01B6  Ldl0
+      01B7  FieldGet 0 (_front)
+      01BA  Stl2
+      01BB  Ldl2
+      01BC  JPN +7 -> L2 (01C6)
+      01BF  Ldl2
+      01C0  FieldGet 3 (value)
+      01C3  JP +1 -> L3 (01C7)
     L2:
-      0115  PushNull
+      01C6  PushNull
     L3:
-      0116  JP +11 -> L5 (0124)
+      01C7  JP +11 -> L5 (01D5)
     L4:
-      0119  ObjNew 0 (surtr:InvalidOperationException)
-      011C  Dup
-      011D  Ldc0
-      011E  InvokeSpecial 32 (ctor) args=2 ret=0
-      0123  Throw
+      01CA  ObjNew 0 (surtr:InvalidOperationException)
+      01CD  Dup
+      01CE  Ldc0
+      01CF  InvokeSpecial 53 (ctor) args=2 ret=0
+      01D4  Throw
     L5:
-      0124  ReturnValue
+      01D5  ReturnValue
 
   [public] virtual peek(): unknown
-    ; entry 18, locals 1, stack 1, code 01C2..01CA
-      01C2  Ldl0
-      01C3  InvokeSpecial 13 (peek) args=1 ret=1
-      01C8  BoxDynamic
-      01C9  ReturnValue
+    ; entry 20, locals 1, stack 1, code 0264..026C
+      0264  Ldl0
+      0265  InvokeSpecial 14 (peek) args=1 ret=1
+      026A  BoxDynamic
+      026B  ReturnValue
 
   [public] remove(item: T0): bool
-    ; entry 9, locals 2, stack 3, code 012E..0139
-      012E  ObjNew 0 (surtr:InvalidOperationException)
-      0131  Dup
-      0132  Ldc2
-      0133  InvokeSpecial 32 (ctor) args=2 ret=0
-      0138  Throw
+    ; entry 12, locals 2, stack 3, code 01DF..01EA
+      01DF  ObjNew 0 (surtr:InvalidOperationException)
+      01E2  Dup
+      01E3  Ldc2
+      01E4  InvokeSpecial 53 (ctor) args=2 ret=0
+      01E9  Throw
 
   [public] virtual remove(item: unknown): bool
-    ; entry 21, locals 2, stack 2, code 01DC..01E7
-      01DC  Ldl0
-      01DD  Ldl1
-      01DE  Cast 4 (T0)
-      01E1  InvokeSpecial 15 (remove) args=2 ret=1
-      01E6  ReturnValue
+    ; entry 23, locals 2, stack 2, code 027B..0283
+      027B  Ldl0
+      027C  Ldl1
+      027D  InvokeSpecial 16 (remove) args=2 ret=1
+      0282  ReturnValue
 
-  sealed class Iterator`1<T> : surtr:IIterator<T0>  [private]
+  sealed class Iterator`1<T> : surtr:object, surtr:IIterator<T0>  [private]
     [private] field _count: int
     [private] field _current: surtr.collections.Queue:Queue.Node<T0>
     [private] field _index: int
 
     [public] property current: T0 { get; }
       get:
-        ; entry 29, locals 1, stack 3, code 022F..026D
-          022F  Ldl0
-          0230  FieldGet 7 (_index)
-          0233  PushI8 0
-          0235  LT
-          0236  Dup
-          0237  JPNZ +13 -> L0 (0247)
-          023A  Pop
-          023B  Ldl0
-          023C  FieldGet 7 (_index)
-          023F  Ldl0
-          0240  FieldGet 6 (_count)
-          0243  GE
-          0244  JP +0 -> L0 (0247)
+        ; entry 31, locals 1, stack 3, code 02C8..0306
+          02C8  Ldl0
+          02C9  FieldGet 7 (_index)
+          02CC  PushI8 0
+          02CE  LT
+          02CF  Dup
+          02D0  JPNZ +13 -> L0 (02E0)
+          02D3  Pop
+          02D4  Ldl0
+          02D5  FieldGet 7 (_index)
+          02D8  Ldl0
+          02D9  FieldGet 6 (_count)
+          02DC  GE
+          02DD  JP +0 -> L0 (02E0)
         L0:
-          0247  JPZ +11 -> L1 (0255)
-          024A  ObjNew 0 (surtr:InvalidOperationException)
-          024D  Dup
-          024E  Ldc3
-          024F  InvokeSpecial 32 (ctor) args=2 ret=0
-          0254  Throw
+          02E0  JPZ +11 -> L1 (02EE)
+          02E3  ObjNew 0 (surtr:InvalidOperationException)
+          02E6  Dup
+          02E7  Ldc3
+          02E8  InvokeSpecial 53 (ctor) args=2 ret=0
+          02ED  Throw
         L1:
-          0255  Ldl0
-          0256  FieldGet 5 (_current)
-          0259  Dup
-          025A  JPNN +12 -> L2 (0269)
-          025D  Pop
-          025E  ObjNew 2 (surtr:NullReferenceException)
-          0261  Dup
-          0262  Ldc1
-          0263  InvokeSpecial 33 (ctor) args=2 ret=0
-          0268  Throw
+          02EE  Ldl0
+          02EF  FieldGet 5 (_current)
+          02F2  Dup
+          02F3  JPNN +12 -> L2 (0302)
+          02F6  Pop
+          02F7  ObjNew 2 (surtr:NullReferenceException)
+          02FA  Dup
+          02FB  Ldc1
+          02FC  InvokeSpecial 54 (ctor) args=2 ret=0
+          0301  Throw
         L2:
-          0269  FieldGet 3 (value)
-          026C  ReturnValue
+          0302  FieldGet 3 (value)
+          0305  ReturnValue
 
     [public] ctor (start: surtr.collections.Queue:Queue.Node<T0>, count: int): void
-      ; entry 28, locals 3, stack 2, code 021E..022F
-        021E  Ldl0
-        021F  Ldl1
-        0220  FieldSet 5 (_current)
-        0223  Ldl0
-        0224  Ldl2
-        0225  FieldSet 6 (_count)
-        0228  Ldl0
-        0229  PushI8 -1
-        022B  FieldSet 7 (_index)
-        022E  ReturnVoid
+      ; entry 30, locals 3, stack 2, code 02B7..02C8
+        02B7  Ldl0
+        02B8  Ldl1
+        02B9  FieldSet 5 (_current)
+        02BC  Ldl0
+        02BD  Ldl2
+        02BE  FieldSet 6 (_count)
+        02C1  Ldl0
+        02C2  PushI8 -1
+        02C4  FieldSet 7 (_index)
+        02C7  ReturnVoid
 
     [public] dispose(): void
-      ; entry 30, locals 1, stack 0, code 026D..026E
-        026D  ReturnVoid
+      ; entry 32, locals 1, stack 0, code 0306..0307
+        0306  ReturnVoid
 
     [public] virtual dispose(): void
-      ; entry 35, locals 1, stack 1, code 02D5..02DC
-        02D5  Ldl0
-        02D6  InvokeSpecial 24 (dispose) args=1 ret=0
-        02DB  ReturnVoid
+      ; entry 36, locals 1, stack 1, code 0357..035E
+        0357  Ldl0
+        0358  InvokeSpecial 24 (dispose) args=1 ret=0
+        035D  ReturnVoid
 
     [public] virtual get_current(): unknown
-      ; entry 34, locals 1, stack 1, code 02CD..02D5
-        02CD  Ldl0
-        02CE  InvokeSpecial 23 (get_current) args=1 ret=1
-        02D3  BoxDynamic
-        02D4  ReturnValue
+      ; entry 35, locals 1, stack 1, code 034F..0357
+        034F  Ldl0
+        0350  InvokeSpecial 23 (get_current) args=1 ret=1
+        0355  BoxDynamic
+        0356  ReturnValue
 
     [public] moveNext(): bool
-      ; entry 31, locals 1, stack 4, code 026E..02BA
-        026E  Ldl0
-        026F  FieldGet 7 (_index)
-        0272  PushI8 1
-        0274  Add
-        0275  Ldl0
-        0276  FieldGet 6 (_count)
-        0279  JPLT +2 -> L0 (027E)
-        027C  PushFalse
-        027D  ReturnValue
+      ; entry 33, locals 1, stack 4, code 0307..0348
+        0307  Ldl0
+        0308  FieldGet 7 (_index)
+        030B  PushI8 1
+        030D  Add
+        030E  Ldl0
+        030F  FieldGet 6 (_count)
+        0312  JPLT +2 -> L0 (0317)
+        0315  PushFalse
+        0316  ReturnValue
       L0:
-        027E  Ldl0
-        027F  FieldGet 7 (_index)
-        0282  PushI8 -1
-        0284  JPNE +11 -> L1 (0292)
-        0287  Ldl0
-        0288  Ldl0
-        0289  FieldGet 5 (_current)
-        028C  FieldSet 5 (_current)
-        028F  JP +27 -> L3 (02AD)
+        0317  Ldl0
+        0318  FieldGet 7 (_index)
+        031B  PushI8 -1
+        031D  JPEQ +27 -> L2 (033B)
+        0320  Ldl0
+        0321  Ldl0
+        0322  FieldGet 5 (_current)
+        0325  Dup
+        0326  JPNN +12 -> L1 (0335)
+        0329  Pop
+        032A  ObjNew 2 (surtr:NullReferenceException)
+        032D  Dup
+        032E  Ldc1
+        032F  InvokeSpecial 54 (ctor) args=2 ret=0
+        0334  Throw
       L1:
-        0292  Ldl0
-        0293  Ldl0
-        0294  FieldGet 5 (_current)
-        0297  Dup
-        0298  JPNN +12 -> L2 (02A7)
-        029B  Pop
-        029C  ObjNew 2 (surtr:NullReferenceException)
-        029F  Dup
-        02A0  Ldc1
-        02A1  InvokeSpecial 33 (ctor) args=2 ret=0
-        02A6  Throw
+        0335  FieldGet 4 (next)
+        0338  FieldSet 5 (_current)
       L2:
-        02A7  FieldGet 4 (next)
-        02AA  FieldSet 5 (_current)
-      L3:
-        02AD  Ldl0
-        02AE  Ldl0
-        02AF  FieldGet 7 (_index)
-        02B2  PushI8 1
-        02B4  Add
-        02B5  FieldSet 7 (_index)
-        02B8  PushTrue
-        02B9  ReturnValue
+        033B  Ldl0
+        033C  Ldl0
+        033D  FieldGet 7 (_index)
+        0340  PushI8 1
+        0342  Add
+        0343  FieldSet 7 (_index)
+        0346  PushTrue
+        0347  ReturnValue
 
     [public] virtual moveNext(): bool
-      ; entry 33, locals 1, stack 1, code 02C6..02CD
-        02C6  Ldl0
-        02C7  InvokeSpecial 25 (moveNext) args=1 ret=1
-        02CC  ReturnValue
+      ; entry 34, locals 1, stack 1, code 0348..034F
+        0348  Ldl0
+        0349  InvokeSpecial 25 (moveNext) args=1 ret=1
+        034E  ReturnValue
 
-    [public] reset(): void
-      ; entry 32, locals 1, stack 2, code 02BA..02C6
-        02BA  Ldl0
-        02BB  PushNull
-        02BC  FieldSet 5 (_current)
-        02BF  Ldl0
-        02C0  PushI8 -1
-        02C2  FieldSet 7 (_index)
-        02C5  ReturnVoid
-
-  sealed class Node`1<T>  [protected]
+  sealed class Node`1<T> : surtr:object  [protected]
     [public] field next: surtr.collections.Queue:Queue.Node<T0>
     [public] field value: T0
 
     [public] ctor (value: T0): void
-      ; entry 27, locals 2, stack 2, code 0213..021E
-        0213  Ldl0
-        0214  Ldl1
-        0215  FieldSet 3 (value)
-        0218  Ldl0
-        0219  PushNull
-        021A  FieldSet 4 (next)
-        021D  ReturnVoid
+      ; entry 29, locals 2, stack 2, code 02AC..02B7
+        02AC  Ldl0
+        02AD  Ldl1
+        02AE  FieldSet 3 (value)
+        02B1  Ldl0
+        02B2  PushNull
+        02B3  FieldSet 4 (next)
+        02B6  ReturnVoid

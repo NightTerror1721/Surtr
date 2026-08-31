@@ -254,6 +254,18 @@ namespace Surtr.LanguageServer.Workspace
 
                     break;
 
+                case BoundCollectionBuildExpression build:
+                    foreach (var argument in build.ConstructorArguments)
+                        WalkExpression(argument, text, tokens, lines, hints);
+
+                    foreach (var fillArgs in build.FillArguments)
+                    {
+                        foreach (var argument in fillArgs)
+                            WalkExpression(argument, text, tokens, lines, hints);
+                    }
+
+                    break;
+
                 case BoundSwitchExpression switchExpression:
                     WalkExpression(switchExpression.Subject, text, tokens, lines, hints);
                     foreach (var arm in switchExpression.Arms)

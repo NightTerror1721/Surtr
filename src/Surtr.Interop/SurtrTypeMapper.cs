@@ -34,6 +34,12 @@ namespace Surtr.Interop
             if (type == typeof(string))
                 return SurtrClassReference.String;
 
+            // A byte[] is the natural CLR shape for the built-in bytes buffer, so it maps to the
+            // dedicated family rather than the generic array rule below (which would read it as
+            // int[]). Checked before the array rule for that reason.
+            if (type == typeof(byte[]))
+                return SurtrClassReference.Bytes;
+
             if (type == typeof(object) || type == typeof(void))
                 return type == typeof(void) ? SurtrClassReference.Void : SurtrClassReference.Native("surtr:native");
 

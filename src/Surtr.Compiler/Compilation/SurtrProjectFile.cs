@@ -38,10 +38,15 @@ namespace Surtr.Compiler.Compilation
     /// </remarks>
     public sealed class SurtrProjectFile
     {
-        private SurtrProjectFile(string path)
+        private SurtrProjectFile(string path, string directory)
         {
             Path = path;
-            Directory = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(path)) ?? ".";
+            Directory = directory;
+        }
+
+        private SurtrProjectFile(string path)
+            : this(path, System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(path)) ?? ".")
+        {
         }
 
         /// <summary>Where the project file itself is.</summary>
@@ -65,10 +70,42 @@ namespace Surtr.Compiler.Compilation
         /// <summary>The constants the build defines (§7.4).</summary>
         public IReadOnlyDictionary<string, BuildConstant> Constants => _constants;
 
+        /// <summary>Whether every warning is treated as an error for the purpose of <c>SurtrBuild.Failed</c>. Defaults to <see langword="false"/>.</summary>
+        public bool WarningsAsErrors { get; private set; }
+
+        /// <summary>Diagnostic codes silenced entirely, named by <c>suppress</c> directives.</summary>
+        public IReadOnlyCollection<SurtrDiagnosticCode> SuppressedCodes => _suppressedCodes;
+
+        /// <summary>
+        /// The module path the packaged program starts in, set by an <c>entry</c> directive. Null
+        /// when the project does not declare one and a module-level <c>main</c> is to be found.
+        /// </summary>
+        public string? EntryModulePath => _entryModule;
+
+        /// <summary>
+        /// The module-level function the packaged program calls to start, set by an <c>entry</c>
+        /// directive. Null when the project does not declare one.
+        /// </summary>
+        public string? EntryFunction => _entryFunction;
+
+        /// <summary>
+        /// Whether <c>surtrc build</c> writes a single <c>.surtrx</c> package instead of loose
+        /// <c>.surtrc</c> images, set by a <c>package</c> directive.
+        /// </summary>
+        public bool Package => _package;
+
         private readonly List<string> _references = new List<string>();
 
         private readonly Dictionary<string, BuildConstant> _constants =
             new Dictionary<string, BuildConstant>(StringComparer.Ordinal);
+
+        private readonly HashSet<SurtrDiagnosticCode> _suppressedCodes = new HashSet<SurtrDiagnosticCode>();
+
+        private string? _entryModule;
+        private string? _entryFunction;
+        private bool _package;
+
+        private static readonly char[] Whitespace = { ' ', '\t' };
 
         /// <summary>Reads a project file, reporting anything malformed rather than throwing.</summary>
         /// <param name="path">The file to read.</param>
@@ -94,7 +131,38 @@ namespace Surtr.Compiler.Compilation
                 return project;
             }
 
-            string[] lines = File.ReadAllLines(path);
+            return ReadLines(project, File.ReadAllLines(path), diagnostics);
+        }
+
+        /// <summary>
+        /// Parses a project file's text directly, for a host with no real file to point
+        /// <see cref="Read"/> at - project settings stored in memory, in an asset database, or
+        /// wherever else a host without a real filesystem keeps them.
+        /// </summary>
+        /// <param name="text">The project file's contents.</param>
+        /// <param name="virtualDirectory">
+        /// The directory every relative <c>root</c>/<c>reference</c> path is resolved against -
+        /// what <see cref="Directory"/> would otherwise be derived from a real file's location.
+        /// Also used as <see cref="Path"/>, since there is no file to name.
+        /// </param>
+        /// <param name="diagnostics">Where problems are recorded.</param>
+        public static SurtrProjectFile Parse(string text, string virtualDirectory, SurtrDiagnosticBag diagnostics)
+        {
+            if (text is null)
+                throw new ArgumentNullException(nameof(text));
+
+            if (virtualDirectory is null)
+                throw new ArgumentNullException(nameof(virtualDirectory));
+
+            if (diagnostics is null)
+                throw new ArgumentNullException(nameof(diagnostics));
+
+            var project = new SurtrProjectFile(virtualDirectory, virtualDirectory);
+            return ReadLines(project, text.Replace("\r\n", "\n").Split('\n'), diagnostics);
+        }
+
+        private static SurtrProjectFile ReadLines(SurtrProjectFile project, string[] lines, SurtrDiagnosticBag diagnostics)
+        {
             for (int i = 0; i < lines.Length; i++)
                 project.ReadLine(lines[i], i + 1, diagnostics);
 
@@ -124,6 +192,30 @@ namespace Surtr.Compiler.Compilation
                 return;
             }
 
+            if (TryTake(text, "suppress", out rest))
+            {
+                ReadSuppress(rest, number, diagnostics);
+                return;
+            }
+
+            if (TryTake(text, "entry", out rest))
+            {
+                rest = rest.Trim();
+                if (rest.StartsWith("=", StringComparison.Ordinal))
+                    rest = rest.Substring(1).Trim();
+
+                var parts = rest.Split(Whitespace, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length != 2)
+                    Invalid(number, "an 'entry' needs 'module.path function'", diagnostics);
+                else
+                {
+                    _entryModule = parts[0];
+                    _entryFunction = parts[1];
+                }
+
+                return;
+            }
+
             int equals = text.IndexOf('=');
             if (equals < 0)
             {
@@ -140,10 +232,65 @@ namespace Surtr.Compiler.Compilation
                 case "module": RootModulePath = value; return;
                 case "output": Output = value; return;
 
+                case "warningsAsErrors":
+                    if (bool.TryParse(value, out bool warningsAsErrors))
+                        WarningsAsErrors = warningsAsErrors;
+                    else
+                        Invalid(number, $"'{value}' is not 'true' or 'false'", diagnostics);
+                    return;
+
+                case "package":
+                    if (bool.TryParse(value, out bool package))
+                        _package = package;
+                    else
+                        Invalid(number, $"'{value}' is not 'true' or 'false'", diagnostics);
+                    return;
+
                 default:
                     Invalid(number, $"'{key}' is not a setting this build understands", diagnostics);
                     return;
             }
+        }
+
+        /// <summary>
+        /// Reads <c>suppress Code1, Code2</c>: a comma-separated list of diagnostic codes to drop
+        /// entirely, named either by their <see cref="SurtrDiagnosticCode"/> member
+        /// (<c>ProjectFileInvalid</c>) or by their numeric value (<c>2001</c>).
+        /// </summary>
+        private void ReadSuppress(string rest, int number, SurtrDiagnosticBag diagnostics)
+        {
+            if (rest.Length == 0)
+            {
+                Invalid(number, "a 'suppress' needs at least one diagnostic code", diagnostics);
+                return;
+            }
+
+            foreach (string token in rest.Split(','))
+            {
+                string name = token.Trim();
+                if (name.Length == 0)
+                    continue;
+
+                if (TryParseDiagnosticCode(name, out var code))
+                    _suppressedCodes.Add(code);
+                else
+                    Invalid(number, $"'{name}' is not a known diagnostic code", diagnostics);
+            }
+        }
+
+        private static bool TryParseDiagnosticCode(string name, out SurtrDiagnosticCode code)
+        {
+            if (Enum.TryParse(name, ignoreCase: true, out code))
+                return true;
+
+            if (int.TryParse(name, NumberStyles.Integer, CultureInfo.InvariantCulture, out int numeric))
+            {
+                code = (SurtrDiagnosticCode)numeric;
+                return true;
+            }
+
+            code = SurtrDiagnosticCode.None;
+            return false;
         }
 
         /// <summary>

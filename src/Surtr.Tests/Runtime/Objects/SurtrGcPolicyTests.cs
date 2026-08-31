@@ -53,6 +53,46 @@ namespace Surtr.Tests.Runtime.Objects
             Assert.Throws<ArgumentOutOfRangeException>(() => new SurtrGcPolicy(SurtrGcMode.Automatic, 1, 101, 1));
             Assert.Throws<ArgumentOutOfRangeException>(() => new SurtrGcPolicy(SurtrGcMode.Automatic, 1, -1, 1));
             Assert.Throws<ArgumentOutOfRangeException>(() => new SurtrGcPolicy(SurtrGcMode.Automatic, 1, 0, 0));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new SurtrGcPolicy(SurtrGcMode.Automatic, 1, 0, 1, maxLiveEntities: -1));
+        }
+
+        [Fact]
+        public void MaxLiveEntities_DefaultsToZero_UnlimitedAndBackwardCompatible()
+        {
+            var policy = new SurtrGcPolicy(SurtrGcMode.Automatic, 1, 0, 1);
+            Assert.Equal(0, policy.MaxLiveEntities);
+        }
+
+        #endregion
+
+        #region Heap cap
+
+        [Fact]
+        public void MaxLiveEntities_TrapsOnceTheHeapWouldGrowPastTheCap()
+        {
+            using var runtime = new SurtrRuntime(16);
+            runtime.ConfigureGc(new SurtrGcPolicy(SurtrGcMode.Manual, long.MaxValue, 0, 1, maxLiveEntities: 16));
+
+            // Slot 0 of the registry's backing array is permanently reserved as the null
+            // reference (SurtrEntityRegistry.Initialize: "_nextId = 1, as 0 is reserved for
+            // SurtrNullRef"), so a capacity of 16 fits exactly 15 live entities before the
+            // registry next needs to grow.
+            for (int i = 0; i < 15; i++)
+                runtime.NewString("s" + i);
+
+            Assert.Throws<SurtrHeapLimitExceededException>(() => runtime.NewString("overflow"));
+        }
+
+        [Fact]
+        public void MaxLiveEntities_Zero_NeverLimitsHeapGrowth()
+        {
+            using var runtime = new SurtrRuntime(16);
+            runtime.ConfigureGc(new SurtrGcPolicy(SurtrGcMode.Manual, long.MaxValue, 0, 1));
+
+            for (int i = 0; i < 64; i++)
+                runtime.NewString("s" + i);
+
+            Assert.True(runtime.LiveObjectCount >= 64);
         }
 
         #endregion

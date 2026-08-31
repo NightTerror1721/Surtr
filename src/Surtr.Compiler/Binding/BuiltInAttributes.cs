@@ -74,6 +74,14 @@ namespace Surtr.Compiler.Binding
         /// <summary>The class name <c>@Pure</c> resolves to.</summary>
         internal const string Pure = "Pure";
 
+        /// <summary>
+        /// The class name <c>@Condition(expr)</c> resolves to. Marks a method or property whose calls
+        /// and property accesses the compiler drops when the condition folds to <see langword="false"/>
+        /// at compile time - Surtr's take on C#'s <c>[Conditional]</c>, driven by a build constant
+        /// rather than a fixed symbol.
+        /// </summary>
+        internal const string Condition = "Condition";
+
         /// <summary>The class name <c>@MainThread</c> resolves to.</summary>
         internal const string MainThread = "MainThread";
 
@@ -104,6 +112,7 @@ namespace Surtr.Compiler.Binding
                 [NoAlloc] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Property,
                 [Flags] = SurtrAttributeTargets.Enum,
                 [Pure] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Property,
+                [Condition] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Property,
                 [MainThread] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Property | SurtrAttributeTargets.Class,
                 [ThreadSafe] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Class,
             };
@@ -120,7 +129,8 @@ namespace Surtr.Compiler.Binding
         /// </summary>
         internal static bool ReachesImage(NamedTypeSymbol attributeType)
             => !attributeType.IsCompileTimeOnlyAttribute
-                && !string.Equals(attributeType.Name, Value, StringComparison.Ordinal);
+                && !string.Equals(attributeType.Name, Value, StringComparison.Ordinal)
+                && !string.Equals(attributeType.Name, Condition, StringComparison.Ordinal);
 
         /// <summary>The recorded use of the named built-in on this symbol, if there is one.</summary>
         private static AttributeUse? Find(Symbol symbol, string name)
@@ -236,6 +246,34 @@ namespace Surtr.Compiler.Binding
         /// the heap.
         /// </summary>
         internal static bool IsNoAlloc(Symbol symbol) => Find(symbol, NoAlloc) is not null;
+
+        /// <summary>
+        /// Whether a declaration marked <c>@Condition(expr)</c> is live in this compilation. The mark
+        /// carries one folded bool - the result of evaluating <c>expr</c> at compile time - so the
+        /// caller keeps the call when that bool is <see langword="true"/> and strips it when
+        /// <see langword="false"/>. A declaration without the mark is always live.
+        /// </summary>
+        internal static bool IsConditionEnabled(Symbol symbol)
+        {
+            var use = Find(symbol, Condition);
+            if (use is null || use.Arguments.Count == 0)
+                return true;
+
+            return use.Arguments[0] is bool enabled && enabled;
+        }
+
+        /// <summary>
+        /// The folded compile-time condition a <c>@Condition(expr)</c> mark carries, or
+        /// <see langword="null"/> when the declaration is unmarked.
+        /// </summary>
+        internal static bool? ConditionValue(Symbol symbol)
+        {
+            var use = Find(symbol, Condition);
+            if (use is null || use.Arguments.Count == 0)
+                return null;
+
+            return use.Arguments[0] is bool value ? value : (bool?)null;
+        }
 
         /// <summary>
         /// The lower bound a <c>@Range(lo, hi)</c> mark fixes, or <see langword="null"/> when no

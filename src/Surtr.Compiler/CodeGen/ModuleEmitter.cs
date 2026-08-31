@@ -7,6 +7,7 @@ using Surtr.Compiler.Binding.BoundTree;
 using Surtr.Compiler.Binding.Symbols;
 using Surtr.Compiler.Compilation;
 using Surtr.Compiler.Diagnostics;
+using Surtr.Runtime.BuiltIns;
 using Surtr.Runtime.Classes;
 using System;
 using System.Collections.Generic;
@@ -194,7 +195,41 @@ namespace Surtr.Compiler.CodeGen
                 exception is SurtrEmitException emit ? emit.Span : default);
         }
 
-        /// <summary>The file a member was written in, falling back to the module's first.</summary>
+        /// <summary>
+        /// Whether a class declares a plain (non-<c>each</c>) constructor with the same parameter
+        /// signature as <paramref name="method"/> — the sign that the <c>each</c> constructor is
+        /// only a fill declaration and must not be emitted as a second method of one shape (§5.x).
+        /// </summary>
+        private static bool HasPlainConstructorWithSignature(MethodSymbol method, NamedTypeSymbol type)
+        {
+            foreach (var member in type.Members)
+            {
+                if (member is not MethodSymbol { Role: MethodRole.Constructor, IsCollectionBuilder: false } plain
+                    || plain.Parameters.Count != method.Parameters.Count)
+                {
+                    continue;
+                }
+
+                bool same = true;
+                for (int i = 0; i < plain.Parameters.Count; i++)
+                {
+                    if (!ReferenceEquals(plain.Parameters[i].Type.NonNullable, method.Parameters[i].Type.NonNullable))
+                    {
+                        same = false;
+                        break;
+                    }
+                }
+
+                if (same)
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// The files a module's members were written in, by member.
+        /// </summary>
         private string FileOf(MethodSymbol? member)
         {
             if (member is not null && _binder.BodyFiles.TryGetValue(member, out string? file))
@@ -325,6 +360,13 @@ namespace Surtr.Compiler.CodeGen
                         : declaringClass.DefineNestedInterface(declaredName, Visibility(symbol));
 
                     Parameterise(contract.Interface, symbol);
+
+                    // §5.x: the interface's default builder class travels by its definition's
+                    // reference; the importing side constructs it with the interface's own type
+                    // parameters so a target-typed literal can substitute the use-site arguments.
+                    if (symbol.DefaultBuilder is { } defaultBuilder)
+                        contract.Interface.DefaultBuilder = module.TypeHandle(_descriptors.Emit(defaultBuilder.Definition));
+
                     context.Declare(symbol, contract);
                     emission = new TypeEmission(symbol, null, contract);
                     break;
@@ -337,9 +379,16 @@ namespace Surtr.Compiler.CodeGen
                 // EnumCases table keep working.
                 case TypeSymbolKind.Enum:
                 {
+                    // Every enum implicitly extends the built-in `Enum` class - §2.4 already
+                    // forbids writing a base for one, and the binder fills `BaseType` with `Enum`
+                    // for exactly that reason, so this is the only base an enum's metadata ever
+                    // carries.
+                    var enumBase = symbol.BaseType is NamedTypeSymbol declaredEnumBase
+                        ? _descriptors.Emit(declaredEnumBase)
+                        : SurtrBuiltIns.Enum.SelfReference;
                     var @enum = declaringClass is null
-                        ? module.DefineEnum(declaredName, Visibility(symbol))
-                        : declaringClass.DefineNestedEnum(declaredName, Visibility(symbol));
+                        ? module.DefineEnum(declaredName, enumBase, Visibility(symbol))
+                        : declaringClass.DefineNestedEnum(declaredName, enumBase, Visibility(symbol));
 
                     context.Declare(symbol, @enum);
                     emission = new TypeEmission(symbol, @enum, null);
@@ -732,10 +781,13 @@ namespace Surtr.Compiler.CodeGen
             // Either accessor being bare is enough: §3.4 lets `{ get; set { ... } }` mix them, and
             // the bare half still needs somewhere to read from. A native accessor is excluded here
             // even though it is bare too - it has a body, the host's, so it never needs a backing
-            // field and must not contribute to `auto`.
+            // field and must not contribute to `auto`. An abstract accessor is excluded the same
+            // way: its bodylessness is the point, it declares an obligation a subclass must supply,
+            // and synthesizing a field for it would turn a signature-only member into one that
+            // implements something.
             bool auto =
-                (property.Getter is not null && !getterIsNative && !_binder.Bodies.ContainsKey(property.Getter))
-                || (property.Setter is not null && !setterIsNative && !_binder.Bodies.ContainsKey(property.Setter));
+                (property.Getter is not null && !getterIsNative && property.Getter.Dispatch != MethodDispatch.Abstract && !_binder.Bodies.ContainsKey(property.Getter))
+                || (property.Setter is not null && !setterIsNative && property.Setter.Dispatch != MethodDispatch.Abstract && !_binder.Bodies.ContainsKey(property.Setter));
 
             if (auto)
             {
@@ -755,16 +807,52 @@ namespace Surtr.Compiler.CodeGen
             // `override`, and `SurtrTypeLinker` rejects an override with no base entry to replace.
             if (property.Getter is MethodSymbol getter && !getterIsNative)
             {
-                var builder = declared.DefineGetter(Dispatch(getter), OverridesABaseMethod(getter));
-                context.Declare(getter, builder);
-                emission.Methods.Add((getter, builder));
+                if (getter.Dispatch == MethodDispatch.Abstract)
+                {
+                    // An abstract accessor is the property's twin of `DeclareMethod`'s abstract
+                    // branch: signature-only, no bytecode body, no body slot. It is bound (so
+                    // references to it resolve) but never added to `emission.Methods`, and the
+                    // property's metadata names it through `BindGetter`.
+                    var (names, constraints) = GenericParameterTable(getter);
+                    var abstractGetter = @class.DefineAbstractMethod(
+                        getter.Name,
+                        _descriptors.Emit(getter.ReturnType),
+                        Array.Empty<SurtrParameterInfo>(),
+                        Visibility(getter.Accessibility),
+                        names,
+                        constraints);
+                    declared.BindGetter(abstractGetter);
+                    context.Bind(getter, abstractGetter);
+                }
+                else
+                {
+                    var builder = declared.DefineGetter(Dispatch(getter), OverridesABaseMethod(getter));
+                    context.Declare(getter, builder);
+                    emission.Methods.Add((getter, builder));
+                }
             }
 
             if (property.Setter is MethodSymbol setter && !setterIsNative)
             {
-                var builder = declared.DefineSetter(Dispatch(setter), OverridesABaseMethod(setter));
-                context.Declare(setter, builder);
-                emission.Methods.Add((setter, builder));
+                if (setter.Dispatch == MethodDispatch.Abstract)
+                {
+                    var (names, constraints) = GenericParameterTable(setter);
+                    var abstractSetter = @class.DefineAbstractMethod(
+                        setter.Name,
+                        _descriptors.Emit(setter.ReturnType),
+                        Parameters(context, setter),
+                        Visibility(setter.Accessibility),
+                        names,
+                        constraints);
+                    declared.BindSetter(abstractSetter);
+                    context.Bind(setter, abstractSetter);
+                }
+                else
+                {
+                    var builder = declared.DefineSetter(Dispatch(setter), OverridesABaseMethod(setter));
+                    context.Declare(setter, builder);
+                    emission.Methods.Add((setter, builder));
+                }
             }
         }
 
@@ -775,7 +863,24 @@ namespace Surtr.Compiler.CodeGen
 
             if (method.Role == MethodRole.Constructor)
             {
+                // §5.x: an `each` constructor whose signature a plain constructor already takes is
+                // not emitted — the method table cannot hold two constructors of one shape, and the
+                // literal lowering calls the plain one plus the fill. Only the fill survives.
+                if (method.IsCollectionBuilder && HasPlainConstructorWithSignature(method, emission.Symbol))
+                    return;
+
                 var constructor = @class.DefineConstructor(parameters, Visibility(method.Accessibility));
+
+                // §5.x: a builder constructor's `each` parameters travel by type, so a module that
+                // imports the class later can still bind a target-typed literal against them.
+                if (method.EachParameters is not null)
+                {
+                    var eachParameters = new SurtrTypeHandle[method.EachParameters.Count];
+                    for (int i = 0; i < eachParameters.Length; i++)
+                        eachParameters[i] = context.Module.TypeHandle(_descriptors.Emit(method.EachParameters[i].Type));
+
+                    constructor.EachParameters = eachParameters;
+                }
 
                 foreach (var use in method.Attributes)
                 {
@@ -916,6 +1021,15 @@ namespace Surtr.Compiler.CodeGen
                     : 1;
             }
 
+            // §6.3: the unboxed-block receiver is a Direct-only convention. A non-Direct method is
+            // always reached through InvokeVirtual/InvokeInterface, which resolve the receiver's
+            // class through the entity registry - only a boxed reference is in it - so a call site
+            // can only ever have pushed one slot for it, whatever the block's own width is. The
+            // frame above still reserves the full block at local 0 - every field read in the body
+            // indexes into it - MethodBodyEmitter.EmitReceiverUnpackIfNeeded is the callee-side
+            // half that spreads the one incoming slot back into it.
+            int callSiteReceiverWidth = method.Dispatch == MethodDispatch.Direct ? receiverWidth : 1;
+
             var widths = new int[method.Parameters.Count];
             bool anyWide = receiverWidth > 1;
 
@@ -926,7 +1040,7 @@ namespace Surtr.Compiler.CodeGen
             }
 
             if (anyWide)
-                builder.SetArgumentLayout(receiverWidth, widths);
+                builder.SetArgumentLayout(receiverWidth, widths, callSiteReceiverWidth);
 
             // The return width rides the declared type, not the call opcode's 0/1 gate - a
             // multi-field value class is the one case the descriptor cannot answer.
@@ -1485,6 +1599,17 @@ namespace Surtr.Compiler.CodeGen
 
             foreach (var candidate in _binder.MemberLookup.FindMethods(owner, wanted.Name))
             {
+                // FindMethods walks satisfied interfaces too (MemberLookup.CollectReachable), so a
+                // contract's own substituted member - IEquatable<Suit>.equals(Suit), with T0
+                // already read as Suit - comes back alongside the class's own declarations. Its
+                // erased key can coincide with `wantedKey` purely because both are re-deriving the
+                // same substituted shape, which would make `target` the interface's own method
+                // symbol instead of anything owner actually declared - a bridge calling itself.
+                // Only a member the class (or an ancestor class) genuinely wrote can be a bridge's
+                // forwarding target.
+                if (candidate.ContainingType?.TypeKind == TypeSymbolKind.Interface)
+                    continue;
+
                 string key = SlotKey(candidate);
 
                 // Sits in the vtable at the slot's own erased position already - SurtrTypeLinker's
@@ -1496,10 +1621,46 @@ namespace Surtr.Compiler.CodeGen
                 // signature - possibly more specific than the slot's erased shape, and possibly
                 // `Direct` (never placed in the vtable at all).
                 if (string.Equals(key, wantedKey, StringComparison.Ordinal))
+                {
                     target = candidate;
+                    continue;
+                }
+
+                // object's own equals/hashCode/toString slot is a legitimate target for ANY
+                // erased/generic contract parameter of matching arity, even though its own
+                // signature (object-typed) never equals a substituted `wanted` (Suit-typed, for
+                // IEquatable<Suit>.equals(Suit)): object accepts any reference by definition, and
+                // the real override's own body narrows it internally (a real `is Suit` test), so
+                // forwarding the still-erased argument straight through is exactly correct - unlike
+                // the exact-match case above, nothing here has to narrow it to the concrete type.
+                if (target is null && wanted.Parameters.Count > 0 && candidate.Dispatch != MethodDispatch.Direct
+                    && ReferenceEquals(candidate.ReturnType.NonNullable, wanted.ReturnType.NonNullable)
+                    && candidate.Parameters.Count == wanted.Parameters.Count
+                    && AllObjectTyped(candidate.Parameters))
+                {
+                    target = candidate;
+                }
             }
 
             return target is not null;
+        }
+
+        /// <summary>Whether every parameter is declared against the root <c>object</c> class.</summary>
+        /// <remarks>
+        /// The one class every reference is assignable to by definition, which is what makes a
+        /// candidate declared this way a legitimate bridge target for an erased/generic contract
+        /// slot even when its own signature never equals the slot's substituted one - see the
+        /// remark where this is called, in <see cref="NeedsBridge"/>.
+        /// </remarks>
+        private static bool AllObjectTyped(IReadOnlyList<ParameterSymbol> parameters)
+        {
+            foreach (var parameter in parameters)
+            {
+                if (parameter.Type.NonNullable is not NamedTypeSymbol { Name: "object" })
+                    return false;
+            }
+
+            return true;
         }
 
         /// <summary>The key <c>SurtrTypeLinker</c> matches a contract slot on.</summary>
@@ -1522,11 +1683,16 @@ namespace Surtr.Compiler.CodeGen
             MethodSymbol target)
         {
             var parameters = new SurtrParameterInfo[declared.Parameters.Count];
+            var parameterWidths = new int[declared.Parameters.Count];
+            bool anyWideParameter = false;
             for (int i = 0; i < parameters.Length; i++)
             {
                 parameters[i] = context.Module.Parameter(
                     declared.Parameters[i].Name,
                     SurtrClassReference.Erase(_descriptors.Emit(declared.Parameters[i].Type)));
+
+                parameterWidths[i] = ValueTypeLayout.WidthOfType(declared.Parameters[i].Type);
+                anyWideParameter |= parameterWidths[i] > 1;
             }
 
             var bridge = @class.DefineMethod(
@@ -1538,6 +1704,16 @@ namespace Surtr.Compiler.CodeGen
                 isOverride: false,
                 SurtrVisibility.Public);
 
+            // B7 (docs/Plan-Revision-Stdlib.md §2.7): DefineMethod lays every parameter out one slot
+            // apart by default, which is wrong the moment one of them is an inline multi-slot shape
+            // (a tuple of 2+ elements - a multi-field value class parameter is not reachable here,
+            // see the remark below). Left uncorrected, the frame this bridge's own body reads from
+            // disagrees with what a real call site pushes, and the forwarding Call at the bottom -
+            // built against target's own (correct) ArgumentSlotCount - pops more than this body ever
+            // pushed. The same correction ApplyValueLayout applies to an ordinary method's frame.
+            if (anyWideParameter)
+                bridge.SetArgumentLayout(receiverWidth: 1, parameterWidths, callSiteReceiverWidth: 1);
+
             var code = bridge.Code;
             code.LoadLocal(bridge.Receiver);
 
@@ -1548,12 +1724,21 @@ namespace Surtr.Compiler.CodeGen
             // as it does for any other interface-dispatched call on one (§6.3) — the same test
             // MethodBodyEmitter.LoadReceiver makes for a value class's own virtual-dispatch body,
             // applied here since the bridge plays that same role. An enum is a value class from
-            // the migration (§2.4), so its bridge unboxes the same way. The `target` it forwards
-            // to keeps `Direct` dispatch and so expects the unboxed field, never the boxed form.
-            // A multi-field value class arrives as the SurtrInstance BoxValue packed rather than
-            // the SurtrBoxed BoxAs produced, so its mirror is UnboxValue over the whole width -
-            // the frame the forwarding call enters claims every field slot.
-            if (owner.TypeKind is TypeSymbolKind.ValueClass or TypeSymbolKind.Enum)
+            // the migration (§2.4), so its bridge unboxes the same way.
+            //
+            // Whether to unbox depends on what `target` itself wants, not on the bridge's own
+            // shape: a `Direct` target expects the unboxed field (the receiver's own convention),
+            // never the boxed form, so the bridge unwraps before forwarding. A non-Direct target -
+            // object.equals(other: object?) reached through a real override, for one - wants the
+            // boxed reference back, exactly what the bridge already holds, so unboxing here would
+            // hand InvokeVirtual raw slots where it expects the one reference it resolves a class
+            // through. A multi-field value class that IS unboxed arrives as the SurtrInstance
+            // BoxValue packed rather than the SurtrBoxed BoxAs produced, so its mirror is
+            // UnboxValue over the whole width - the frame the forwarding call enters claims every
+            // field slot.
+            bool targetIsDirect = target.Dispatch == MethodDispatch.Direct;
+
+            if (targetIsDirect && owner.TypeKind is TypeSymbolKind.ValueClass or TypeSymbolKind.Enum)
             {
                 if (ValueTypeLayout.WidthOfType(owner) > 1 && ValueTypeLayout.TryGet(owner, out var bridgeLayout, out _))
                     code.UnboxValue(bridgeLayout.Width);
@@ -1563,10 +1748,23 @@ namespace Surtr.Compiler.CodeGen
 
             for (int i = 0; i < parameters.Length; i++)
             {
+                // A tuple parameter (2+ elements) is a block of contiguous slots, not the one slot
+                // every other parameter shape needs - see EmitForwardedParameter for why it forwards
+                // element by element instead of the single LoadLocal(+Narrow) below.
+                if (parameterWidths[i] > 1)
+                {
+                    EmitForwardedTupleParameter(code, bridge.Parameter(i), declared.Parameters[i].Type, wanted.Parameters[i].Type, targetIsDirect);
+                    continue;
+                }
+
                 code.LoadLocal(bridge.Parameter(i));
 
-                // The slot handed us a reference; the member it forwards to wants the real type.
-                if (!ReferenceEquals(declared.Parameters[i].Type, wanted.Parameters[i].Type))
+                // The slot handed us a reference; a Direct target wants the real type narrowed out
+                // of it. A non-Direct target's own parameter is itself a reference (object?, for
+                // equals's real override), so the erased value the slot already holds is exactly
+                // the right shape to forward - narrowing it away would be the same mismatch as
+                // unboxing the receiver above.
+                if (targetIsDirect && !ReferenceEquals(declared.Parameters[i].Type, wanted.Parameters[i].Type))
                     Narrow(code, wanted.Parameters[i].Type);
             }
 
@@ -1592,10 +1790,72 @@ namespace Surtr.Compiler.CodeGen
             code.ReturnValue();
         }
 
+        /// <summary>
+        /// Forwards a tuple-typed bridge parameter (2+ elements) one element at a time.
+        /// </summary>
+        /// <remarks>
+        /// B7 (docs/Plan-Revision-Stdlib.md §2.7): the block sits at <paramref name="slot"/> as
+        /// <paramref name="declaredType"/>'s own flattened width (already accounted for by the
+        /// <c>SetArgumentLayout</c> call in <see cref="EmitBridge"/>), but there is no opcode that
+        /// casts one slot out of the middle of a value sitting on the operand stack - <c>Cast</c>/
+        /// <c>Unbox</c> only ever read the top. So each element is read straight out of its own
+        /// offset in the block (exactly as <c>MethodBodyEmitter.EmitIndexRead</c> reads a constant
+        /// tuple index) and narrowed on its own, in order, which leaves the stack holding the same
+        /// sequence of values a normal multi-slot push would - what the forwarding <c>Call</c>
+        /// right after this loop expects.
+        /// </remarks>
+        private void EmitForwardedTupleParameter(SurtrCodeEmitter code, SurtrLocal slot, TypeSymbol declaredType, TypeSymbol wantedType, bool targetIsDirect)
+        {
+            var declaredTuple = (TupleTypeSymbol)declaredType.NonNullable;
+            var wantedTuple = wantedType.NonNullable as TupleTypeSymbol;
+
+            int offset = 0;
+            for (int e = 0; e < declaredTuple.ElementTypes.Count; e++)
+            {
+                var elementType = declaredTuple.ElementTypes[e];
+                int elementWidth = ValueTypeLayout.WidthOfType(elementType);
+
+                if (elementWidth > 1)
+                {
+                    // A nested inline multi-slot element (another tuple, or a multi-field value
+                    // class) inside a bridged tuple parameter - not exercised by anything in the
+                    // stdlib or by B7's own repro, and narrowing it correctly needs the same
+                    // per-element treatment recursively, which Narrow's single-value contract does
+                    // not give. Reported rather than silently mis-forwarded.
+                    if (targetIsDirect && wantedTuple is not null && !ReferenceEquals(elementType, wantedTuple.ElementTypes[e]))
+                        throw new SurtrEmitException($"a bridged tuple parameter with a nested multi-slot element at position {e}");
+
+                    code.LoadValueLocal(slot.Index + offset, elementWidth);
+                }
+                else
+                {
+                    code.LoadLocalField(slot.Index, offset);
+
+                    if (targetIsDirect && wantedTuple is not null && !ReferenceEquals(elementType, wantedTuple.ElementTypes[e]))
+                        Narrow(code, wantedTuple.ElementTypes[e]);
+                }
+
+                offset += elementWidth;
+            }
+        }
+
         /// <summary>Reads a concrete type out of the erased value a contract slot passes.</summary>
         private void Narrow(SurtrCodeEmitter code, TypeSymbol target)
         {
             var bare = target.NonNullable;
+
+            // §6: a generic class keeps one compiled body regardless of instantiation, so its own
+            // type parameter is still erased in the method the bridge forwards to - the same
+            // representation the contract slot already handed over. Casting an already-erased value
+            // to itself is not a no-op cast here: `target`'s descriptor resolves to the very
+            // `SurtrBuiltIns.Erased` marker class, and nothing is ever "a subclass of" that marker
+            // (it exists to be assigned into, never tested against), so the emitted `Cast` opcode
+            // failed unconditionally - every interface call reaching a member of a still-generic
+            // class through its own contract crashed with `InvalidCastException`. `ConvertIntoErased`
+            // (BodyBinder.Expressions.cs) already draws exactly this line for the mirror case, an
+            // argument going the other way into the class.
+            if (bare.TypeKind == TypeSymbolKind.TypeParameter)
+                return;
 
             if (bare.TypeKind == TypeSymbolKind.Enum)
             {
@@ -1714,19 +1974,6 @@ namespace Surtr.Compiler.CodeGen
 
                 builder.Code.ReturnVoid();
                 return;
-            }
-
-            // �6.3's boxed-receiver convention exists for a single-field value class only: the box
-            // names the class, the unbox hands the body back the very field its frame holds. A
-            // multi-field value class has none yet - the box crosses the call as one reference slot
-            // while this frame would claim the whole width - so a non-Direct method on one is
-            // refused here rather than compiled against two disagreeing conventions.
-            if (symbol.Dispatch != MethodDispatch.Direct
-                && symbol.ContainingType is NamedTypeSymbol owner
-                && ValueTypeLayout.WidthOfType(owner) > 1)
-            {
-                throw new SurtrEmitException(
-                    "a non-Direct method on a multi-field value class has no receiver convention across a call yet");
             }
 
             // A generator is two methods (§3.7): what the caller reaches builds the object, and what
@@ -1972,7 +2219,7 @@ namespace Surtr.Compiler.CodeGen
         {
             foreach (var method in symbol.Methods)
             {
-                if (context.TryGetBuilder(method, out var builder) && builder.Built is SurtrMethodInfo info)
+                if (TryGetBuiltInfo(context, method, out var info))
                 {
                     _builtMethods[method] = info;
                     _methodOwners[method] = built;
@@ -1984,7 +2231,7 @@ namespace Surtr.Compiler.CodeGen
             // module's own `EmitContext` — that only lives for the duration of building it.
             foreach (var method in symbol.ExtensionMethods)
             {
-                if (context.TryGetBuilder(method, out var builder) && builder.Built is SurtrMethodInfo info)
+                if (TryGetBuiltInfo(context, method, out var info))
                 {
                     _builtMethods[method] = info;
                     _methodOwners[method] = built;
@@ -2041,13 +2288,42 @@ namespace Surtr.Compiler.CodeGen
 
         private void RecordAccessor(EmitContext context, MethodSymbol? accessor, SurtrModule built, bool moduleLevel)
         {
-            if (accessor is null || !context.TryGetBuilder(accessor, out var builder) || builder.Built is not SurtrMethodInfo info)
+            if (accessor is null || !TryGetBuiltInfo(context, accessor, out var info))
                 return;
 
             _builtMethods[accessor] = info;
 
             if (moduleLevel)
                 _methodOwners[accessor] = built;
+        }
+
+        /// <summary>
+        /// The metadata a method became, carrying forward into modules built later (§15's cross-
+        /// module calls, and a module-level `native fun`/`native let`/`native var` reached the same
+        /// way): a compiled method answers through its builder, but a native one - module-level or
+        /// a class's own native accessor/method - was only ever <see cref="EmitContext.Bind"/>-ed
+        /// straight to its <see cref="SurtrMethodInfo"/>, with no builder to ask
+        /// <see cref="EmitContext.TryGetBuilder"/> about. Missing this case is what left a
+        /// cross-module native call unresolvable in every later module: `Record` only ever looked at
+        /// builders, so a native method's own module still knew its metadata but nothing built after
+        /// it ever inherited that knowledge.
+        /// </summary>
+        private static bool TryGetBuiltInfo(EmitContext context, MethodSymbol method, out SurtrMethodInfo info)
+        {
+            if (context.TryGetBuilder(method, out var builder) && builder.Built is SurtrMethodInfo built)
+            {
+                info = built;
+                return true;
+            }
+
+            if (method.IsNative && context.Resolve(method) is SurtrMethodInfo native)
+            {
+                info = native;
+                return true;
+            }
+
+            info = null!;
+            return false;
         }
         #endregion
 

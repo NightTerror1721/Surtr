@@ -1,6 +1,7 @@
 import surtr.collections.Collection;
 import surtr.collections.List;
 import surtr.collections.Set;
+import surtr.collections.Map;
 
 public value class Sequence<T> : IIterable<T>
 {
@@ -46,6 +47,15 @@ public value class Sequence<T> : IIterable<T>
     public inline fun skipWhile(predicate: (T) -> bool): Sequence<T> => Sequence<T>(() => seqSkipWhile<T>(_provider(), predicate));
 
     public inline fun onEach(action: (T) -> void): Sequence<T> => Sequence<T>(() => seqOnEach<T>(_provider(), action));
+
+    public inline fun distinctBy<K>(keySelector: (T) -> K): Sequence<T> => Sequence<T>(() => seqDistinctBy<T, K>(_provider(), keySelector));
+
+    // Takes an explicit comparator over K, the same way sorted() takes one over T, rather than
+    // constraining K to some IComparable<K> - keeps this consistent with sorted() and sidesteps
+    // relying on a constrained-generics path this file has no other reason to exercise.
+    public inline fun sortBy<K>(keySelector: (T) -> K, comparator: (K, K) -> int): Sequence<T> => Sequence<T>(() => seqSortBy<T, K>(_provider(), keySelector, comparator));
+
+    public inline fun sortByDescending<K>(keySelector: (T) -> K, comparator: (K, K) -> int): Sequence<T> => Sequence<T>(() => seqSortBy<T, K>(_provider(), keySelector, (a, b) => -comparator(a, b)));
 
 
     public fun forEach(action : (T) -> void): void
@@ -113,6 +123,90 @@ public value class Sequence<T> : IIterable<T>
         return count;
     }
 
+    /// The smallest element by `comparator`, or `null` if the sequence is empty.
+    public fun min(comparator: (T, T) -> int): T?
+    {
+        var iter = _provider();
+        if (!iter.moveNext()) return null;
+        var best = iter.current;
+        while (iter.moveNext())
+        {
+            if (comparator(iter.current, best) < 0) best = iter.current;
+        }
+        return best;
+    }
+
+    /// The largest element by `comparator`, or `null` if the sequence is empty.
+    public fun max(comparator: (T, T) -> int): T?
+    {
+        var iter = _provider();
+        if (!iter.moveNext()) return null;
+        var best = iter.current;
+        while (iter.moveNext())
+        {
+            if (comparator(iter.current, best) > 0) best = iter.current;
+        }
+        return best;
+    }
+
+    /// Groups elements by `keySelector`, preserving each group's encounter order.
+    public fun groupBy<K>(keySelector: (T) -> K): Map<K, List<T>>
+    {
+        var result = Map<K, List<T>>();
+        var iter = _provider();
+        while (iter.moveNext())
+        {
+            let key = keySelector(iter.current);
+            if (!result.containsKey(key))
+                result.set(key, List<T>());
+            result.get(key).add(iter.current);
+        }
+        return result;
+    }
+
+    // Takes an explicit (T) -> string selector rather than assuming T has a toString(): T is
+    // otherwise unconstrained here (same reasoning as sortBy's explicit comparator above), and
+    // object.toString() is only reachable on a T declared <T : object>, which nothing else in this
+    // class needs.
+    public fun joinToString(separator: string, selector: (T) -> string): string
+    {
+        let parts = map(selector).toArray();
+        return string.join(separator, parts);
+    }
+
+    public fun elementAt(index: int): T
+    {
+        if (index < 0) throw IndexOutOfRangeException("Index out of range");
+        var i = 0;
+        var iter = _provider();
+        while (iter.moveNext())
+        {
+            if (i == index) return iter.current;
+            i += 1;
+        }
+        throw IndexOutOfRangeException("Index out of range");
+    }
+
+    public fun last(): T
+    {
+        var iter = _provider();
+        if (!iter.moveNext()) throw InvalidOperationException("Sequence is empty.");
+        var result = iter.current;
+        while (iter.moveNext())
+            result = iter.current;
+        return result;
+    }
+
+    public fun lastOrNull(): T?
+    {
+        var iter = _provider();
+        if (!iter.moveNext()) return null;
+        var result = iter.current;
+        while (iter.moveNext())
+            result = iter.current;
+        return result;
+    }
+
     public fun toArray(): T[]
     {
         var result: T[] = [];
@@ -152,11 +246,104 @@ public value class Sequence<T> : IIterable<T>
     public inline fun iterate(): IIterator<T> => _provider();
 }
 
+// Fase 8, §6.2/O4 + §6.3/P6: once a T is bounded by the built-in IComparable<T>, min()/max()/sorted()
+// need no comparator written out by hand - the same trade §6.2/O4 makes for List<T>.sortNatural().
+// Named minNatural/maxNatural/sortedNatural rather than second overloads of min/max/sorted:
+// Sequence<T> already declares real (non-extension) members by those names, and a real member of a
+// name blocks every extension of that same name on the type regardless of arity - the explicit-
+// comparator forms above stay exactly as useful as before for a T with no natural order.
+public extension<T: IComparable<T>> Sequence<T>
+{
+    fun minNatural(self: Sequence<T>): T? => self.min((a, b) => a.compareTo(b));
+
+    fun maxNatural(self: Sequence<T>): T? => self.max((a, b) => a.compareTo(b));
+
+    fun sortedNatural(self: Sequence<T>): Sequence<T> => self.sorted((a, b) => a.compareTo(b));
+}
+
+// Fase 8, §6.2/O2/O3: once T is bounded by object, a join/display form needs no selector written
+// out by hand - it can call the real toString() every object has. Named toDisplayString rather than
+// an arity overload of joinToString: Sequence<T> already declares a real (non-extension)
+// joinToString(separator, selector) instance method, and a real member of a name blocks every
+// extension of that same name on the type regardless of arity - the same rule that makes
+// List<T>.toDisplayString() a new name rather than an override of the inherited toString().
+public extension<T: object> Sequence<T>
+{
+    /// A debug representation, e.g. `[1, 2, 3]` - the same shape List<T>.toDisplayString() gives.
+    fun toDisplayString(self: Sequence<T>): string => "[" + self.joinToString(", ", (x) => x.toString()) + "]";
+}
+
+public extension<T: object> IIterable<T>
+{
+    fun toDisplayString(self: IIterable<T>): string => self.asSequence().toDisplayString();
+}
+
+// int/float only, rather than members of Sequence<T> itself: summing/averaging needs a concrete
+// numeric element type to add, and this language has no numeric-trait constraint to ask for one
+// generically - two concrete extensions is the same trade sorted()/min()/max() avoid by taking an
+// explicit comparator instead, just on the arithmetic operator rather than a comparison.
+//
+// Named sumInts/sumFloats rather than a shared sum() overloaded per element type: Sequence<T> is a
+// single-field value class (its one field is the () -> IIterator<T> provider, Â§2.9), so it erases
+// AT THE SIGNATURE LEVEL to that field's own type regardless of T - Sequence<int> and Sequence<float>
+// both erase a `self: Sequence<...>` parameter to the same closure shape, so `sum(self: Sequence
+// <int>)` and `sum(self: Sequence<float>)` collide as the same emitted signature (confirmed: SURTR4001
+// "already declares a member with the signature 'sum(...)'" without a distinct name per type).
+public extension Sequence<int>
+{
+    fun sumInts(self: Sequence<int>): int
+    {
+        var total = 0;
+        for (x in self) total += x;
+        return total;
+    }
+
+    fun averageInts(self: Sequence<int>): float
+    {
+        var total = 0;
+        var count = 0;
+        for (x in self) { total += x; count += 1; }
+        if (count == 0) return 0.0;
+        return total.toFloat() / count.toFloat();
+    }
+}
+
+public extension Sequence<float>
+{
+    fun sumFloats(self: Sequence<float>): float
+    {
+        var total = 0.0;
+        for (x in self) total += x;
+        return total;
+    }
+
+    fun averageFloats(self: Sequence<float>): float
+    {
+        var total = 0.0;
+        var count = 0;
+        for (x in self) { total += x; count += 1; }
+        if (count == 0) return 0.0;
+        return total / count.toFloat();
+    }
+}
+
 public extension<T> IIterable<T>
 {
     fun asSequence(self: IIterable<T>): Sequence<T> => Sequence<T>(() => self.iterate());
 
     fun forEach(self: IIterable<T>, action: (T) -> void): void => self.asSequence().forEach(action);
+
+    fun min(self: IIterable<T>, comparator: (T, T) -> int): T? => self.asSequence().min(comparator);
+
+    fun max(self: IIterable<T>, comparator: (T, T) -> int): T? => self.asSequence().max(comparator);
+
+    fun joinToString(self: IIterable<T>, separator: string, selector: (T) -> string): string => self.asSequence().joinToString(separator, selector);
+
+    fun elementAt(self: IIterable<T>, index: int): T => self.asSequence().elementAt(index);
+
+    fun last(self: IIterable<T>): T => self.asSequence().last();
+
+    fun lastOrNull(self: IIterable<T>): T? => self.asSequence().lastOrNull();
 
     fun firstOrNull(self: IIterable<T>): T? => self.asSequence().firstOrNull();
 
@@ -180,6 +367,22 @@ public extension<T> IIterable<T>
 public extension<T, U> IIterable<T>
 {
     fun reduce(self: IIterable<T>, reducer: (U, T) -> U, initialValue: U): U => self.asSequence().reduce(reducer, initialValue);
+
+    fun groupBy(self: IIterable<T>, keySelector: (T) -> U): Map<U, List<T>> => self.asSequence().groupBy(keySelector);
+}
+
+public extension IIterable<int>
+{
+    fun sumInts(self: IIterable<int>): int => self.asSequence().sumInts();
+
+    fun averageInts(self: IIterable<int>): float => self.asSequence().averageInts();
+}
+
+public extension IIterable<float>
+{
+    fun sumFloats(self: IIterable<float>): float => self.asSequence().sumFloats();
+
+    fun averageFloats(self: IIterable<float>): float => self.asSequence().averageFloats();
 }
 
 private generator seqOf<T>(items: T[]): T
@@ -307,6 +510,48 @@ private generator seqSorted<T>(source: IIterator<T>, comparator: (T, T) -> int):
         source.dispose();
     }
     items.sort(comparator);
+    for (x in items)
+    {
+        yield x;
+    }
+}
+
+private generator seqDistinctBy<T, K>(source: IIterator<T>, keySelector: (T) -> K): T
+{
+    let seen: {K: bool} = {};
+    try
+    {
+        while (source.moveNext())
+        {
+            let key = keySelector(source.current);
+            if (!seen.containsKey(key))
+            {
+                seen[key] = true;
+                yield source.current;
+            }
+        }
+    }
+    finally
+    {
+        source.dispose();
+    }
+}
+
+private generator seqSortBy<T, K>(source: IIterator<T>, keySelector: (T) -> K, comparator: (K, K) -> int): T
+{
+    var items: T[] = [];
+    try
+    {
+        while (source.moveNext())
+        {
+            items.push(source.current);
+        }
+    }
+    finally
+    {
+        source.dispose();
+    }
+    items.sort((a, b) => comparator(keySelector(a), keySelector(b)));
     for (x in items)
     {
         yield x;

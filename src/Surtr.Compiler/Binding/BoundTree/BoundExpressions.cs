@@ -655,6 +655,46 @@ namespace Surtr.Compiler.Binding.BoundTree
     }
 
     /// <summary>
+    /// A collection literal built over a named type's <c>each</c> constructor (§5.x) —
+    /// <c>List&lt;int&gt;[1, 2, 3]</c>, <c>List&lt;int&gt;(32)[1, 2, 3]</c>,
+    /// <c>Map&lt;string, int&gt;{ "x": 10 }</c>, or a target-typed <c>let l: List&lt;int&gt; = [1, 2, 3]</c>.
+    /// The emitter lowers it to <c>ObjNew</c> + the constructor + one <c>$fill$</c> call per
+    /// element/entry — never a copy constructor or a materialized intermediate array.
+    /// </summary>
+    public sealed class BoundCollectionBuildExpression : BoundExpression
+    {
+        internal BoundCollectionBuildExpression(
+            SyntaxNode syntax,
+            NamedTypeSymbol type,
+            MethodSymbol constructor,
+            MethodSymbol fillMethod,
+            IReadOnlyList<BoundExpression> constructorArguments,
+            IReadOnlyList<IReadOnlyList<BoundExpression>> fillArguments)
+            : base(syntax, type)
+        {
+            Constructor = constructor;
+            FillMethod = fillMethod;
+            ConstructorArguments = constructorArguments;
+            FillArguments = fillArguments;
+        }
+
+        /// <summary>The <c>each</c> constructor chosen — one per literal, by arity and argument list.</summary>
+        public MethodSymbol Constructor { get; }
+
+        /// <summary>The private <c>$fill$...</c> method called once per element/entry.</summary>
+        public MethodSymbol FillMethod { get; }
+
+        /// <summary>The constructor's arguments, in parameter order.</summary>
+        public IReadOnlyList<BoundExpression> ConstructorArguments { get; }
+
+        /// <summary>
+        /// One list per element/entry: a single value for <c>[ ... ]</c>, a key/value pair for
+        /// <c>{ ... }</c>. Each list fills one <c>$fill$</c> call, in literal order.
+        /// </summary>
+        public IReadOnlyList<IReadOnlyList<BoundExpression>> FillArguments { get; }
+    }
+
+    /// <summary>
     /// Which shape a <see cref="BoundCollectionCreationExpression"/> takes. Kept as a flag rather
     /// than inferred from which optional fields are populated, since two kinds (<c>ArrayEmpty</c>
     /// and the unit <c>TupleEmpty</c>) populate none of them at all.

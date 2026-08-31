@@ -1,3 +1,4 @@
 {
-    "surtr.languageServer.path": "D:\\Projects\\Surtr\\src\\Surtr.LanguageServer\\bin\\Debug\\net8.0\\surtr-lsp.exe"
+    "surtr.languageServer.path": "D:\\Projects\\Surtr\\src\\Surtr.LanguageServer\\bin\\Release\\net8.0\\surtr-lsp.exe",
+    "surtr.projectRoot": "src/Surtr.Stdlib/src"
 }

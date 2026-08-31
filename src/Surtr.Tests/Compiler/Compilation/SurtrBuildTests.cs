@@ -246,5 +246,135 @@ namespace Surtr.Tests.Compiler.Compilation
             Assert.Equal("build", file.Output);
             Assert.Equal(string.Empty, file.RootModulePath);
         }
+
+        /// <summary>
+        /// An empty source tree is only a warning (<c>SurtrBuild.Run</c> reports "holds no .surtr
+        /// files" as a <c>ReportWarning</c>), so it is the one built-in warning every build can
+        /// trigger on demand - exactly what's needed to exercise <c>warningsAsErrors</c>/
+        /// <c>suppress</c> end to end without needing a source-level warning of the front end's own.
+        /// </summary>
+        [Fact]
+        public void WarningsAsErrors_TurnsTheEmptySourceTreeWarningIntoAFailure()
+        {
+            string tree = Tree("empty-strict", ("p.surtrproj", "root = src\nmodule = game\noutput = out\nwarningsAsErrors = true\n"));
+            Directory.CreateDirectory(Path.Combine(tree, "src"));
+
+            var build = SurtrBuild.Run(Path.Combine(tree, "p.surtrproj"));
+
+            Assert.True(build.Failed);
+            Assert.Contains(build.Diagnostics, d => d.Code == SurtrDiagnosticCode.ProjectFileInvalid && d.IsError);
+        }
+
+        [Fact]
+        public void Suppress_DropsTheNamedDiagnosticEntirely()
+        {
+            string tree = Tree("empty-suppressed", ("p.surtrproj", "root = src\nmodule = game\noutput = out\nsuppress ProjectFileInvalid\n"));
+            Directory.CreateDirectory(Path.Combine(tree, "src"));
+
+            var build = SurtrBuild.Run(Path.Combine(tree, "p.surtrproj"));
+
+            Assert.False(build.Failed);
+            Assert.DoesNotContain(build.Diagnostics, d => d.Code == SurtrDiagnosticCode.ProjectFileInvalid);
+        }
+
+        /// <summary>
+        /// <see cref="SurtrBuild.RunIncremental(string, IIncrementalBuildCache)"/> is a different
+        /// path through the compiler (a throwaway dependency-discovery pass, then a second,
+        /// possibly-smaller compilation) - the correctness bar for that difference is that a cold
+        /// cache produces byte-for-byte the same images as the ordinary, non-incremental build.
+        /// </summary>
+        [Fact]
+        public void RunIncremental_WithAColdCache_MatchesTheOrdinaryBuildByteForByte()
+        {
+            string tree = Tree(
+                "incremental-parity",
+                ("game.surtrproj", "root = src\nmodule = game\noutput = out\n"),
+                ("src/util/Math.surtr", "public fun twice(x: int): int { return x + x; }"),
+                ("src/core/Entity.surtr", "import game.util.*;\npublic fun doubled(n: int): int { return twice(n); }"));
+
+            var ordinary = SurtrBuild.Run(Path.Combine(tree, "game.surtrproj"));
+            Assert.False(ordinary.Failed, string.Join("; ", ordinary.Diagnostics.Select(d => d.ToString())));
+
+            var incremental = SurtrBuild.RunIncremental(Path.Combine(tree, "game.surtrproj"), new InMemoryIncrementalBuildCache());
+            Assert.False(incremental.Failed, string.Join("; ", incremental.Diagnostics.Select(d => d.ToString())));
+
+            Assert.Equal(ordinary.Written.Count, incremental.Written.Count);
+
+            var ordinaryByPath = ordinary.Written.ToDictionary(path => Path.GetFileName(path), path => File.ReadAllBytes(path));
+            foreach (string incrementalFile in incremental.Written)
+            {
+                string name = Path.GetFileName(incrementalFile);
+                Assert.True(ordinaryByPath.TryGetValue(name, out byte[]? expected), $"'{name}' was not written by the ordinary build.");
+                Assert.Equal(expected, File.ReadAllBytes(incrementalFile));
+            }
+        }
+
+        /// <summary>A second incremental build against the same cache, with no source changes, recompiles nothing and still runs correctly.</summary>
+        [Fact]
+        public void RunIncremental_ASecondCallWithNoChanges_StillProducesAWorkingBuild()
+        {
+            string tree = Tree(
+                "incremental-warm",
+                ("game.surtrproj", "root = src\nmodule = game\noutput = out\n"),
+                ("src/util/Math.surtr", "public fun twice(x: int): int { return x + x; }"),
+                ("src/core/Entity.surtr", "import game.util.*;\npublic fun doubled(n: int): int { return twice(n); }"));
+
+            var cache = new InMemoryIncrementalBuildCache();
+            var warmup = SurtrBuild.RunIncremental(Path.Combine(tree, "game.surtrproj"), cache);
+            Assert.False(warmup.Failed, string.Join("; ", warmup.Diagnostics.Select(d => d.ToString())));
+
+            var second = SurtrBuild.RunIncremental(Path.Combine(tree, "game.surtrproj"), cache);
+            Assert.False(second.Failed, string.Join("; ", second.Diagnostics.Select(d => d.ToString())));
+
+            var runtime = Load(second);
+            Assert.Equal(84, runtime.Invoke(Function(runtime, "game.core.Entity", "doubled"), SurtrValue.CreateInt(42)).AsInt);
+        }
+
+        /// <summary>A packaged program carries its modules and an auto-detected entry point.</summary>
+        [Fact]
+        public void APackageBuildsWithAutoDetectedEntryAndRuns()
+        {
+            string tree = Tree(
+                "pkg",
+                ("game.surtrproj", "root = src\nmodule = game\noutput = out\npackage = true\n"),
+                ("src/core/M.surtr", "public fun main(): int { return 7; }"));
+
+            var build = SurtrBuild.Run(Path.Combine(tree, "game.surtrproj"));
+            Assert.False(build.Failed, string.Join("; ", build.Diagnostics.Select(d => d.ToString())));
+            Assert.Single(build.Written);
+
+            var package = SurtrPackage.FromBytes(File.ReadAllBytes(build.Written[0]));
+            Assert.Equal("game.core.M", package.EntryModulePath);
+            Assert.Equal("main", package.EntryFunction);
+
+            var runtime = new SurtrRuntime();
+            _owned.Add(runtime);
+            runtime.LoadModules(package.Modules);
+
+            Assert.Equal(7, runtime.Invoke(Function(runtime, "game.core.M", "main")).AsInt);
+        }
+
+        /// <summary>An explicit <c>entry</c> directive names the package entry point over any <c>main</c>.</summary>
+        [Fact]
+        public void APackageUsesExplicitEntryDirective()
+        {
+            string tree = Tree(
+                "pkg-entry",
+                ("game.surtrproj", "root = src\nmodule = game\noutput = out\npackage = true\nentry = game.core.M start\n"),
+                ("src/core/M.surtr", "public fun start(): int { return 9; }\npublic fun main(): int { return 0; }"));
+
+            var build = SurtrBuild.Run(Path.Combine(tree, "game.surtrproj"));
+            Assert.False(build.Failed, string.Join("; ", build.Diagnostics.Select(d => d.ToString())));
+
+            var package = SurtrPackage.FromBytes(File.ReadAllBytes(build.Written[0]));
+            Assert.Equal("game.core.M", package.EntryModulePath);
+            Assert.Equal("start", package.EntryFunction);
+
+            var runtime = new SurtrRuntime();
+            _owned.Add(runtime);
+            runtime.LoadModules(package.Modules);
+
+            Assert.Equal(9, runtime.Invoke(Function(runtime, "game.core.M", "start")).AsInt);
+        }
     }
 }

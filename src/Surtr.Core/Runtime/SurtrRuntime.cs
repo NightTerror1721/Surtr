@@ -42,10 +42,24 @@ namespace Surtr.Runtime
         /// <summary>How many objects a runtime's registry is sized for when no capacity is given.</summary>
         public const int DefaultEntityCapacity = 1024;
 
+        /// <summary>
+        /// How many value slots a runtime's data stack holds when nothing narrower was configured.
+        /// Mirrors <c>SurtrVirtualMachine.DefaultDataStackSlots</c>.
+        /// </summary>
+        public const int DefaultDataStackSlots = 64 * 1024;
+
+        /// <summary>
+        /// How many nested calls a runtime's call stack allows when nothing narrower was
+        /// configured. Mirrors <c>SurtrVirtualMachine.DefaultCallDepth</c>.
+        /// </summary>
+        public const int DefaultMaxCallDepth = 1024;
+
         private SurtrContext _context;
         private readonly SurtrValueComparer _valueComparer;
         private SurtrVirtualMachine? _virtualMachine;
         private long _pendingInstructionBudget;
+        private int _pendingDataStackSlots;
+        private int _pendingMaxCallDepth;
         private bool _disposed;
 
         // Native enum case values awaiting their static slot, keyed by declaring class. Filled by
@@ -125,12 +139,74 @@ namespace Surtr.Runtime
                 var machine = _virtualMachine;
                 if (machine is null)
                 {
-                    machine = new SurtrVirtualMachine(this);
+                    machine = _pendingDataStackSlots != 0 || _pendingMaxCallDepth != 0
+                        ? new SurtrVirtualMachine(
+                            this,
+                            _pendingDataStackSlots != 0 ? _pendingDataStackSlots : SurtrVirtualMachine.DefaultDataStackSlots,
+                            _pendingMaxCallDepth != 0 ? _pendingMaxCallDepth : SurtrVirtualMachine.DefaultCallDepth)
+                        : new SurtrVirtualMachine(this);
+
                     machine.StepBudget = _pendingInstructionBudget;
                     _virtualMachine = machine;
                 }
 
                 return machine;
+            }
+        }
+
+        /// <summary>
+        /// How many value slots this runtime's data stack will hold, once it starts executing.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The stack is fixed-size and never grows once built (see <c>SurtrVirtualMachine</c>), so
+        /// this is the one lever a host sandboxing untrusted or size-sensitive script content has
+        /// over how much memory a single call frame budget can reach. Defaults to
+        /// <see cref="DefaultDataStackSlots"/> when never set.
+        /// </para>
+        /// <para>
+        /// Must be set before this runtime's first execution - the machine that owns the stack is
+        /// built lazily on first use and cannot be resized afterwards.
+        /// </para>
+        /// </remarks>
+        /// <exception cref="InvalidOperationException">The machine has already been built.</exception>
+        public int DataStackSlots
+        {
+            get => _pendingDataStackSlots == 0 ? DefaultDataStackSlots : _pendingDataStackSlots;
+            set
+            {
+                if (_virtualMachine is not null)
+                {
+                    throw new InvalidOperationException(
+                        "The data stack size cannot change once this runtime has started executing - it is fixed-size and never grows. Set it before the first Invoke/InvokeClosure call.");
+                }
+
+                _pendingDataStackSlots = value;
+            }
+        }
+
+        /// <summary>
+        /// How many nested calls this runtime's call stack will allow, once it starts executing.
+        /// </summary>
+        /// <remarks>
+        /// The same trade as <see cref="DataStackSlots"/>, over call depth rather than value slots:
+        /// fixed at machine construction, never grows, and exceeding it traps with a
+        /// <see cref="VM.SurtrExecutionException"/> instead of a CLR stack overflow. Defaults to
+        /// <see cref="DefaultMaxCallDepth"/> when never set.
+        /// </remarks>
+        /// <exception cref="InvalidOperationException">The machine has already been built.</exception>
+        public int MaxCallDepth
+        {
+            get => _pendingMaxCallDepth == 0 ? DefaultMaxCallDepth : _pendingMaxCallDepth;
+            set
+            {
+                if (_virtualMachine is not null)
+                {
+                    throw new InvalidOperationException(
+                        "The call depth cannot change once this runtime has started executing - it is fixed-size and never grows. Set it before the first Invoke/InvokeClosure call.");
+                }
+
+                _pendingMaxCallDepth = value;
             }
         }
 
@@ -216,6 +292,25 @@ namespace Surtr.Runtime
                 throw new ArgumentNullException(nameof(text));
 
             var value = new SurtrString(text);
+            _context.EntityRegistry.Register(value);
+            return value;
+        }
+
+        /// <summary>
+        /// Allocates a bytes buffer that takes ownership of <paramref name="data"/>.
+        /// </summary>
+        /// <remarks>
+        /// The public door a host crosses when it wants to hand a CLR <c>byte[]</c> into a Surtr
+        /// script: the buffer keeps the array as its backing storage, copy-free, exactly like
+        /// <see cref="NewString"/> wraps its text. A script-native body that builds a buffer from
+        /// scratch uses the internal value-shaped helpers instead.
+        /// </remarks>
+        public SurtrBytes NewBytes(byte[] data)
+        {
+            if (data is null)
+                throw new ArgumentNullException(nameof(data));
+
+            var value = new SurtrBytes(data);
             _context.EntityRegistry.Register(value);
             return value;
         }
@@ -677,6 +772,21 @@ namespace Surtr.Runtime
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal SurtrValue NewStringValue(string text)
             => SurtrValue.CreateReference(_context.EntityRegistry.Register(new SurtrString(text)));
+
+        /// <summary>Allocates an empty bytes buffer with room for <paramref name="capacity"/> bytes.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal SurtrValue NewBytesValue(int capacity)
+            => SurtrValue.CreateReference(_context.EntityRegistry.Register(new SurtrBytes(capacity)));
+
+        /// <summary>Allocates a bytes buffer that takes ownership of <paramref name="data"/> and returns a value naming it.</summary>
+        /// <remarks>
+        /// Takes ownership rather than copying, so a host handing a <c>byte[]</c> across the
+        /// boundary pays no copy. The buffer keeps whatever capacity <paramref name="data"/> has,
+        /// so its <c>capacity</c> property may read larger than its <c>length</c>.
+        /// </remarks>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal SurtrValue NewBytesValue(byte[] data)
+            => SurtrValue.CreateReference(_context.EntityRegistry.Register(new SurtrBytes(data)));
         #endregion
 
         #region Type Handles
@@ -797,6 +907,22 @@ namespace Surtr.Runtime
 
             return false;
         }
+
+        /// <summary>
+        /// Resolves a descriptor to the metadata it names, against this runtime's loaded modules,
+        /// the built-in module, and any host-declared native classes.
+        /// </summary>
+        /// <remarks>
+        /// The public door onto <see cref="TryResolveReference"/> - the same universal
+        /// descriptor-to-metadata resolver <c>Type.get</c>/<c>Type.tryGet</c> already use from
+        /// inside a running script, exposed here so a host in C# can ask the identical question
+        /// without going through Surtr source. Unlike <see cref="TypeHandle(SurtrClassReference)"/>,
+        /// this never leaves a caller checking a handle that stayed unresolved - it answers
+        /// directly with a bool.
+        /// </remarks>
+        /// <returns><see langword="true"/> if <paramref name="reference"/> names something this runtime already knows.</returns>
+        public bool TryResolveType(SurtrClassReference reference, out SurtrTypeInfo? resolved)
+            => TryResolveReference(reference, out resolved);
         #endregion
 
         #region Modules
@@ -890,6 +1016,69 @@ namespace Surtr.Runtime
             }
 
             return module;
+        }
+
+        /// <summary>
+        /// Loads a set of module images into this runtime, retrying what does not yet resolve until
+        /// nothing more can be made to — the same fixed-point pass <see cref="Surtr.Bytecode.Image.SurtrModuleImage"/>
+        /// describes for a native import, because an image carries no dependency list of its own.
+        /// </summary>
+        /// <param name="images">The module images to load, in any order.</param>
+        /// <exception cref="ArgumentNullException">images is null.</exception>
+        /// <exception cref="InvalidOperationException">A module could not be resolved and nothing further could be made to.</exception>
+        public void LoadModules(IReadOnlyList<Bytecode.Image.SurtrModuleImage> images)
+        {
+            if (images is null)
+                throw new ArgumentNullException(nameof(images));
+
+            var pending = new List<Bytecode.Image.SurtrModuleImage>(images.Count);
+            foreach (var image in images)
+                pending.Add(image);
+
+            var lastError = new Dictionary<string, string>(StringComparer.Ordinal);
+
+            while (pending.Count > 0)
+            {
+                var stillPending = new List<Bytecode.Image.SurtrModuleImage>();
+                bool progressed = false;
+
+                foreach (var image in pending)
+                {
+                    // Already loaded (e.g. the standard library, loaded by the host first) - done.
+                    if (TryGetModule(image.Path, out _))
+                        continue;
+
+                    try
+                    {
+                        LoadModule(image);
+                        progressed = true;
+                    }
+                    catch (InvalidOperationException exception)
+                    {
+                        lastError[image.Path] = exception.Message;
+                        stillPending.Add(image);
+                    }
+                }
+
+                if (stillPending.Count == 0)
+                    return;
+
+                if (!progressed)
+                {
+                    var reasons = new List<string>(stillPending.Count);
+                    foreach (var image in stillPending)
+                    {
+                        lastError.TryGetValue(image.Path, out string? reason);
+                        reasons.Add($"  '{image.Path}': {reason ?? "could not be resolved"}");
+                    }
+
+                    reasons.Sort(StringComparer.Ordinal);
+                    throw new InvalidOperationException(
+                        $"{stillPending.Count} module(s) could not be loaded:\n" + string.Join("\n", reasons));
+                }
+
+                pending = stillPending;
+            }
         }
 
         /// <summary>
@@ -1254,6 +1443,25 @@ namespace Surtr.Runtime
         /// </remarks>
         public IReadOnlyCollection<SurtrModule> LoadedModules => _context.Modules.Values;
 
+        /// <summary>Every module loaded into this runtime whose path sits strictly under <paramref name="prefix"/>.</summary>
+        /// <remarks>
+        /// The public form of the prefix scan <c>Module.submodules()</c> already does over
+        /// <see cref="LoadedModules"/> from inside a running script (<c>SurtrModuleReflectionBuiltIns</c>),
+        /// factored out here so a host in C# does not have to copy that loop by hand.
+        /// </remarks>
+        public IEnumerable<SurtrModule> GetSubmodules(string prefix)
+        {
+            if (prefix is null)
+                throw new ArgumentNullException(nameof(prefix));
+
+            string dottedPrefix = prefix + ".";
+            foreach (var module in _context.Modules.Values)
+            {
+                if (module.Path.StartsWith(dottedPrefix, StringComparison.Ordinal))
+                    yield return module;
+            }
+        }
+
         private void RetryHostHandles()
         {
             foreach (var handle in _context.HostTypeHandles.Handles)
@@ -1288,11 +1496,15 @@ namespace Surtr.Runtime
                 : SurtrClassReference.ConstructedNative(fullName, typeArguments);
             SurtrClassReference.TrySplitFullName(fullName, out _, out string typePath);
 
+            // A native class with no host-declared base still extends `object`, the same default a
+            // Surtr class with no written `:` clause gets.
+            var effectiveBase = baseClass is null ? SurtrBuiltIns.Object.SelfReference : baseClass.SelfReference;
+
             var declared = new SurtrClass(
                 typePath,
                 SurtrValueTypeCode.Native,
                 reference,
-                baseClass is null ? null : TypeHandle(baseClass.SelfReference),
+                TypeHandle(effectiveBase),
                 isAbstract: false,
                 SurtrVisibility.Public,
                 declaringType: null);
@@ -1354,7 +1566,7 @@ namespace Surtr.Runtime
                 typePath,
                 SurtrValueTypeCode.Object,
                 reference,
-                baseType: null,
+                baseType: TypeHandle(SurtrBuiltIns.ValueType.SelfReference),
                 isAbstract: false,
                 SurtrVisibility.Public,
                 declaringType: null)
@@ -1417,7 +1629,7 @@ namespace Surtr.Runtime
         /// Mirrors <see cref="DefineNativeClass"/> but builds the class with <c>isEnum: true</c>, so
         /// it carries <see cref="SurtrClass.EnumCases"/> and an exhaustive <c>switch</c> over it
         /// compiles to a dense jump table. Cases are added with
-        /// <see cref="DefineNativeEnumCase(SurtrClass, string, SurtrNativeObject)"/> before
+        /// <see cref="DefineNativeEnumCase(SurtrClass, string, long)"/> before
         /// <see cref="FinishNativeClass"/> links the class.
         /// </remarks>
         /// <param name="fullName">The name its descriptor carries, for example <c>Game:LogLevel</c>.</param>
@@ -1437,7 +1649,7 @@ namespace Surtr.Runtime
                 typePath,
                 SurtrValueTypeCode.Native,
                 reference,
-                baseType: null,
+                baseType: TypeHandle(SurtrBuiltIns.Enum.SelfReference),
                 isAbstract: false,
                 SurtrVisibility.Public,
                 declaringType: null,
@@ -1555,6 +1767,9 @@ namespace Surtr.Runtime
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool TryGetNativeClass(string fullName, out SurtrClass nativeClass)
             => _context.NativeClasses.TryGetValue(fullName, out nativeClass!);
+
+        /// <summary>Every native class this runtime's host has declared, for enumeration/tooling.</summary>
+        public IReadOnlyCollection<SurtrClass> NativeClasses => _context.NativeClasses.Values;
 
         /// <summary>
         /// Publishes the body of a native member, under the name its declaration links against.

@@ -1143,8 +1143,6 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.JPFLE:
                     return AppendBranch(builder, chunk, operand, (short)ReadU16(chunk, operand), 2, jumpTargets, labels);
 
-                    return AppendBranch(builder, chunk, operand, ReadI32(chunk, operand), 4, jumpTargets, labels);
-
                 case OpCode.JPInstanceOf:
                 {
                     AppendTypeName(builder, chunk, ReadU16(chunk, operand));

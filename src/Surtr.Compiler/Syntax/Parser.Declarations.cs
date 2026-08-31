@@ -402,6 +402,16 @@ namespace Surtr.Compiler.Syntax
             string name = reader.ExpectIdentifier("a type name");
             IReadOnlyList<TypeParameterSyntax> typeParameters = ParseTypeParameterList();
 
+            // §2.x: `interface IList<T> default List<T> : ...` — the interface's default builder
+            // class, written between the name and the `:` list. Only meaningful on an interface;
+            // any other kind seeing `default` here fails on the `{` below.
+            TypeSyntax? defaultBuilder = null;
+            if (kind == TypeDeclarationKind.Interface && reader.Check(TokenType.KeywordDefault))
+            {
+                reader.Advance();
+                defaultBuilder = ParseType();
+            }
+
             // §2.2: the `:` list mixes the base class and interfaces, and only metadata can say
             // which a name resolves to, so the parser keeps them together.
             List<TypeSyntax> baseTypes = new List<TypeSyntax>();
@@ -429,7 +439,7 @@ namespace Surtr.Compiler.Syntax
             reader.Expect(TokenType.RightBrace, "'}' to close the type body");
 
             return new TypeDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, kind, name,
-                typeParameters, baseTypes, cases, members, modifiers.IsAbstract, modifiers.IsSealed, modifiers.IsStatic,
+                typeParameters, defaultBuilder, baseTypes, cases, members, modifiers.IsAbstract, modifiers.IsSealed, modifiers.IsStatic,
                 isAttribute, attributeTargets, isCompileTimeOnlyAttribute);
         }
 
@@ -614,7 +624,7 @@ namespace Surtr.Compiler.Syntax
 
             reader.Expect(TokenType.Assign, "'=' in the alias declaration");
             TypeSyntax target = ParseType();
-            reader.Expect(TokenType.Semicolon, "';' after the alias");
+            ExpectStatementTerminator("';' or a line break after the alias");
 
             return new AliasDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, name, typeParameters, target);
         }
@@ -635,7 +645,7 @@ namespace Surtr.Compiler.Syntax
             TypeSyntax? type = reader.Match(TokenType.Colon) ? ParseType() : null;
             ExpressionSyntax? initializer = reader.Match(TokenType.Assign) ? ParseExpression() : null;
 
-            reader.Expect(TokenType.Semicolon, "';' after the field");
+            ExpectStatementTerminator("';' or a line break after the field");
 
             return new FieldDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, name, type,
                 initializer, isMutable, modifiers.IsConst, modifiers.IsStatic, modifiers.IsNative);
@@ -656,7 +666,7 @@ namespace Surtr.Compiler.Syntax
 
             SourceLocation expressionStart = reader.CurrentLocation;
             ExpressionSyntax expression = ParseExpression();
-            reader.Expect(TokenType.Semicolon, "';' after the expression body");
+            ExpectStatementTerminator("';' or a line break after the expression body");
 
             SourceSpan statementSpan = SpanFrom(expressionStart);
             StatementSyntax statement = returnsVoid
@@ -727,7 +737,7 @@ namespace Surtr.Compiler.Syntax
                 }
                 else
                 {
-                    reader.Expect(TokenType.Semicolon, "';' after the accessor");
+                    ExpectStatementTerminator("';' or a line break after the accessor");
                 }
 
                 accessors.Add(new AccessorSyntax(
@@ -775,9 +785,15 @@ namespace Surtr.Compiler.Syntax
                     && namedReturnType.Path[0] == "void";
                 body = ParseArrowBody(returnsVoid);
             }
-            else if (!reader.Match(TokenType.Semicolon))
+            // A `{` begins the body even across a line break; anything else that ends the line
+            // makes the member signature-only (§1).
+            else if (reader.Check(TokenType.LeftBrace))
             {
                 body = ParseBlock();
+            }
+            else
+            {
+                ExpectStatementTerminator("';' or a line break after the method's signature");
             }
 
             return new MethodDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, name, typeParameters,
@@ -830,13 +846,33 @@ namespace Surtr.Compiler.Syntax
                 // expression statement, since nothing here returns a value.
                 body = ParseArrowBody(returnsVoid: true);
             }
+            else if (CheckContextual("each"))
+            {
+                // `constructor() each (item: T) { ... }` — the each clause follows with no init body
+                // written; the constructor's own phase is empty. The block is synthesized so a
+                // constructor always has a body, exactly as an empty `{ }` would read.
+                body = new BlockStatementSyntax(SpanFrom(reader.CurrentLocation), Array.Empty<StatementSyntax>());
+            }
             else
             {
                 body = ParseBlock();
             }
 
+            // An `each` clause (§5.x): `constructor(...) { ... } each (item: T) { ... }` — a
+            // sibling block holding the per-element fill phase of a collection builder. Contextual
+            // (`each` is an identifier everywhere else), and unambiguous here: a declaration after a
+            // constructor body starts with an introducer or a `name:` property, never `name (...)`.
+            IReadOnlyList<ParameterSyntax>? eachParameters = null;
+            BlockStatementSyntax? eachBody = null;
+            if (CheckContextual("each"))
+            {
+                reader.Advance();
+                eachParameters = ParseParameterList();
+                eachBody = ParseBlock();
+            }
+
             return new ConstructorDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility,
-                parameters, chainArguments, chainsToThis, body);
+                parameters, chainArguments, chainsToThis, body, eachParameters, eachBody);
         }
 
         /// <summary>
@@ -904,20 +940,20 @@ namespace Surtr.Compiler.Syntax
             // the same lowering a method takes: a `return` for a value-returning overload, an
             // expression statement where the return type is `void` (a conversion never is).
             BlockStatementSyntax? operatorBody = null;
-            if (reader.Match(TokenType.Semicolon))
-            {
-                // abstract — nothing to parse
-            }
-            else if (reader.Check(TokenType.FatArrow))
+            if (reader.Check(TokenType.FatArrow))
             {
                 bool returnsVoid = returnType is NamedTypeSyntax namedReturnType
                     && namedReturnType.Path.Count == 1
                     && namedReturnType.Path[0] == "void";
                 operatorBody = ParseArrowBody(returnsVoid);
             }
-            else
+            else if (reader.Check(TokenType.LeftBrace))
             {
                 operatorBody = ParseBlock();
+            }
+            else
+            {
+                ExpectStatementTerminator("';' or a line break after the operator's signature");
             }
 
             return new OperatorDeclarationSyntax(SpanFrom(start), attributes, docComment, op, parameters, returnType,

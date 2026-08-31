@@ -371,6 +371,14 @@ namespace Surtr.Bytecode.Image
             for (int i = 0; i < parameters.Length; i++)
                 WriteParameter(state, parameters[i]);
 
+            // A collection builder's `each` clause parameters, by type — one for `[ ... ]`, two for
+            // `{ ... }`, none for anything else (§5.x). Written after the ordinary parameters so a
+            // front end importing the method can rebuild the clause.
+            var eachParameters = method.EachParameters;
+            writer.Write(eachParameters.Length);
+            for (int i = 0; i < eachParameters.Length; i++)
+                writer.Write(Intern(state, eachParameters[i].Reference.Descriptor));
+
             // The method's own generic parameters, names then per-parameter constraint lists -
             // the same shape the type sections carry, so a reader has one rule to know.
             var genericParameters = method.GenericParameters;
@@ -601,6 +609,19 @@ namespace Surtr.Bytecode.Image
             writer.Write(contract.DeclaredExtendedInterfaces.Length);
             for (int i = 0; i < contract.DeclaredExtendedInterfaces.Length; i++)
                 writer.Write(Intern(state, contract.DeclaredExtendedInterfaces[i].Reference.Descriptor));
+
+            // The interface's default builder class, or a zero-length marker when none is declared
+            // (§5.x). Written right after the extended interfaces, before the generic parameters.
+            var defaultBuilder = contract.DefaultBuilder;
+            if (defaultBuilder is null)
+            {
+                writer.Write((byte)0);
+            }
+            else
+            {
+                writer.Write((byte)1);
+                writer.Write(Intern(state, defaultBuilder.Reference.Descriptor));
+            }
 
             var genericParameters = contract.GenericParameters;
             writer.Write(genericParameters.Length);

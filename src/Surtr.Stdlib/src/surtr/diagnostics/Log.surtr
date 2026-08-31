@@ -1,0 +1,112 @@
+public enum LogLevel
+{
+    Trace = 0,
+    Debug = 1,
+    Info = 2,
+    Warning = 3,
+    Error = 4,
+    Fatal = 5
+}
+
+
+public interface LogSink
+{
+    fun write(level: LogLevel, tag: string, message: string): void;
+}
+
+
+public class Logger
+{
+    private var _minLevel: LogLevel;
+    private var _tag: string;
+    private var _sinks: LogSink[];
+
+    public constructor(tag: string = "", minLevel: LogLevel = LogLevel.Info)
+    {
+        this._tag = tag;
+        this._minLevel = minLevel;
+        this._sinks = array<LogSink>(0);
+    }
+
+    public inline minLevel: LogLevel
+    {
+        get { return _minLevel; }
+        set { _minLevel = value; }
+    }
+
+    public inline tag: string
+    {
+        get { return _tag; }
+        set { _tag = value; }
+    }
+
+    public fun addSink(sink: LogSink): Logger
+    {
+        _sinks.push(sink);
+        return this;
+    }
+
+    public fun removeSink(sink: LogSink): bool
+    {
+        for (var i = 0; i < _sinks.length; i++)
+        {
+            if (_sinks[i] == sink)
+            {
+                _sinks.removeAt(i);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public fun clearSinks(): void
+    {
+        _sinks.clear();
+    }
+
+    public inline fun isLevelEnabled(level: LogLevel): bool => level >= _minLevel;
+
+    public fun trace(message: string): void => emit(LogLevel.Trace, message);
+    public fun debug(message: string): void => emit(LogLevel.Debug, message);
+    public fun info(message: string): void => emit(LogLevel.Info, message);
+    public fun warn(message: string): void => emit(LogLevel.Warning, message);
+    public fun error(message: string): void => emit(LogLevel.Error, message);
+    public fun fatal(message: string): void => emit(LogLevel.Fatal, message);
+
+    public fun log(level: LogLevel, message: string): void => emit(level, message);
+
+    private fun emit(level: LogLevel, message: string): void
+    {
+        if (level < _minLevel) return;
+        for (var i = 0; i < _sinks.length; i++)
+            _sinks[i].write(level, _tag, message);
+    }
+}
+
+
+private var _default: Logger = Logger("surtr", LogLevel.Trace);
+
+public inline fun defaultLogger(): Logger => _default;
+
+public fun setDefaultLogger(logger: Logger): void
+{
+    _default = logger;
+}
+
+public fun setLevel(level: LogLevel): void
+{
+    _default.minLevel = level;
+}
+
+public fun addSink(sink: LogSink): void
+{
+    _default.addSink(sink);
+}
+
+public fun trace(message: string): void => _default.trace(message);
+public fun debug(message: string): void => _default.debug(message);
+public fun info(message: string): void => _default.info(message);
+public fun warn(message: string): void => _default.warn(message);
+public fun error(message: string): void => _default.error(message);
+public fun fatal(message: string): void => _default.fatal(message);
+public fun log(level: LogLevel, message: string): void => _default.log(level, message);

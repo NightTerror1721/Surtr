@@ -48,8 +48,17 @@ namespace Surtr.Stdlib
         /// <summary><c>surtr/text/</c> â€” <c>StringBuilder</c>.</summary>
         Text = 1 << 3,
 
+        /// <summary><c>surtr/io/</c> â€” <c>Enums</c>, <c>Stream</c>.</summary>
+        Io = 1 << 4,
+
+        /// <summary><c>surtr/diagnostics/</c> â€” <c>Assert</c>.</summary>
+        Diagnostics = 1 << 5,
+
+        /// <summary><c>surtr/async/</c> - <c>Scheduler</c> and its ready-made coroutines.</summary>
+        Async = 1 << 6,
+
         /// <summary>Every category â€” equivalent to the unfiltered <c>LoadInto</c> overloads.</summary>
-        All = Core | Math | Collections | Text,
+        All = Core | Math | Collections | Text | Io | Diagnostics | Async,
     }
 
     /// <summary>
@@ -299,10 +308,41 @@ namespace Surtr.Stdlib
                 "math" => StdlibModules.Math,
                 "collections" => StdlibModules.Collections,
                 "text" => StdlibModules.Text,
+                "io" => StdlibModules.Io,
+                "diagnostics" => StdlibModules.Diagnostics,
+                "async" => StdlibModules.Async,
                 _ => StdlibModules.None,
             };
 
             return flag != StdlibModules.None && (selection & flag) != 0;
+        }
+
+        /// <summary>
+        /// <see cref="LoadInto(SurtrRuntime, IReadOnlyList{SurtrModuleImage})"/>, restricted to the
+        /// images <paramref name="predicate"/> accepts by module path - full control over which
+        /// individual modules load, for a host that wants finer granularity than
+        /// <see cref="StdlibModules"/>'s per-category flags give (a single collection, not the
+        /// whole <see cref="StdlibModules.Collections"/> category).
+        /// </summary>
+        /// <param name="runtime">The runtime to load into.</param>
+        /// <param name="images">Every stdlib image available; only the ones <paramref name="predicate"/> accepts are loaded.</param>
+        /// <param name="predicate">Given a module's path (<c>surtr.collections.Stack</c>), whether to load it.</param>
+        public static void LoadInto(SurtrRuntime runtime, IReadOnlyList<SurtrModuleImage> images, Func<string, bool> predicate)
+        {
+            if (images is null)
+                throw new ArgumentNullException(nameof(images));
+
+            if (predicate is null)
+                throw new ArgumentNullException(nameof(predicate));
+
+            var selected = new List<SurtrModuleImage>();
+            foreach (var image in images)
+            {
+                if (predicate(image.Path))
+                    selected.Add(image);
+            }
+
+            LoadInto(runtime, selected);
         }
 
         /// <summary>
@@ -348,6 +388,45 @@ namespace Surtr.Stdlib
             runtime.DefineNativeBody("surtr.math.Math.ceil", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrMathNative.MathCeil));
             runtime.DefineNativeBody("surtr.math.Math.round", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrMathNative.MathRound));
             runtime.DefineNativeBody("surtr.math.Math.hypot", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrMathNative.MathHypot));
+
+            // Random
+            runtime.DefineNativeBody("surtr.math.Random.randomSeed", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrRandomNative.RandomSeed));
+
+            // ── surtr.diagnostics ───────────────────────────────────────────
+
+            // Profiler
+            runtime.DefineNativeBody("surtr.diagnostics.Profiler.stopwatchTimestamp", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.StopwatchTimestamp));
+
+            // Debug
+            runtime.DefineNativeBody("surtr.diagnostics.Debug.debugPrint", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.DebugPrint));
+            runtime.DefineNativeBody("surtr.diagnostics.Debug.debugDump", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.DebugDump));
+            runtime.DefineNativeBody("surtr.diagnostics.Debug.debugBreakpoint", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.DebugBreakpoint));
+            runtime.DefineNativeBody("surtr.diagnostics.Debug.debugStack", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.DebugStack));
+            runtime.DefineNativeBody("surtr.diagnostics.Debug.debugIsDebuggerAttached", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.DebugIsDebuggerAttached));
+
+            // RuntimeInfo (native let property getters)
+            runtime.DefineNativeBody("surtr.diagnostics.RuntimeInfo.get_Platform", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.RuntimeInfoGetPlatform));
+            runtime.DefineNativeBody("surtr.diagnostics.RuntimeInfo.get_EngineVersion", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.RuntimeInfoGetEngineVersion));
+            runtime.DefineNativeBody("surtr.diagnostics.RuntimeInfo.get_RuntimeVersion", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.RuntimeInfoGetRuntimeVersion));
+            runtime.DefineNativeBody("surtr.diagnostics.RuntimeInfo.get_CpuArchitecture", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.RuntimeInfoGetCpuArchitecture));
+            runtime.DefineNativeBody("surtr.diagnostics.RuntimeInfo.get_IsDebugBuild", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.RuntimeInfoGetIsDebugBuild));
+            runtime.DefineNativeBody("surtr.diagnostics.RuntimeInfo.get_ProcessorCount", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.RuntimeInfoGetProcessorCount));
+            runtime.DefineNativeBody("surtr.diagnostics.RuntimeInfo.get_WorkingSet", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.RuntimeInfoGetWorkingSet));
+            runtime.DefineNativeBody("surtr.diagnostics.RuntimeInfo.get_LiveEntityCount", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.RuntimeInfoGetLiveEntityCount));
+
+            // ── surtr.io.File ───────────────────────────────────────────────
+
+            runtime.DefineNativeBody("surtr.io.File.fileExists", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.FileExists));
+            runtime.DefineNativeBody("surtr.io.File.directoryExists", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.DirectoryExists));
+            runtime.DefineNativeBody("surtr.io.File.fileDelete", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.FileDelete));
+            runtime.DefineNativeBody("surtr.io.File.createDirectory", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.CreateDirectory));
+            runtime.DefineNativeBody("surtr.io.File.fileReadAllText", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.FileReadAllText));
+            runtime.DefineNativeBody("surtr.io.File.fileWriteAllText", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.FileWriteAllText));
+            runtime.DefineNativeBody("surtr.io.File.fileAppendAllText", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.FileAppendAllText));
+            runtime.DefineNativeBody("surtr.io.File.fileReadAllBytes", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.FileReadAllBytes));
+            runtime.DefineNativeBody("surtr.io.File.fileWriteAllBytes", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.FileWriteAllBytes));
+            runtime.DefineNativeBody("surtr.io.File.listFiles", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.ListFiles));
+            runtime.DefineNativeBody("surtr.io.File.listDirectories", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.ListDirectories));
         }
     }
 }

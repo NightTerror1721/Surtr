@@ -2,7 +2,7 @@
   "name": "surtr-language",
   "displayName": "Surtr Language",
   "description": "Language support for the Surtr embedded scripting language: syntax highlighting, hover, go-to-definition and diagnostics",
-  "version": "0.1.6",
+  "version": "0.1.11",
   "publisher": "surtr-lang",
   "license": "MIT",
   "engines": {
@@ -58,6 +58,11 @@
           "type": "string",
           "default": "",
           "description": "Path to the surtr-lsp executable (surtr-lsp.exe on Windows). A directory containing the executable also works. Leave empty to look for surtr-lsp on your PATH."
+        },
+        "surtr.projectRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Where the Surtr project actually starts, if it is not the folder you opened in VSCode - for example a subdirectory of a larger repo. Relative paths resolve against the opened folder. Leave empty to use the opened folder itself."
         }
       }
     }

@@ -99,6 +99,7 @@ namespace Surtr.Tests.Compiler.Syntax
         [InlineData("bool")]
         [InlineData("char")]
         [InlineData("string")]
+        [InlineData("bytes")]
         [InlineData("void")]
         [InlineData("range")]
         [InlineData("unknown")]

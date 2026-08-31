@@ -41,6 +41,13 @@ namespace Surtr.Compiler.Binding
 
         private readonly Scope _globalScope = new Scope();
 
+        /// <summary>
+        /// The root <c>object</c> class's symbol, resolved once in <see cref="SeedGlobalScope"/> -
+        /// the implicit-base default and the value/enum member synthesis both need it repeatedly,
+        /// and it never changes within one compilation.
+        /// </summary>
+        private NamedTypeSymbol _objectType = null!;
+
         private readonly Dictionary<string, ModuleSymbol> _modules =
             new Dictionary<string, ModuleSymbol>(StringComparer.Ordinal);
 
@@ -237,6 +244,7 @@ namespace Surtr.Compiler.Binding
             _globalScope.TryDeclare("bool", _factory.Bool);
             _globalScope.TryDeclare("char", _factory.Char);
             _globalScope.TryDeclare("string", _factory.String);
+            _globalScope.TryDeclare("bytes", _factory.Bytes);
             _globalScope.TryDeclare("range", _factory.Range);
             _globalScope.TryDeclare("void", _factory.Void);
             _globalScope.TryDeclare("unknown", _factory.Unknown);
@@ -248,7 +256,15 @@ namespace Surtr.Compiler.Binding
             // declaration of the same name shadows it rather than colliding with it.
             var library = _compilation.Importer.ImportModule(SurtrBuiltIns.Module);
             foreach (var type in library.Types)
+            {
                 _globalScope.AddCandidate(type.Name, type);
+
+                // Cached rather than re-resolved by name at every call site that needs it - the
+                // implicit-base default below, and the value/enum member synthesis further down,
+                // both need the root's symbol repeatedly.
+                if (type.Name == "object")
+                    _objectType = type;
+            }
 
             // Host-declared types (SurtrProject.AddHostType) reach source through no module, so
             // they join the same outermost layer: registered explicitly by the project, visible
@@ -1172,6 +1188,7 @@ namespace Surtr.Compiler.Binding
                 CheckBaseConstructorIsReachable(binding);
                 CheckMembersImplemented(binding);
                 CheckTypeParameterPositions(binding);
+                CheckInterfaceDefault(binding);
             }
 
             // Last, because a bound like `<T : IComparable<T>>` names a type whose own hierarchy is
@@ -1790,10 +1807,115 @@ namespace Surtr.Compiler.Binding
                 symbol.IsCompileTimeOnlyAttribute = syntax.IsCompileTimeOnlyAttribute;
             }
 
+            // A declaration that named no base of its own implicitly extends the language's root
+            // hierarchy: `object` for an ordinary class or singleton, and the stateless `Enum`/
+            // `ValueType` sentinel for an enum/value class - exactly what a written `: object`
+            // would resolve to, so nothing downstream (member lookup, `IsSubclassOf`) has to treat
+            // "no base" as a fourth state. An interface has no base-class slot to default -
+            // `ExtendedInterfaces` is a separate list - so it is excluded; this only fires when
+            // nothing already claimed the slot, which is why it runs after the `attribute class`
+            // case above rather than before it.
+            if (baseClass is null && syntax.Kind != TypeDeclarationKind.Interface)
+            {
+                string implicitBaseName = syntax.Kind switch
+                {
+                    TypeDeclarationKind.Enum => "Enum",
+                    TypeDeclarationKind.ValueClass => "ValueType",
+                    _ => "object",
+                };
+
+                var implicitBase = _resolver.Resolve(
+                    new NamedTypeSyntax(syntax.Span, new[] { implicitBaseName }, System.Array.Empty<TypeSyntax>()),
+                    binding.Scope, binding.SourceName);
+
+                if (implicitBase.NonNullable is NamedTypeSymbol resolvedImplicitBase)
+                    baseClass = resolvedImplicitBase;
+            }
+
             symbol.Interfaces = interfaces;
 
             if (baseClass is not null && !CreatesCycle(symbol, baseClass, binding))
                 symbol.BaseType = baseClass;
+        }
+
+        /// <summary>
+        /// Validates an interface's declared default builder — <c>interface IList&lt;T&gt; default List&lt;T&gt;</c>
+        /// (§5.x) — and, when valid, records it on the interface so a target-typed collection literal
+        /// can resolve it. Runs after every member is bound, because one of the checks ("the default
+        /// declares an <c>each</c> constructor") needs the default class's constructors, and nothing
+        /// says a class declared after its interface is bound before it.
+        /// </summary>
+        private void CheckInterfaceDefault(TypeBinding binding)
+        {
+            var syntax = binding.Syntax;
+            if (syntax.Kind != TypeDeclarationKind.Interface || syntax.DefaultBuilder is null)
+                return;
+
+            EnterContext(binding.Module, binding.Symbol);
+            var symbol = binding.Symbol;
+            var resolved = _resolver.Resolve(syntax.DefaultBuilder, binding.Scope, binding.SourceName);
+
+            if (resolved.IsError)
+                return;
+
+            if (resolved.NonNullable is not NamedTypeSymbol { TypeKind: TypeSymbolKind.Class } builder)
+            {
+                Report(SurtrDiagnosticCode.InterfaceDefaultNotClass, binding, syntax.DefaultBuilder.Span,
+                    $"'{symbol.Name}' names '{resolved.ToDisplayString()}' as its default builder, which is not a class.");
+                return;
+            }
+
+            // The default must implement the interface it serves — otherwise the target-typed
+            // literal would build a value that cannot convert to the declared type.
+            if (!Implements(symbol, builder))
+            {
+                Report(SurtrDiagnosticCode.InterfaceDefaultNotImplemented, binding, syntax.DefaultBuilder.Span,
+                    $"'{builder.Name}' does not implement '{symbol.Name}', so it cannot be its default builder.");
+                return;
+            }
+
+            // Written with the interface's own type parameters, the default's arguments line up one
+            // per parameter — substituting the interface's arguments at a use site then lands on the
+            // class. A bare name (no type arguments) is an error rather than a guess.
+            if (resolved.NonNullable is NamedTypeSymbol constructed && constructed.TypeArguments.Count != symbol.TypeParameters.Count)
+            {
+                Report(SurtrDiagnosticCode.InterfaceDefaultArity, binding, syntax.DefaultBuilder.Span,
+                    $"'{symbol.Name}' declares {symbol.TypeParameters.Count} type parameter(s), but its default was written with {constructed.TypeArguments.Count} argument(s).");
+                return;
+            }
+
+            // A default that cannot be built by literal is useless: without an `each` constructor it
+            // can never fill a single element. Checked here, after the class's own members exist.
+            bool hasEach = false;
+            foreach (var member in builder.Members)
+            {
+                if (member is MethodSymbol { Role: MethodRole.Constructor, IsCollectionBuilder: true })
+                {
+                    hasEach = true;
+                    break;
+                }
+            }
+
+            if (!hasEach)
+            {
+                Report(SurtrDiagnosticCode.InterfaceDefaultNoEach, binding, syntax.DefaultBuilder.Span,
+                    $"'{builder.Name}' declares no 'each' constructor, so it cannot be the default builder of '{symbol.Name}'.");
+                return;
+            }
+
+            symbol.DefaultBuilder = builder;
+        }
+
+        /// <summary>Whether <paramref name="implementation"/> implements <paramref name="contract"/> — the declared interface itself or anything above it.</summary>
+        private bool Implements(NamedTypeSymbol contract, NamedTypeSymbol implementation)
+        {
+            foreach (var implemented in AllInterfacesOf(implementation))
+            {
+                if (ReferenceEquals(implemented.Definition, contract.Definition))
+                    return true;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -1845,6 +1967,7 @@ namespace Surtr.Compiler.Binding
             var signatures = new SignatureSet(_factory, _diagnostics);
             var names = new HashSet<string>(StringComparer.Ordinal);
             int letFields = 0;
+            int eachConstructors = 0;
 
             // §2.4: every enum declares `public let value: int` as its first instance field. The
             // compiler owns the field and fills it when it builds each case (§2.2); the name is
@@ -1905,7 +2028,12 @@ namespace Surtr.Compiler.Binding
                             continue;
                         }
 
-                        if (!field.IsMutable)
+                        // §2.9: a value class's field discipline counts only *instance* `let`
+                        // fields. A static `let`/`var` and a `const` (implicitly static and
+                        // folded away, §7.1) are storage that never occupies an instance slot,
+                        // so they must stay out of the count - otherwise a value class with any
+                        // static or const field would fail `BindValueClassField`'s check.
+                        if (!field.IsMutable && !field.IsStatic && !field.IsConst)
                             letFields++;
 
                         var bound = BindField(field, symbol, binding);
@@ -1988,6 +2116,17 @@ namespace Surtr.Compiler.Binding
                             continue;
                         }
 
+                        // §3.3: an abstract member is signature-only, and a written body would be an
+                        // implementation it cannot carry — one the emitter would silently drop, since
+                        // an abstract member is declared with no body slot. Rejected here, the same
+                        // way the interface's body ban above is.
+                        if (!isInterface && method.Dispatch == DispatchModifier.Abstract && method.Body is not null)
+                        {
+                            Report(SurtrDiagnosticCode.AbstractMemberWithBody, binding, method.Body.Span,
+                                $"'{method.Name}' is abstract, so it cannot have a body.");
+                            continue;
+                        }
+
                         // A native method has no Surtr body, so the check above misses it - but its
                         // body is the host's, exactly as real a default implementation as one
                         // written in Surtr, and an interface allows neither (§2.3).
@@ -2013,9 +2152,19 @@ namespace Surtr.Compiler.Binding
                             continue;
                         }
 
-                        var bound = BindConstructor(constructor, symbol, binding);
+                        var bound = BindConstructor(constructor, symbol, binding, eachConstructors);
                         signatures.Add(bound, binding.SourceName, constructor.Span);
                         members.Add(bound);
+
+                        // A builder constructor's each clause compiles to a $fill$ member of its own:
+                        // a real method that travels in the image, so it joins the member list here.
+                        if (bound.FillMethod is not null)
+                        {
+                            signatures.Add(bound.FillMethod, binding.SourceName, constructor.Span);
+                            members.Add(bound.FillMethod);
+                        }
+
+                        eachConstructors += bound.IsCollectionBuilder ? 1 : 0;
                         continue;
                     }
 
@@ -3214,7 +3363,7 @@ namespace Surtr.Compiler.Binding
             }
 
             // §11.1: after the @Value marks are known, every class carrying one gains the value
-            // members it did not declare - structural $equals, combined $hashCode, $toDisplayString -
+            // members it did not declare - structural equals, combined hashCode, toString -
             // as real methods with bound bodies, so the emitter ships them like any other member.
             SynthesizeValueMembers();
 
@@ -3872,6 +4021,10 @@ namespace Surtr.Compiler.Binding
 
             BoundStatement bound = binder.BindBody(body.Syntax);
 
+            // §11: drop calls to a declaration marked @Condition(false) before anything else reads
+            // the tree, so flow analysis and the optimizer see the final, stripped shape.
+            bound = ConditionStrip.Rewrite(bound);
+
             // §P3: cross-statement CSE of pure calls, once a foldable set exists. Runs on the bound
             // tree before flow analysis, so the analysis sees the final shape.
             if (_pureFolder is not null)
@@ -4521,7 +4674,23 @@ namespace Surtr.Compiler.Binding
                     IsNative = isNative,
                 };
 
-                RecordBody(bound, getter.Body, scope, module, containingType, sourceName);
+                // §3.3: an abstract accessor is signature-only, and a written body would be an
+                // implementation it cannot carry — one the emitter would silently drop. An
+                // accessor's dispatch is its own when it wrote one, otherwise the property's;
+                // an interface's accessors are abstract by force of §2.3, and there the body
+                // ban is the same one the interface's method check reports.
+                if (bound.Dispatch == MethodDispatch.Abstract && getter.Body is not null)
+                {
+                    ReportAt(sourceName, getter.Body.Span,
+                        isInterface ? SurtrDiagnosticCode.InvalidInterfaceMember : SurtrDiagnosticCode.AbstractMemberWithBody,
+                        isInterface
+                            ? $"An interface declares no default implementations, so '{property.Name}' cannot have a 'get' accessor with a body."
+                            : $"'{property.Name}' is abstract, so its 'get' accessor cannot have a body.");
+                }
+                else
+                {
+                    RecordBody(bound, getter.Body, scope, module, containingType, sourceName);
+                }
                 property.Getter = bound;
             }
 
@@ -4543,7 +4712,20 @@ namespace Surtr.Compiler.Binding
                 };
 
                 bound.Parameters = new[] { new ParameterSymbol("value", property.Type, 0, bound) };
-                RecordBody(bound, setter.Body, scope, module, containingType, sourceName);
+
+                // §3.3: the setter twin of the getter's abstract-body check above.
+                if (bound.Dispatch == MethodDispatch.Abstract && setter.Body is not null)
+                {
+                    ReportAt(sourceName, setter.Body.Span,
+                        isInterface ? SurtrDiagnosticCode.InvalidInterfaceMember : SurtrDiagnosticCode.AbstractMemberWithBody,
+                        isInterface
+                            ? $"An interface declares no default implementations, so '{property.Name}' cannot have a 'set' accessor with a body."
+                            : $"'{property.Name}' is abstract, so its 'set' accessor cannot have a body.");
+                }
+                else
+                {
+                    RecordBody(bound, setter.Body, scope, module, containingType, sourceName);
+                }
                 property.Setter = bound;
             }
         }
@@ -4773,7 +4955,8 @@ namespace Surtr.Compiler.Binding
         private MethodSymbol BindConstructor(
             ConstructorDeclarationSyntax syntax,
             NamedTypeSymbol owner,
-            TypeBinding binding)
+            TypeBinding binding,
+            int eachIndex)
         {
             var method = new MethodSymbol(MemberNames.Constructor, owner, _factory.Void)
             {
@@ -4794,12 +4977,83 @@ namespace Surtr.Compiler.Binding
             RecordBody(method, syntax.Body, binding.Scope, binding.Module, owner, binding.SourceName);
             RecordAttributes(method, syntax.Attributes, binding.Scope, binding.SourceName);
 
+            // §5.x: an `each` clause turns the constructor into a collection builder — the clause's
+            // parameters are what one literal element/entry fills, and its body compiles to the
+            // private $fill$ instance method the literal lowering calls once per element.
+            if (syntax.EachParameters is not null)
+            {
+                if (owner.TypeKind is TypeSymbolKind.ValueClass or TypeSymbolKind.Singleton)
+                {
+                    Report(SurtrDiagnosticCode.EachOutsideConstructor, binding, syntax.Span,
+                        $"An 'each' clause is only valid on an ordinary class constructor, and '{owner.Name}' is a {(owner.TypeKind == TypeSymbolKind.ValueClass ? "value class" : "singleton")}.");
+                }
+                else if (BindEachParameters(syntax, method, binding) is { } eachParameters)
+                {
+                    method.EachParameters = eachParameters;
+                    var fill = new MethodSymbol(SyntheticNames.FillMethod(owner.Name, eachIndex), owner, _factory.Void)
+                    {
+                        Role = MethodRole.Normal,
+                        Accessibility = Accessibility.Private,
+                        Dispatch = MethodDispatch.Direct,
+                    };
+
+                    // The fill's own parameters: the same name and type as the clause's, but owned by
+                    // the fill method — the emitter matches a parameter read to the method being
+                    // emitted, so a parameter whose symbol names the constructor would read as
+                    // "belongs to another method".
+                    var fillParameters = new ParameterSymbol[eachParameters.Count];
+                    for (int i = 0; i < fillParameters.Length; i++)
+                        fillParameters[i] = new ParameterSymbol(eachParameters[i].Name, eachParameters[i].Type, i, fill);
+
+                    fill.Parameters = fillParameters;
+                    RecordBody(fill, syntax.EachBody, binding.Scope, binding.Module, owner, binding.SourceName);
+                    method.FillMethod = fill;
+                }
+            }
+
             // Bound in a pass of its own, after every signature exists: a chain names a constructor
             // of this class or of its base, and overload resolution needs both complete.
             if (syntax.ChainArguments is not null)
                 _chains.Add(new ChainBinding(method, syntax, binding.Scope, binding.Module, owner, binding.SourceName));
 
             return method;
+        }
+
+        /// <summary>
+        /// Binds the parameters of an <c>each</c> clause (§5.x): exactly one (the <c>[ ... ]</c>
+        /// literal form) or two (the <c>{ ... }</c> form), each typed, without defaults or varargs.
+        /// Returns <see langword="null"/> after reporting when the clause cannot be a builder.
+        /// </summary>
+        private IReadOnlyList<ParameterSymbol>? BindEachParameters(
+            ConstructorDeclarationSyntax syntax,
+            MethodSymbol owner,
+            TypeBinding binding)
+        {
+            var written = syntax.EachParameters!;
+
+            if (written.Count is not (1 or 2))
+            {
+                Report(SurtrDiagnosticCode.EachArityInvalid, binding, syntax.Span,
+                    $"An 'each' clause takes exactly 1 parameter (for '[ ... ]' literals) or 2 (for '{{ ... }}' literals), not {written.Count}.");
+                return null;
+            }
+
+            var parameters = new ParameterSymbol[written.Count];
+            for (int i = 0; i < written.Count; i++)
+            {
+                var syntaxParameter = written[i];
+                if (syntaxParameter.Type is null || syntaxParameter.DefaultValue is not null || syntaxParameter.IsVarargs)
+                {
+                    Report(SurtrDiagnosticCode.EachArityInvalid, binding, syntaxParameter.Span,
+                        "An 'each' parameter must carry its type and cannot have a default value or be varargs.");
+                    return null;
+                }
+
+                parameters[i] = new ParameterSymbol(
+                    syntaxParameter.Name, _resolver.Resolve(syntaxParameter.Type, binding.Scope, binding.SourceName), i, owner);
+            }
+
+            return parameters;
         }
 
         private MethodSymbol BindOperator(OperatorDeclarationSyntax syntax, NamedTypeSymbol owner, TypeBinding binding)
@@ -5559,7 +5813,15 @@ namespace Surtr.Compiler.Binding
 
         /// <summary>
         /// Gives each <c>@Value</c> class the value members it did not declare (§11.1): structural
-        /// <c>$equals</c>, combined <c>$hashCode</c> and <c>$toDisplayString</c>. Runs after
+        /// <c>equals</c>, combined <c>hashCode</c> and <c>toString</c> - the same real names
+        /// <c>object</c>/<c>ValueType</c> declare, and the same shape <c>EnumMemberSynthesizer</c>
+        /// already uses for an enum's own <c>equals</c>/<c>hashCode</c>/<c>toString</c>: a same-name
+        /// member typed against the class itself, found ahead of the inherited one by ordinary
+        /// member lookup for any statically-typed call, rather than a vtable override (the erased,
+        /// <c>object?</c>-typed signature that would need still leaves the inherited default as the
+        /// only answer a truly polymorphic receiver gets - a boxed value type's identity comparison
+        /// is already structural per <c>SurtrValueComparer</c>, so the gap is display text only).
+        /// Runs after
         /// <see cref="BindAttributes"/> so the mark is known, and creates real methods with bound
         /// bodies so the emitter ships them like any other member — callable, overridable by
         /// declaring one's own, and consistent with the <c>==</c>/<c>!=</c> the same mark turns
@@ -5602,12 +5864,16 @@ namespace Surtr.Compiler.Binding
 
             if (!hasEquals)
             {
+                // A real override of object.equals(other: object?), not a same-name overload: the
+                // parameter is object?, and the body narrows it with an `is` test before reading
+                // any field - see ValueMemberSynthesizer.EqualsBody.
                 var method = new MethodSymbol(ValueMemberSynthesizer.EqualsName, definition, _factory.Bool)
                 {
                     IsSynthetic = true,
                     Accessibility = Accessibility.Public,
-                    Dispatch = MethodDispatch.Direct,
-                    Parameters = new[] { new ParameterSymbol("other", definition, ordinal: 0) },
+                    Dispatch = MethodDispatch.Virtual,
+                    IsOverride = true,
+                    Parameters = new[] { new ParameterSymbol("other", _objectType.Nullable, ordinal: 0) },
                 };
                 members.Add(method);
                 _bound[method] = ValueMemberSynthesizer.EqualsBody(_factory, definition, fields, method);
@@ -5619,7 +5885,8 @@ namespace Surtr.Compiler.Binding
                 {
                     IsSynthetic = true,
                     Accessibility = Accessibility.Public,
-                    Dispatch = MethodDispatch.Direct,
+                    Dispatch = MethodDispatch.Virtual,
+                    IsOverride = true,
                 };
                 members.Add(method);
                 _bound[method] = ValueMemberSynthesizer.HashCodeBody(_factory, MemberLookup, definition, fields, method);
@@ -5631,7 +5898,8 @@ namespace Surtr.Compiler.Binding
                 {
                     IsSynthetic = true,
                     Accessibility = Accessibility.Public,
-                    Dispatch = MethodDispatch.Direct,
+                    Dispatch = MethodDispatch.Virtual,
+                    IsOverride = true,
                 };
                 members.Add(method);
                 _bound[method] = ValueMemberSynthesizer.ToDisplayStringBody(_factory, MemberLookup, definition, fields, method);
@@ -5684,13 +5952,19 @@ if (members.Count != definition.Members.Count)
 
             if (!HasMethod(members, EnumMemberSynthesizer.EqualsName, isStatic: false, definition))
             {
+                // A real override of object.equals(other: object?) - see the same note on
+                // ValueMemberSynthesizer's equals. `IsInline` still applies at any call site whose
+                // receiver's concrete type is known (a devirtualised call splices exactly as it did
+                // before); a genuinely polymorphic call goes through the vtable slot this occupies.
                 var method = new MethodSymbol(EnumMemberSynthesizer.EqualsName, definition, _factory.Bool)
                 {
                     IsSynthetic = true,
                     Accessibility = Accessibility.Public,
                     IsInline = true,
                     IsConst = canBeConst,
-                    Parameters = new[] { new ParameterSymbol("other", definition, ordinal: 0) },
+                    Dispatch = MethodDispatch.Virtual,
+                    IsOverride = true,
+                    Parameters = new[] { new ParameterSymbol("other", _objectType.Nullable, ordinal: 0) },
                     Attributes = PureAndNoAlloc(),
                 };
                 members.Add(method);
@@ -5705,6 +5979,8 @@ if (members.Count != definition.Members.Count)
                     Accessibility = Accessibility.Public,
                     IsInline = true,
                     IsConst = canBeConst,
+                    Dispatch = MethodDispatch.Virtual,
+                    IsOverride = true,
                     Attributes = PureAndNoAlloc(),
                 };
                 members.Add(method);
@@ -5718,6 +5994,8 @@ if (members.Count != definition.Members.Count)
                     IsSynthetic = true,
                     Accessibility = Accessibility.Public,
                     IsConst = canBeConst,
+                    Dispatch = MethodDispatch.Virtual,
+                    IsOverride = true,
                     Attributes = PureOnly(),
                 };
                 members.Add(method);

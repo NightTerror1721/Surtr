@@ -176,6 +176,13 @@ namespace Surtr.Compiler.Syntax
                     return;
                 }
 
+                // A declaration now ends at a line break too (§1), so a failure must not swallow
+                // the declaration on the next line.
+                if (depth == 0 && reader.IsAfterLineBreak)
+                {
+                    return;
+                }
+
                 if (depth == 0 && StartsDeclaration(reader.CurrentType))
                 {
                     return;
@@ -205,11 +212,13 @@ namespace Surtr.Compiler.Syntax
             }
         }
 
-        /// <summary>Skips forward to the end of the statement that failed, or to the end of its block.</summary>
+        /// <summary>
+        /// Skips forward to the end of the statement that failed, or to the end of its block.
+        /// </summary>
         /// <remarks>
-        /// The statement-level counterpart of <see cref="SynchronizeToDeclaration"/>: a <c>;</c>
-        /// ends a statement, a <c>}</c> ends the block and is left for the caller, and a keyword
-        /// that can only begin a statement is a place to pick up again.
+        /// The statement-level counterpart of <see cref="SynchronizeToDeclaration"/>: a line break
+        /// or <c>;</c> ends a statement, a <c>}</c> ends the block and is left for the caller, and
+        /// a keyword that can only begin a statement is a place to pick up again.
         /// </remarks>
         private void SynchronizeToStatement()
         {
@@ -218,6 +227,13 @@ namespace Surtr.Compiler.Syntax
             while (!reader.Check(TokenType.EndOfFile))
             {
                 if (depth == 0 && reader.Check(TokenType.RightBrace))
+                {
+                    return;
+                }
+
+                // A statement now ends at a line break too (§1), so a failure must not swallow
+                // the statement on the next line.
+                if (depth == 0 && reader.IsAfterLineBreak)
                 {
                     return;
                 }
@@ -365,7 +381,7 @@ namespace Surtr.Compiler.Syntax
             if (!wildcard && members is null && reader.Match(TokenType.KeywordAs))
                 alias = reader.ExpectIdentifier("a name after 'as'");
 
-            reader.Expect(TokenType.Semicolon, "';' after the import");
+            ExpectStatementTerminator("';' or a line break after the import");
             return new ImportSyntax(SpanFrom(start), path, wildcard, alias, members, isModule, isExport);
         }
 
@@ -440,6 +456,33 @@ namespace Surtr.Compiler.Syntax
         /// parser and means no production has to track its own extent.
         /// </remarks>
         private SourceSpan SpanFrom(SourceLocation start) => SourceSpan.FromBounds(start, reader.ConsumedEnd);
+
+        /// <summary>
+        /// Consumes the terminator of a statement or declaration: an explicit <c>;</c>, or nothing
+        /// at all when a line break, a <c>}</c>, or the end of the file already ends it (§1). An
+        /// explicit <c>;</c> remains legal everywhere, so code written for a mandatory-<c>;</c>
+        /// language keeps parsing unchanged.
+        /// </summary>
+        /// <param name="what">What the terminator follows, for the error message.</param>
+        private void ExpectStatementTerminator(string what)
+        {
+            if (reader.Match(TokenType.Semicolon))
+            {
+                return;
+            }
+
+            if (reader.Check(TokenType.RightBrace) || reader.Check(TokenType.EndOfFile))
+            {
+                return;
+            }
+
+            if (reader.IsAfterLineBreak)
+            {
+                return;
+            }
+
+            throw reader.Error(SurtrDiagnosticCode.UnexpectedToken, $"Expected {what}.");
+        }
 
         /// <summary>True when the current identifier's text is <paramref name="text"/> — for the contextual keywords (§3.2).</summary>
         private bool CheckContextual(string text)

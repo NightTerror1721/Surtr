@@ -8,3 +8,109 @@ public fun assert(condition: bool, message: string = "Assertion failed."): void
 {
     if (!condition) throw AssertionException(message);
 }
+
+public fun assertEqual<T>(expected: T, actual: T, message: string = "Values are not equal."): void
+{
+    if (expected != actual) throw AssertionException(message);
+}
+
+public fun assertNotEqual<T>(left: T, right: T, message: string = "Values are equal."): void
+{
+    if (left == right) throw AssertionException(message);
+}
+
+// Fase 8, §6.2/O2: a two-argument call (no explicit message) now prefers these over the
+// three-parameter, unconstrained overloads above - an exact-arity match wins over one that would
+// need its trailing default filled in (confirmed empirically: a 2-arg call site resolves to the
+// narrower, non-defaulted candidate). `<T : object>` costs nothing at any real call site (every
+// concrete type extends object, §4.8), and unlocks a message that actually shows the values instead
+// of a fixed string - the whole reason to revisit this file once object was a real root. The
+// unconstrained, explicit-message overloads above are untouched and still the only option from
+// inside another still-generic, unconstrained function (an unconstrained T reaches nothing, §4.8).
+public fun assertEqual<T: object>(expected: T, actual: T): void
+{
+    if (expected != actual) throw AssertionException("Expected " + expected.toString() + " but got " + actual.toString() + ".");
+}
+
+public fun assertNotEqual<T: object>(left: T, right: T): void
+{
+    if (left == right) throw AssertionException("Expected values to differ, but both were " + left.toString() + ".");
+}
+
+public fun assertTrue(value: bool, message: string = "Expected true."): void
+{
+    if (!value) throw AssertionException(message);
+}
+
+public fun assertFalse(value: bool, message: string = "Expected false."): void
+{
+    if (value) throw AssertionException(message);
+}
+
+public fun assertGreaterThan(left: int, right: int, message: string = "Left is not greater than right."): void
+{
+    if (left <= right) throw AssertionException(message);
+}
+
+public fun assertGreaterThan(left: float, right: float, message: string = "Left is not greater than right."): void
+{
+    if (left <= right) throw AssertionException(message);
+}
+
+public fun assertGreaterOrEqual(left: int, right: int, message: string = "Left is not greater than or equal to right."): void
+{
+    if (left < right) throw AssertionException(message);
+}
+
+public fun assertGreaterOrEqual(left: float, right: float, message: string = "Left is not greater than or equal to right."): void
+{
+    if (left < right) throw AssertionException(message);
+}
+
+public fun assertLessThan(left: int, right: int, message: string = "Left is not less than right."): void
+{
+    if (left >= right) throw AssertionException(message);
+}
+
+public fun assertLessThan(left: float, right: float, message: string = "Left is not less than right."): void
+{
+    if (left >= right) throw AssertionException(message);
+}
+
+public fun assertLessOrEqual(left: int, right: int, message: string = "Left is not less than or equal to right."): void
+{
+    if (left > right) throw AssertionException(message);
+}
+
+public fun assertLessOrEqual(left: float, right: float, message: string = "Left is not less than or equal to right."): void
+{
+    if (left > right) throw AssertionException(message);
+}
+
+public fun assertNotNull<T>(value: T, message: string = "Value is null."): void
+{
+    if (value == null) throw AssertionException(message);
+}
+
+public fun assertNull<T>(value: T, message: string = "Value is not null."): void
+{
+    if (value != null) throw AssertionException(message);
+}
+
+public fun assertEmpty(collection: IIterable<unknown>, message: string = "Collection is not empty."): void
+{
+    if (collection.iterate().moveNext()) throw AssertionException(message);
+}
+
+public fun assertNotEmpty(collection: IIterable<unknown>, message: string = "Collection is empty."): void
+{
+    if (!collection.iterate().moveNext()) throw AssertionException(message);
+}
+
+public fun assertThrows(action: () -> void, message: string = "Expected exception was not thrown."): void
+{
+    var threw = false;
+    try { action(); }
+    catch (e: Exception) { threw = true; }
+    if (!threw) throw AssertionException(message);
+}

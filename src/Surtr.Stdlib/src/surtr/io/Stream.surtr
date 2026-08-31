@@ -1,0 +1,110 @@
+import surtr.io.Enums;
+import surtr.core.byte;
+
+public interface IWritableStream : IDisposable
+{
+    fun write(buffer: bytes, offset: int, count: int): int;
+    fun writeByte(value: int): bool;
+
+    fun flush(): void;
+}
+
+public interface IReadableStream : IDisposable
+{
+    eof: bool { get; }
+
+    fun read(buffer: bytes, offset: int, count: int): int;
+    fun readByte(): int;
+}
+
+public interface ISeekableStream : IDisposable
+{
+    fun seek(offset: int, origin: SeekOrigin): int;
+}
+
+// Every io/ type used to throw a hand-written InvalidOperationException("... is closed") at its
+// own "am I disposed" check - seven copies of the same message across five files, indistinguishable
+// from any other InvalidOperationException at a catch site. Declared here (not core/Exception.surtr)
+// so every io/ file already importing this module sees it with no extra import.
+public class ObjectDisposedException : Exception
+{
+    public constructor(message: string = "Cannot access a disposed object.") : super(message) {}
+}
+
+// A structured read (readInt/readChar/readBytes/readString in BinaryReader, and anything built on
+// top of them) that starts consuming a multi-byte value and then runs out of stream mid-value has
+// nothing sane to return - unlike a clean EOF before the value even starts, which stays a soft
+// signal (an int 0, a null string terminator, ...) the same way Stream.readByte() returns -1.
+public class EndOfStreamException : Exception
+{
+    public constructor(message: string = "Attempted to read past the end of the stream.") : super(message) {}
+}
+
+public abstract class Stream : IWritableStream, IReadableStream, ISeekableStream
+{
+    public abstract canRead: bool { get; }
+    public abstract canWrite: bool { get; }
+    public abstract canSeek: bool { get; }
+    public abstract eof: bool { get; }
+
+    public abstract length: int { get; }
+    public abstract position: int { get; set; }
+
+    public abstract fun read(buffer: bytes, offset: int, count: int): int;
+    public abstract fun write(buffer: bytes, offset: int, count: int): int;
+
+    public abstract fun readByte(): int;
+    public abstract fun writeByte(value: int): bool;
+
+    public abstract fun seek(offset: int, origin: SeekOrigin): int;
+    public abstract fun setLength(value: int): void;
+
+    public abstract fun flush(): void;
+    public abstract fun dispose(): void;
+
+
+    // Convenience methods //
+
+    public inline fun read(buffer: bytes): int => read(buffer, 0, buffer.length);
+    public inline fun write(buffer: bytes): int => write(buffer, 0, buffer.length);
+
+    public inline fun close(): void => dispose();
+
+    // byte-typed convenience overloads //
+
+    // Writes a single typed byte; delegates to writeByte(int), so the same EOF/length
+    // semantics apply. Lets callers keep a byte in hand instead of an untyped int.
+    // (Named writeByteValue rather than an overload of writeByte, because byte flattens
+    // to int and would otherwise collide with writeByte(int).)
+    public inline fun writeByteValue(value: byte): bool => writeByte(value.toInt());
+
+    // Reads one typed byte. Unlike readByte(), which returns -1 at end-of-stream, this
+    // assumes data is available and throws if the stream is exhausted.
+    public fun readByteValue(): byte
+    {
+        let v = this.readByte();
+        if (v < 0) throw InvalidOperationException("Cannot read a byte past the end of the stream");
+        return byte(v);
+    }
+
+    // Copies every byte from this stream into destination, returning the total copied.
+    public fun copyTo(destination: Stream): int => copyTo(destination, 8192);
+
+    public fun copyTo(destination: Stream, bufferSize: int): int
+    {
+        if (bufferSize <= 0) throw ArgumentOutOfRangeException("bufferSize must be greater than 0");
+
+        let buffer = bytes.repeat(0, bufferSize);
+        var total = 0;
+        var read = this.read(buffer, 0, bufferSize);
+
+        while (read > 0)
+        {
+            destination.write(buffer, 0, read);
+            total = total + read;
+            read = this.read(buffer, 0, bufferSize);
+        }
+
+        return total;
+    }
+}

@@ -514,6 +514,15 @@ namespace Surtr.Compiler.Binding
             var from = source.NonNullable;
             var to = destination.NonNullable;
 
+            // §5.3: a tuple's element names are sugar for the positions and never join the
+            // signature, so `(x: int, y: string)` and `(int, string)` are the same tuple type even
+            // though the factory interns them as separate objects. That sameness has to be called
+            // out as identity here, before the structural-variance rule below classifies it as an
+            // ImplicitReference — which the emitter would honor by packing the tuple, the wrong
+            // thing for two types that share a layout.
+            if (from is TupleTypeSymbol tupleFrom && to is TupleTypeSymbol tupleTo && SameTupleShape(tupleFrom, tupleTo))
+                return Conversion.Identity;
+
             // §5.7 names exactly one implicit numeric widening, and mixing an int with a float is
             // what makes overload resolution non-trivial in the first place.
             if (from.SpecialType == SpecialType.Int && to.SpecialType == SpecialType.Float)
@@ -539,6 +548,24 @@ namespace Surtr.Compiler.Binding
         /// <summary>Whether a type is an enum marked <c>@Flags</c>, whose values are single ints (§P14).</summary>
         private static bool IsFlagsEnum(TypeSymbol type)
             => type is NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum, IsFlagsEnum: true };
+
+        /// <summary>
+        /// Whether two tuples have the same element types in the same order. Element types are
+        /// interned, so reference identity is the comparison; names never participate (§5.3).
+        /// </summary>
+        private static bool SameTupleShape(TupleTypeSymbol from, TupleTypeSymbol to)
+        {
+            if (from.ElementTypes.Count != to.ElementTypes.Count)
+                return false;
+
+            for (int i = 0; i < from.ElementTypes.Count; i++)
+            {
+                if (!ReferenceEquals(from.ElementTypes[i], to.ElementTypes[i]))
+                    return false;
+            }
+
+            return true;
+        }
 
         private Conversion ClassifyExplicit(TypeSymbol source, TypeSymbol destination)
         {

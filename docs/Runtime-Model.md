@@ -628,9 +628,16 @@ correspondingly the bare family symbol (`A`, `D`, `T`, `L`), deliberately *not* 
 descriptor: it names the family and says nothing about parameters, which is exactly what the class
 knows.
 
-**There is no root `object` class.** Every built-in sits at depth 0 in its own hierarchy. A common
-root would only earn its keep if values of unrelated types had to be held in one place, which a
-language with no top type never requires.
+**`object` is the root every class extends by default.** Stateless (no fields, no constructors) and
+declared first among the built-ins, so `Declare`/`DeclareObject` can default every other one's base
+to it. It carries `equals`/`hashCode`/`toString` as `Virtual` members, delegating to
+`SurtrValueComparer` so `x.equals(y)` and `x == y` can never disagree. Every primitive and built-in
+composite extends it too, and is declared `sealed` — nothing extends `int` or `array` by name, so a
+call site whose receiver's static type is one of them devirtualises for free, the same as any other
+`sealed` class. `Enum` and `ValueType` are two more stateless classes between it and, respectively,
+every concrete enum and every `value class` — `CLAUDE.md`'s "The built-in classes" section has the
+rest, including why neither declares `equals`/`hashCode`/`toString` of its own (their concrete
+subclasses already get real ones from `EnumMemberSynthesizer`/`ValueMemberSynthesizer`).
 
 `array` and `dict` declare **real generic parameters** — `T`, and `K`/`V` — and their
 element-polymorphic members are declared against them through `G<n>`. `G0` resolves to

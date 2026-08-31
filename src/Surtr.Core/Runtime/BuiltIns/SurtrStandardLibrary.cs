@@ -43,7 +43,7 @@ namespace Surtr.Runtime.BuiltIns
             builder.Field("_message", SurtrClassReference.String);
 
             builder.Property("message", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&ExceptionMessage), isPure: true);
-            builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&ExceptionToString), isPure: true);
+            builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&ExceptionToString), isPure: true, dispatch: SurtrMethodDispatch.Virtual, isOverride: true);
 
             builder.Constructor(
                 SurtrNativeEntryPoint.FromFunctionPointer(&ExceptionConstruct),

@@ -1,6 +1,7 @@
 #nullable enable
 
 using System;
+using System.Collections.Generic;
 
 namespace Surtr.Compiler.Compilation
 {
@@ -93,6 +94,67 @@ namespace Surtr.Compiler.Compilation
             text = System.IO.File.ReadAllText(file);
             diagnosticPath = file;
             return true;
+        }
+    }
+
+    /// <summary>
+    /// Chains several providers in order: the first one that knows a module wins, and one that
+    /// answers <see langword="false"/> is not an error, exactly as <see cref="ISourceProvider"/>'s
+    /// own remarks already describe - this is what actually implements chaining several of them
+    /// together, rather than every host writing that loop by hand.
+    /// </summary>
+    public sealed class CompositeSourceProvider : ISourceProvider
+    {
+        private readonly ISourceProvider[] _providers;
+
+        /// <summary>Creates a provider that tries each of <paramref name="providers"/> in order.</summary>
+        public CompositeSourceProvider(params ISourceProvider[] providers)
+        {
+            _providers = providers ?? throw new ArgumentNullException(nameof(providers));
+        }
+
+        /// <inheritdoc/>
+        public bool TryGetSource(string modulePath, out string text, out string diagnosticPath)
+        {
+            foreach (var provider in _providers)
+            {
+                if (provider.TryGetSource(modulePath, out text, out diagnosticPath))
+                    return true;
+            }
+
+            text = string.Empty;
+            diagnosticPath = string.Empty;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// A pure in-memory <see cref="ISourceProvider"/>: a fixed map of module path to source text,
+    /// for a host that already has its scripts as data (a manifest, a database row, an asset
+    /// already loaded) and wants lazy import resolution with nothing filesystem-shaped in between.
+    /// </summary>
+    public sealed class DictionarySourceProvider : ISourceProvider
+    {
+        private readonly IReadOnlyDictionary<string, string> _sources;
+
+        /// <summary>Creates a provider backed by a fixed module-path-to-source-text map.</summary>
+        public DictionarySourceProvider(IReadOnlyDictionary<string, string> sources)
+        {
+            _sources = sources ?? throw new ArgumentNullException(nameof(sources));
+        }
+
+        /// <inheritdoc/>
+        public bool TryGetSource(string modulePath, out string text, out string diagnosticPath)
+        {
+            if (_sources.TryGetValue(modulePath, out text!))
+            {
+                diagnosticPath = modulePath;
+                return true;
+            }
+
+            text = string.Empty;
+            diagnosticPath = string.Empty;
+            return false;
         }
     }
 }

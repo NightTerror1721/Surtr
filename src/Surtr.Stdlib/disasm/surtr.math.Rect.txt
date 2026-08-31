@@ -1,0 +1,579 @@
+module surtr.math.Rect
+  constants: 5   types: 0   fields: 0   methods: 19   modules: 0
+  string #2 = "("
+  string #3 = ", "
+  string #4 = ")"
+
+  method table:
+    #0  surtr.math.Rect:Rect.ctor(float, float, float, float) -> void
+    #1  surtr.math.Rect:Rect.get_zero() -> surtr.math.Rect:Rect
+    #2  surtr.math.Rect:Rect.fromCorners(surtr.math.Vector:Vector2, surtr.math.Vector:Vector2) -> surtr.math.Rect:Rect
+    #3  surtr.math.Rect:Rect.get_xMin() -> float
+    #4  surtr.math.Rect:Rect.get_yMin() -> float
+    #5  surtr.math.Rect:Rect.get_xMax() -> float
+    #6  surtr.math.Rect:Rect.get_yMax() -> float
+    #7  surtr.math.Rect:Rect.get_center() -> surtr.math.Vector:Vector2
+    #8  surtr.math.Rect:Rect.get_min() -> surtr.math.Vector:Vector2
+    #9  surtr.math.Rect:Rect.get_max() -> surtr.math.Vector:Vector2
+    #10  surtr.math.Rect:Rect.get_size() -> surtr.math.Vector:Vector2
+    #11  surtr.math.Rect:Rect.get_area() -> float
+    #12  surtr.math.Rect:Rect.contains(surtr.math.Vector:Vector2) -> bool
+    #13  surtr.math.Rect:Rect.overlaps(surtr.math.Rect:Rect) -> bool
+    #14  surtr.math.Rect:Rect.union(surtr.math.Rect:Rect, surtr.math.Rect:Rect) -> surtr.math.Rect:Rect
+    #15  surtr.math.Rect:Rect.toString() -> string
+    #16  surtr.math.Rect:Rect.op_==(surtr.math.Rect:Rect, surtr.math.Rect:Rect) -> bool
+    #17  surtr.math.Rect:Rect.equals(surtr.math.Rect:Rect) -> bool
+    #18  float.toString() -> string
+
+sealed class Rect : surtr:ValueType  [public]
+  [public] readonly field height: float
+  [public] readonly field width: float
+  [public] readonly field x: float
+  [public] readonly field y: float
+
+  @surtr:Pure
+  [public] property area: float { get; }
+    get:
+      ; entry 11, locals 9, stack 5, code 0155..0171
+        0155  LoadValueLocal 0 x4
+        0159  StoreValueLocal 1 x4
+        015D  LoadLocalField 1+2
+        0162  LoadValueLocal 0 x4
+        0166  StoreValueLocal 5 x4
+        016A  LoadLocalField 5+3
+        016F  FMul
+        0170  ReturnValue
+
+  @surtr:Pure
+  [public] property center: surtr.math.Vector:Vector2 { get; }
+    get:
+      ; entry 7, locals 19, stack 5, code 0091..00D3
+        0091  LoadValueLocal 0 x4
+        0095  StoreValueLocal 2 x4
+        0099  LoadLocalField 2+0
+        009E  LoadValueLocal 0 x4
+        00A2  StoreValueLocal 6 x4
+        00A6  LoadLocalField 6+2
+        00AB  Ldc1
+        00AC  FMul
+        00AD  FAdd
+        00AE  Stl1
+        00AF  LoadValueLocal 0 x4
+        00B3  StoreValueLocal 11 x4
+        00B7  LoadLocalField 11+1
+        00BC  LoadValueLocal 0 x4
+        00C0  StoreValueLocal 15 x4
+        00C4  LoadLocalField 15+3
+        00C9  Ldc1
+        00CA  FMul
+        00CB  FAdd
+        00CC  StlS 10
+        00CE  Ldl1
+        00CF  LdlS 10
+        00D1  ReturnValues 2
+
+  @surtr:Pure
+  [public] property max: surtr.math.Vector:Vector2 { get; }
+    get:
+      ; entry 9, locals 19, stack 5, code 00F5..0133
+        00F5  LoadValueLocal 0 x4
+        00F9  StoreValueLocal 2 x4
+        00FD  LoadLocalField 2+0
+        0102  LoadValueLocal 0 x4
+        0106  StoreValueLocal 6 x4
+        010A  LoadLocalField 6+2
+        010F  FAdd
+        0110  Stl1
+        0111  LoadValueLocal 0 x4
+        0115  StoreValueLocal 11 x4
+        0119  LoadLocalField 11+1
+        011E  LoadValueLocal 0 x4
+        0122  StoreValueLocal 15 x4
+        0126  LoadLocalField 15+3
+        012B  FAdd
+        012C  StlS 10
+        012E  Ldl1
+        012F  LdlS 10
+        0131  ReturnValues 2
+
+  @surtr:Pure
+  [public] property min: surtr.math.Vector:Vector2 { get; }
+    get:
+      ; entry 8, locals 11, stack 4, code 00D3..00F5
+        00D3  LoadValueLocal 0 x4
+        00D7  StoreValueLocal 2 x4
+        00DB  LoadLocalField 2+0
+        00E0  Stl1
+        00E1  LoadValueLocal 0 x4
+        00E5  StoreValueLocal 7 x4
+        00E9  LoadLocalField 7+1
+        00EE  StlS 6
+        00F0  Ldl1
+        00F1  LdlS 6
+        00F3  ReturnValues 2
+
+  @surtr:Pure
+  [public] property size: surtr.math.Vector:Vector2 { get; }
+    get:
+      ; entry 10, locals 11, stack 4, code 0133..0155
+        0133  LoadValueLocal 0 x4
+        0137  StoreValueLocal 2 x4
+        013B  LoadLocalField 2+2
+        0140  Stl1
+        0141  LoadValueLocal 0 x4
+        0145  StoreValueLocal 7 x4
+        0149  LoadLocalField 7+3
+        014E  StlS 6
+        0150  Ldl1
+        0151  LdlS 6
+        0153  ReturnValues 2
+
+  @surtr:Pure
+  [public] property xMax: float { get; }
+    get:
+      ; entry 5, locals 9, stack 5, code 0059..0075
+        0059  LoadValueLocal 0 x4
+        005D  StoreValueLocal 1 x4
+        0061  LoadLocalField 1+0
+        0066  LoadValueLocal 0 x4
+        006A  StoreValueLocal 5 x4
+        006E  LoadLocalField 5+2
+        0073  FAdd
+        0074  ReturnValue
+
+  @surtr:Pure
+  [public] property xMin: float { get; }
+    get:
+      ; entry 3, locals 5, stack 4, code 003D..004B
+        003D  LoadValueLocal 0 x4
+        0041  StoreValueLocal 1 x4
+        0045  LoadLocalField 1+0
+        004A  ReturnValue
+
+  @surtr:Pure
+  [public] property yMax: float { get; }
+    get:
+      ; entry 6, locals 9, stack 5, code 0075..0091
+        0075  LoadValueLocal 0 x4
+        0079  StoreValueLocal 1 x4
+        007D  LoadLocalField 1+1
+        0082  LoadValueLocal 0 x4
+        0086  StoreValueLocal 5 x4
+        008A  LoadLocalField 5+3
+        008F  FAdd
+        0090  ReturnValue
+
+  @surtr:Pure
+  [public] property yMin: float { get; }
+    get:
+      ; entry 4, locals 5, stack 4, code 004B..0059
+        004B  LoadValueLocal 0 x4
+        004F  StoreValueLocal 1 x4
+        0053  LoadLocalField 1+1
+        0058  ReturnValue
+
+  [public] static property zero: surtr.math.Rect:Rect { get; }
+    get:
+      ; entry 1, locals 4, stack 4, code 0001..000F
+        0001  Ldc0
+        0002  Stl0
+        0003  Ldc0
+        0004  Stl1
+        0005  Ldc0
+        0006  Stl2
+        0007  Ldc0
+        0008  Stl3
+        0009  Ldl0
+        000A  Ldl1
+        000B  Ldl2
+        000C  Ldl3
+        000D  ReturnValues 4
+
+  @surtr:Pure
+  [public] contains(point: surtr.math.Vector:Vector2): bool
+    ; entry 12, locals 46, stack 6, code 0171..0212
+      0171  LoadLocalField 4+0
+      0176  LoadValueLocal 0 x4
+      017A  StoreValueLocal 6 x4
+      017E  LoadValueLocal 6 x4
+      0182  StoreValueLocal 10 x4
+      0186  LoadLocalField 10+0
+      018B  FGE
+      018C  Dup
+      018D  JPZ +45 -> L0 (01BD)
+      0190  Pop
+      0191  LoadLocalField 4+0
+      0196  LoadValueLocal 0 x4
+      019A  StoreValueLocal 14 x4
+      019E  LoadValueLocal 14 x4
+      01A2  StoreValueLocal 18 x4
+      01A6  LoadLocalField 18+0
+      01AB  LoadValueLocal 14 x4
+      01AF  StoreValueLocal 22 x4
+      01B3  LoadLocalField 22+2
+      01B8  FAdd
+      01B9  FLE
+      01BA  JP +0 -> L0 (01BD)
+    L0:
+      01BD  Dup
+      01BE  JPZ +31 -> L1 (01E0)
+      01C1  Pop
+      01C2  LoadLocalField 4+1
+      01C7  LoadValueLocal 0 x4
+      01CB  StoreValueLocal 26 x4
+      01CF  LoadValueLocal 26 x4
+      01D3  StoreValueLocal 30 x4
+      01D7  LoadLocalField 30+1
+      01DC  FGE
+      01DD  JP +0 -> L1 (01E0)
+    L1:
+      01E0  Dup
+      01E1  JPZ +45 -> L2 (0211)
+      01E4  Pop
+      01E5  LoadLocalField 4+1
+      01EA  LoadValueLocal 0 x4
+      01EE  StoreValueLocal 34 x4
+      01F2  LoadValueLocal 34 x4
+      01F6  StoreValueLocal 38 x4
+      01FA  LoadLocalField 38+1
+      01FF  LoadValueLocal 34 x4
+      0203  StoreValueLocal 42 x4
+      0207  LoadLocalField 42+3
+      020C  FAdd
+      020D  FLE
+      020E  JP +0 -> L2 (0211)
+    L2:
+      0211  ReturnValue
+
+  [public] ctor (x: float, y: float, width: float, height: float): void
+    ; entry 0, locals 8, stack 0, code 0000..0001
+      0000  ReturnVoid
+
+  [public] equals(other: surtr.math.Rect:Rect): bool
+    ; entry 17, locals 8, stack 8, code 05B3..05C1
+      05B3  LoadValueLocal 0 x4
+      05B7  LoadValueLocal 4 x4
+      05BB  InvokeStatic 16 (op_==) args=8 ret=1
+      05C0  ReturnValue
+
+  [public] static fromCorners(min: surtr.math.Vector:Vector2, max: surtr.math.Vector:Vector2): surtr.math.Rect:Rect
+    ; entry 2, locals 8, stack 4, code 000F..003D
+      000F  LoadLocalField 0+0
+      0014  Stl4
+      0015  LoadLocalField 0+1
+      001A  Stl5
+      001B  LoadLocalField 2+0
+      0020  LoadLocalField 0+0
+      0025  FSub
+      0026  StlS 6
+      0028  LoadLocalField 2+1
+      002D  LoadLocalField 0+1
+      0032  FSub
+      0033  StlS 7
+      0035  Ldl4
+      0036  Ldl5
+      0037  LdlS 6
+      0039  LdlS 7
+      003B  ReturnValues 4
+
+  @surtr:Pure
+  [public] static op_==(a: surtr.math.Rect:Rect, b: surtr.math.Rect:Rect): bool
+    ; entry 16, locals 8, stack 2, code 056E..05B3
+      056E  LoadLocalField 0+0
+      0573  LoadLocalField 4+0
+      0578  FEQ
+      0579  Dup
+      057A  JPZ +15 -> L0 (058C)
+      057D  Pop
+      057E  LoadLocalField 0+1
+      0583  LoadLocalField 4+1
+      0588  FEQ
+      0589  JP +0 -> L0 (058C)
+    L0:
+      058C  Dup
+      058D  JPZ +15 -> L1 (059F)
+      0590  Pop
+      0591  LoadLocalField 0+2
+      0596  LoadLocalField 4+2
+      059B  FEQ
+      059C  JP +0 -> L1 (059F)
+    L1:
+      059F  Dup
+      05A0  JPZ +15 -> L2 (05B2)
+      05A3  Pop
+      05A4  LoadLocalField 0+3
+      05A9  LoadLocalField 4+3
+      05AE  FEQ
+      05AF  JP +0 -> L2 (05B2)
+    L2:
+      05B2  ReturnValue
+
+  @surtr:Pure
+  [public] overlaps(other: surtr.math.Rect:Rect): bool
+    ; entry 13, locals 88, stack 6, code 0212..030F
+      0212  LoadValueLocal 0 x4
+      0216  StoreValueLocal 8 x4
+      021A  LoadValueLocal 8 x4
+      021E  StoreValueLocal 12 x4
+      0222  LoadLocalField 12+0
+      0227  LoadValueLocal 4 x4
+      022B  StoreValueLocal 16 x4
+      022F  LoadValueLocal 16 x4
+      0233  StoreValueLocal 20 x4
+      0237  LoadLocalField 20+0
+      023C  LoadValueLocal 16 x4
+      0240  StoreValueLocal 24 x4
+      0244  LoadLocalField 24+2
+      0249  FAdd
+      024A  FLT
+      024B  Dup
+      024C  JPZ +61 -> L0 (028C)
+      024F  Pop
+      0250  LoadValueLocal 0 x4
+      0254  StoreValueLocal 28 x4
+      0258  LoadValueLocal 28 x4
+      025C  StoreValueLocal 32 x4
+      0260  LoadLocalField 32+0
+      0265  LoadValueLocal 28 x4
+      0269  StoreValueLocal 36 x4
+      026D  LoadLocalField 36+2
+      0272  FAdd
+      0273  LoadValueLocal 4 x4
+      0277  StoreValueLocal 40 x4
+      027B  LoadValueLocal 40 x4
+      027F  StoreValueLocal 44 x4
+      0283  LoadLocalField 44+0
+      0288  FGT
+      0289  JP +0 -> L0 (028C)
+    L0:
+      028C  Dup
+      028D  JPZ +61 -> L1 (02CD)
+      0290  Pop
+      0291  LoadValueLocal 0 x4
+      0295  StoreValueLocal 48 x4
+      0299  LoadValueLocal 48 x4
+      029D  StoreValueLocal 52 x4
+      02A1  LoadLocalField 52+1
+      02A6  LoadValueLocal 4 x4
+      02AA  StoreValueLocal 56 x4
+      02AE  LoadValueLocal 56 x4
+      02B2  StoreValueLocal 60 x4
+      02B6  LoadLocalField 60+1
+      02BB  LoadValueLocal 56 x4
+      02BF  StoreValueLocal 64 x4
+      02C3  LoadLocalField 64+3
+      02C8  FAdd
+      02C9  FLT
+      02CA  JP +0 -> L1 (02CD)
+    L1:
+      02CD  Dup
+      02CE  JPZ +61 -> L2 (030E)
+      02D1  Pop
+      02D2  LoadValueLocal 0 x4
+      02D6  StoreValueLocal 68 x4
+      02DA  LoadValueLocal 68 x4
+      02DE  StoreValueLocal 72 x4
+      02E2  LoadLocalField 72+1
+      02E7  LoadValueLocal 68 x4
+      02EB  StoreValueLocal 76 x4
+      02EF  LoadLocalField 76+3
+      02F4  FAdd
+      02F5  LoadValueLocal 4 x4
+      02F9  StoreValueLocal 80 x4
+      02FD  LoadValueLocal 80 x4
+      0301  StoreValueLocal 84 x4
+      0305  LoadLocalField 84+1
+      030A  FGT
+      030B  JP +0 -> L2 (030E)
+    L2:
+      030E  ReturnValue
+
+  @surtr:Pure
+  [public] virtual override toString(): string
+    ; entry 15, locals 20, stack 11, code 0513..056E
+      0513  Ldl0
+      0514  UnboxValue 4
+      0516  StoreValueLocal 0 x4
+      051A  Ldc2
+      051B  LoadValueLocal 0 x4
+      051F  StoreValueLocal 4 x4
+      0523  LoadLocalField 4+0
+      0528  BoxFloat
+      0529  InvokeVirtual 18 (toString) args=1 ret=1
+      052E  Ldc3
+      052F  LoadValueLocal 0 x4
+      0533  StoreValueLocal 8 x4
+      0537  LoadLocalField 8+1
+      053C  BoxFloat
+      053D  InvokeVirtual 18 (toString) args=1 ret=1
+      0542  Ldc3
+      0543  LoadValueLocal 0 x4
+      0547  StoreValueLocal 12 x4
+      054B  LoadLocalField 12+2
+      0550  BoxFloat
+      0551  InvokeVirtual 18 (toString) args=1 ret=1
+      0556  Ldc3
+      0557  LoadValueLocal 0 x4
+      055B  StoreValueLocal 16 x4
+      055F  LoadLocalField 16+3
+      0564  BoxFloat
+      0565  InvokeVirtual 18 (toString) args=1 ret=1
+      056A  Ldc4
+      056B  StrCat 9
+      056D  ReturnValue
+
+  [public] static union(a: surtr.math.Rect:Rect, b: surtr.math.Rect:Rect): surtr.math.Rect:Rect
+    ; entry 14, locals 176, stack 6, code 030F..0513
+      030F  LoadValueLocal 0 x4
+      0313  StoreValueLocal 9 x4
+      0317  LoadValueLocal 9 x4
+      031B  StoreValueLocal 13 x4
+      031F  LoadLocalField 13+0
+      0324  LoadValueLocal 4 x4
+      0328  StoreValueLocal 17 x4
+      032C  LoadValueLocal 17 x4
+      0330  StoreValueLocal 21 x4
+      0334  LoadLocalField 21+0
+      0339  FLT
+      033A  JPZ +24 -> L0 (0355)
+      033D  LoadValueLocal 0 x4
+      0341  StoreValueLocal 25 x4
+      0345  LoadValueLocal 25 x4
+      0349  StoreValueLocal 29 x4
+      034D  LoadLocalField 29+0
+      0352  JP +21 -> L1 (036A)
+    L0:
+      0355  LoadValueLocal 4 x4
+      0359  StoreValueLocal 33 x4
+      035D  LoadValueLocal 33 x4
+      0361  StoreValueLocal 37 x4
+      0365  LoadLocalField 37+0
+    L1:
+      036A  StlS 8
+      036C  LoadValueLocal 0 x4
+      0370  StoreValueLocal 42 x4
+      0374  LoadValueLocal 42 x4
+      0378  StoreValueLocal 46 x4
+      037C  LoadLocalField 46+1
+      0381  LoadValueLocal 4 x4
+      0385  StoreValueLocal 50 x4
+      0389  LoadValueLocal 50 x4
+      038D  StoreValueLocal 54 x4
+      0391  LoadLocalField 54+1
+      0396  FLT
+      0397  JPZ +24 -> L2 (03B2)
+      039A  LoadValueLocal 0 x4
+      039E  StoreValueLocal 58 x4
+      03A2  LoadValueLocal 58 x4
+      03A6  StoreValueLocal 62 x4
+      03AA  LoadLocalField 62+1
+      03AF  JP +21 -> L3 (03C7)
+    L2:
+      03B2  LoadValueLocal 4 x4
+      03B6  StoreValueLocal 66 x4
+      03BA  LoadValueLocal 66 x4
+      03BE  StoreValueLocal 70 x4
+      03C2  LoadLocalField 70+1
+    L3:
+      03C7  StlS 41
+      03C9  LoadValueLocal 0 x4
+      03CD  StoreValueLocal 75 x4
+      03D1  LoadValueLocal 75 x4
+      03D5  StoreValueLocal 79 x4
+      03D9  LoadLocalField 79+0
+      03DE  LoadValueLocal 75 x4
+      03E2  StoreValueLocal 83 x4
+      03E6  LoadLocalField 83+2
+      03EB  FAdd
+      03EC  LoadValueLocal 4 x4
+      03F0  StoreValueLocal 87 x4
+      03F4  LoadValueLocal 87 x4
+      03F8  StoreValueLocal 91 x4
+      03FC  LoadLocalField 91+0
+      0401  LoadValueLocal 87 x4
+      0405  StoreValueLocal 95 x4
+      0409  LoadLocalField 95+2
+      040E  FAdd
+      040F  FGT
+      0410  JPZ +38 -> L4 (0439)
+      0413  LoadValueLocal 0 x4
+      0417  StoreValueLocal 99 x4
+      041B  LoadValueLocal 99 x4
+      041F  StoreValueLocal 103 x4
+      0423  LoadLocalField 103+0
+      0428  LoadValueLocal 99 x4
+      042C  StoreValueLocal 107 x4
+      0430  LoadLocalField 107+2
+      0435  FAdd
+      0436  JP +35 -> L5 (045C)
+    L4:
+      0439  LoadValueLocal 4 x4
+      043D  StoreValueLocal 111 x4
+      0441  LoadValueLocal 111 x4
+      0445  StoreValueLocal 115 x4
+      0449  LoadLocalField 115+0
+      044E  LoadValueLocal 111 x4
+      0452  StoreValueLocal 119 x4
+      0456  LoadLocalField 119+2
+      045B  FAdd
+    L5:
+      045C  StlS 74
+      045E  LoadValueLocal 0 x4
+      0462  StoreValueLocal 124 x4
+      0466  LoadValueLocal 124 x4
+      046A  StoreValueLocal 128 x4
+      046E  LoadLocalField 128+1
+      0473  LoadValueLocal 124 x4
+      0477  StoreValueLocal 132 x4
+      047B  LoadLocalField 132+3
+      0480  FAdd
+      0481  LoadValueLocal 4 x4
+      0485  StoreValueLocal 136 x4
+      0489  LoadValueLocal 136 x4
+      048D  StoreValueLocal 140 x4
+      0491  LoadLocalField 140+1
+      0496  LoadValueLocal 136 x4
+      049A  StoreValueLocal 144 x4
+      049E  LoadLocalField 144+3
+      04A3  FAdd
+      04A4  FGT
+      04A5  JPZ +38 -> L6 (04CE)
+      04A8  LoadValueLocal 0 x4
+      04AC  StoreValueLocal 148 x4
+      04B0  LoadValueLocal 148 x4
+      04B4  StoreValueLocal 152 x4
+      04B8  LoadLocalField 152+1
+      04BD  LoadValueLocal 148 x4
+      04C1  StoreValueLocal 156 x4
+      04C5  LoadLocalField 156+3
+      04CA  FAdd
+      04CB  JP +35 -> L7 (04F1)
+    L6:
+      04CE  LoadValueLocal 4 x4
+      04D2  StoreValueLocal 160 x4
+      04D6  LoadValueLocal 160 x4
+      04DA  StoreValueLocal 164 x4
+      04DE  LoadLocalField 164+1
+      04E3  LoadValueLocal 160 x4
+      04E7  StoreValueLocal 168 x4
+      04EB  LoadLocalField 168+3
+      04F0  FAdd
+    L7:
+      04F1  StlS 123
+      04F3  LdlS 8
+      04F5  StlS 172
+      04F7  LdlS 41
+      04F9  StlS 173
+      04FB  LdlS 74
+      04FD  LdlS 8
+      04FF  FSub
+      0500  StlS 174
+      0502  LdlS 123
+      0504  LdlS 41
+      0506  FSub
+      0507  StlS 175
+      0509  LdlS 172
+      050B  LdlS 173
+      050D  LdlS 174
+      050F  LdlS 175
+      0511  ReturnValues 4

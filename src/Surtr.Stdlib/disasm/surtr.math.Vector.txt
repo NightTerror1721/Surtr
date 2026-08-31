@@ -1,0 +1,1718 @@
+module surtr.math.Vector
+  constants: 7   types: 2   fields: 0   methods: 88   modules: 1
+  string #4 = "("
+  string #5 = ", "
+  string #6 = ")"
+
+  type table:
+    #0  surtr.math.Vector:Vector2Int
+    #1  surtr.math.Vector:Vector3Int
+
+  method table:
+    #0  surtr.math.Vector:Vector2.ctor(float, float) -> void
+    #1  surtr.math.Vector:Vector2.get_zero() -> surtr.math.Vector:Vector2
+    #2  surtr.math.Vector:Vector2.get_one() -> surtr.math.Vector:Vector2
+    #3  surtr.math.Vector:Vector2.get_up() -> surtr.math.Vector:Vector2
+    #4  surtr.math.Vector:Vector2.get_down() -> surtr.math.Vector:Vector2
+    #5  surtr.math.Vector:Vector2.get_left() -> surtr.math.Vector:Vector2
+    #6  surtr.math.Vector:Vector2.get_right() -> surtr.math.Vector:Vector2
+    #7  surtr.math.Vector:Vector2.lengthSquared() -> float
+    #8  surtr.math.Vector:Vector2.length() -> float
+    #9  surtr.math.Vector:Vector2.normalized() -> surtr.math.Vector:Vector2
+    #10  surtr.math.Vector:Vector2.dot(surtr.math.Vector:Vector2) -> float
+    #11  surtr.math.Vector:Vector2.toString() -> string
+    #12  surtr.math.Vector:Vector2.distance(surtr.math.Vector:Vector2, surtr.math.Vector:Vector2) -> float
+    #13  surtr.math.Vector:Vector2.lerp(surtr.math.Vector:Vector2, surtr.math.Vector:Vector2, float) -> surtr.math.Vector:Vector2
+    #14  surtr.math.Vector:Vector2.op_+(surtr.math.Vector:Vector2, surtr.math.Vector:Vector2) -> surtr.math.Vector:Vector2
+    #15  surtr.math.Vector:Vector2.op_-(surtr.math.Vector:Vector2, surtr.math.Vector:Vector2) -> surtr.math.Vector:Vector2
+    #16  surtr.math.Vector:Vector2.op_*(surtr.math.Vector:Vector2, float) -> surtr.math.Vector:Vector2
+    #17  surtr.math.Vector:Vector2.op_*(float, surtr.math.Vector:Vector2) -> surtr.math.Vector:Vector2
+    #18  surtr.math.Vector:Vector2.op_/(surtr.math.Vector:Vector2, float) -> surtr.math.Vector:Vector2
+    #19  surtr.math.Vector:Vector2.op_-u(surtr.math.Vector:Vector2) -> surtr.math.Vector:Vector2
+    #20  surtr.math.Vector:Vector2.op_==(surtr.math.Vector:Vector2, surtr.math.Vector:Vector2) -> bool
+    #21  surtr.math.Vector:Vector3.ctor(float, float, float) -> void
+    #22  surtr.math.Vector:Vector3.get_zero() -> surtr.math.Vector:Vector3
+    #23  surtr.math.Vector:Vector3.get_one() -> surtr.math.Vector:Vector3
+    #24  surtr.math.Vector:Vector3.get_up() -> surtr.math.Vector:Vector3
+    #25  surtr.math.Vector:Vector3.get_down() -> surtr.math.Vector:Vector3
+    #26  surtr.math.Vector:Vector3.get_left() -> surtr.math.Vector:Vector3
+    #27  surtr.math.Vector:Vector3.get_right() -> surtr.math.Vector:Vector3
+    #28  surtr.math.Vector:Vector3.get_forward() -> surtr.math.Vector:Vector3
+    #29  surtr.math.Vector:Vector3.get_back() -> surtr.math.Vector:Vector3
+    #30  surtr.math.Vector:Vector3.lengthSquared() -> float
+    #31  surtr.math.Vector:Vector3.length() -> float
+    #32  surtr.math.Vector:Vector3.normalized() -> surtr.math.Vector:Vector3
+    #33  surtr.math.Vector:Vector3.dot(surtr.math.Vector:Vector3) -> float
+    #34  surtr.math.Vector:Vector3.cross(surtr.math.Vector:Vector3) -> surtr.math.Vector:Vector3
+    #35  surtr.math.Vector:Vector3.toString() -> string
+    #36  surtr.math.Vector:Vector3.distance(surtr.math.Vector:Vector3, surtr.math.Vector:Vector3) -> float
+    #37  surtr.math.Vector:Vector3.lerp(surtr.math.Vector:Vector3, surtr.math.Vector:Vector3, float) -> surtr.math.Vector:Vector3
+    #38  surtr.math.Vector:Vector3.op_+(surtr.math.Vector:Vector3, surtr.math.Vector:Vector3) -> surtr.math.Vector:Vector3
+    #39  surtr.math.Vector:Vector3.op_-(surtr.math.Vector:Vector3, surtr.math.Vector:Vector3) -> surtr.math.Vector:Vector3
+    #40  surtr.math.Vector:Vector3.op_*(surtr.math.Vector:Vector3, float) -> surtr.math.Vector:Vector3
+    #41  surtr.math.Vector:Vector3.op_*(float, surtr.math.Vector:Vector3) -> surtr.math.Vector:Vector3
+    #42  surtr.math.Vector:Vector3.op_/(surtr.math.Vector:Vector3, float) -> surtr.math.Vector:Vector3
+    #43  surtr.math.Vector:Vector3.op_-u(surtr.math.Vector:Vector3) -> surtr.math.Vector:Vector3
+    #44  surtr.math.Vector:Vector3.op_==(surtr.math.Vector:Vector3, surtr.math.Vector:Vector3) -> bool
+    #45  surtr.math.Vector:Vector2Int.ctor(int, int) -> void
+    #46  surtr.math.Vector:Vector2Int.get_zero() -> surtr.math.Vector:Vector2Int
+    #47  surtr.math.Vector:Vector2Int.get_one() -> surtr.math.Vector:Vector2Int
+    #48  surtr.math.Vector:Vector2Int.get_up() -> surtr.math.Vector:Vector2Int
+    #49  surtr.math.Vector:Vector2Int.get_down() -> surtr.math.Vector:Vector2Int
+    #50  surtr.math.Vector:Vector2Int.get_left() -> surtr.math.Vector:Vector2Int
+    #51  surtr.math.Vector:Vector2Int.get_right() -> surtr.math.Vector:Vector2Int
+    #52  surtr.math.Vector:Vector2Int.lengthSquared() -> int
+    #53  surtr.math.Vector:Vector2Int.length() -> float
+    #54  surtr.math.Vector:Vector2Int.toVector2() -> surtr.math.Vector:Vector2
+    #55  surtr.math.Vector:Vector2Int.toString() -> string
+    #56  surtr.math.Vector:Vector2Int.op_+(surtr.math.Vector:Vector2Int, surtr.math.Vector:Vector2Int) -> surtr.math.Vector:Vector2Int
+    #57  surtr.math.Vector:Vector2Int.op_-(surtr.math.Vector:Vector2Int, surtr.math.Vector:Vector2Int) -> surtr.math.Vector:Vector2Int
+    #58  surtr.math.Vector:Vector2Int.op_*(surtr.math.Vector:Vector2Int, int) -> surtr.math.Vector:Vector2Int
+    #59  surtr.math.Vector:Vector2Int.op_*(int, surtr.math.Vector:Vector2Int) -> surtr.math.Vector:Vector2Int
+    #60  surtr.math.Vector:Vector2Int.op_-u(surtr.math.Vector:Vector2Int) -> surtr.math.Vector:Vector2Int
+    #61  surtr.math.Vector:Vector2Int.op_==(surtr.math.Vector:Vector2Int, surtr.math.Vector:Vector2Int) -> bool
+    #62  surtr.math.Vector:Vector2Int.equals(surtr.math.Vector:Vector2Int) -> bool
+    #63  surtr.math.Vector:Vector3Int.ctor(int, int, int) -> void
+    #64  surtr.math.Vector:Vector3Int.get_zero() -> surtr.math.Vector:Vector3Int
+    #65  surtr.math.Vector:Vector3Int.get_one() -> surtr.math.Vector:Vector3Int
+    #66  surtr.math.Vector:Vector3Int.get_up() -> surtr.math.Vector:Vector3Int
+    #67  surtr.math.Vector:Vector3Int.get_down() -> surtr.math.Vector:Vector3Int
+    #68  surtr.math.Vector:Vector3Int.get_left() -> surtr.math.Vector:Vector3Int
+    #69  surtr.math.Vector:Vector3Int.get_right() -> surtr.math.Vector:Vector3Int
+    #70  surtr.math.Vector:Vector3Int.get_forward() -> surtr.math.Vector:Vector3Int
+    #71  surtr.math.Vector:Vector3Int.get_back() -> surtr.math.Vector:Vector3Int
+    #72  surtr.math.Vector:Vector3Int.lengthSquared() -> int
+    #73  surtr.math.Vector:Vector3Int.length() -> float
+    #74  surtr.math.Vector:Vector3Int.toVector3() -> surtr.math.Vector:Vector3
+    #75  surtr.math.Vector:Vector3Int.toString() -> string
+    #76  surtr.math.Vector:Vector3Int.op_+(surtr.math.Vector:Vector3Int, surtr.math.Vector:Vector3Int) -> surtr.math.Vector:Vector3Int
+    #77  surtr.math.Vector:Vector3Int.op_-(surtr.math.Vector:Vector3Int, surtr.math.Vector:Vector3Int) -> surtr.math.Vector:Vector3Int
+    #78  surtr.math.Vector:Vector3Int.op_*(surtr.math.Vector:Vector3Int, int) -> surtr.math.Vector:Vector3Int
+    #79  surtr.math.Vector:Vector3Int.op_*(int, surtr.math.Vector:Vector3Int) -> surtr.math.Vector:Vector3Int
+    #80  surtr.math.Vector:Vector3Int.op_-u(surtr.math.Vector:Vector3Int) -> surtr.math.Vector:Vector3Int
+    #81  surtr.math.Vector:Vector3Int.op_==(surtr.math.Vector:Vector3Int, surtr.math.Vector:Vector3Int) -> bool
+    #82  surtr.math.Vector:Vector3Int.equals(surtr.math.Vector:Vector3Int) -> bool
+    #83  float.toString() -> string
+    #84  int.toFloat() -> float
+    #85  int.toString() -> string
+    #86  surtr.math.Vector:Vector2Int.equals(unknown) -> bool
+    #87  surtr.math.Vector:Vector3Int.equals(unknown) -> bool
+
+  module table:
+    #0  surtr.math.Math
+
+sealed class Vector2 : surtr:ValueType  [public]
+  [public] readonly field x: float
+  [public] readonly field y: float
+
+  [public] static property down: surtr.math.Vector:Vector2 { get; }
+    get:
+      ; entry 4, locals 2, stack 2, code 0019..0021
+        0019  Ldc0
+        001A  Stl0
+        001B  Ldc2
+        001C  Stl1
+        001D  Ldl0
+        001E  Ldl1
+        001F  ReturnValues 2
+
+  [public] static property left: surtr.math.Vector:Vector2 { get; }
+    get:
+      ; entry 5, locals 2, stack 2, code 0021..0029
+        0021  Ldc2
+        0022  Stl0
+        0023  Ldc0
+        0024  Stl1
+        0025  Ldl0
+        0026  Ldl1
+        0027  ReturnValues 2
+
+  [public] static property one: surtr.math.Vector:Vector2 { get; }
+    get:
+      ; entry 2, locals 2, stack 2, code 0009..0011
+        0009  Ldc1
+        000A  Stl0
+        000B  Ldc1
+        000C  Stl1
+        000D  Ldl0
+        000E  Ldl1
+        000F  ReturnValues 2
+
+  [public] static property right: surtr.math.Vector:Vector2 { get; }
+    get:
+      ; entry 6, locals 2, stack 2, code 0029..0031
+        0029  Ldc1
+        002A  Stl0
+        002B  Ldc0
+        002C  Stl1
+        002D  Ldl0
+        002E  Ldl1
+        002F  ReturnValues 2
+
+  [public] static property up: surtr.math.Vector:Vector2 { get; }
+    get:
+      ; entry 3, locals 2, stack 2, code 0011..0019
+        0011  Ldc0
+        0012  Stl0
+        0013  Ldc1
+        0014  Stl1
+        0015  Ldl0
+        0016  Ldl1
+        0017  ReturnValues 2
+
+  [public] static property zero: surtr.math.Vector:Vector2 { get; }
+    get:
+      ; entry 1, locals 2, stack 2, code 0001..0009
+        0001  Ldc0
+        0002  Stl0
+        0003  Ldc0
+        0004  Stl1
+        0005  Ldl0
+        0006  Ldl1
+        0007  ReturnValues 2
+
+  [public] ctor (x: float, y: float): void
+    ; entry 0, locals 4, stack 0, code 0000..0001
+      0000  ReturnVoid
+
+  [public] static distance(a: surtr.math.Vector:Vector2, b: surtr.math.Vector:Vector2): float
+    ; entry 12, locals 16, stack 4, code 0193..01EB
+      0193  LoadValueLocal 0 x2
+      0197  LoadValueLocal 2 x2
+      019B  InvokeStatic 15 (op_-) args=4 ret=1
+      01A0  StoreValueLocal 4 x2
+      01A4  LoadValueLocal 4 x2
+      01A8  StoreValueLocal 6 x2
+      01AC  LoadValueLocal 6 x2
+      01B0  StoreValueLocal 8 x2
+      01B4  LoadLocalField 8+0
+      01B9  LoadValueLocal 6 x2
+      01BD  StoreValueLocal 10 x2
+      01C1  LoadLocalField 10+0
+      01C6  FMul
+      01C7  LoadValueLocal 6 x2
+      01CB  StoreValueLocal 12 x2
+      01CF  LoadLocalField 12+1
+      01D4  LoadValueLocal 6 x2
+      01D8  StoreValueLocal 14 x2
+      01DC  LoadLocalField 14+1
+      01E1  FMul
+      01E2  FAdd
+      01E3  CallModule 0:7 (surtr.math.Math.sqrt) args=1 ret=1
+      01EA  ReturnValue
+
+  @surtr:Pure
+  [public] dot(other: surtr.math.Vector:Vector2): float
+    ; entry 10, locals 8, stack 3, code 0138..0160
+      0138  LoadValueLocal 0 x2
+      013C  StoreValueLocal 4 x2
+      0140  LoadLocalField 4+0
+      0145  LoadLocalField 2+0
+      014A  FMul
+      014B  LoadValueLocal 0 x2
+      014F  StoreValueLocal 6 x2
+      0153  LoadLocalField 6+1
+      0158  LoadLocalField 2+1
+      015D  FMul
+      015E  FAdd
+      015F  ReturnValue
+
+  @surtr:Pure
+  [public] length(): float
+    ; entry 8, locals 12, stack 4, code 0069..00B0
+      0069  LoadValueLocal 0 x2
+      006D  StoreValueLocal 2 x2
+      0071  LoadValueLocal 2 x2
+      0075  StoreValueLocal 4 x2
+      0079  LoadLocalField 4+0
+      007E  LoadValueLocal 2 x2
+      0082  StoreValueLocal 6 x2
+      0086  LoadLocalField 6+0
+      008B  FMul
+      008C  LoadValueLocal 2 x2
+      0090  StoreValueLocal 8 x2
+      0094  LoadLocalField 8+1
+      0099  LoadValueLocal 2 x2
+      009D  StoreValueLocal 10 x2
+      00A1  LoadLocalField 10+1
+      00A6  FMul
+      00A7  FAdd
+      00A8  CallModule 0:7 (surtr.math.Math.sqrt) args=1 ret=1
+      00AF  ReturnValue
+
+  @surtr:Pure
+  [public] lengthSquared(): float
+    ; entry 7, locals 10, stack 4, code 0031..0069
+      0031  LoadValueLocal 0 x2
+      0035  StoreValueLocal 2 x2
+      0039  LoadLocalField 2+0
+      003E  LoadValueLocal 0 x2
+      0042  StoreValueLocal 4 x2
+      0046  LoadLocalField 4+0
+      004B  FMul
+      004C  LoadValueLocal 0 x2
+      0050  StoreValueLocal 6 x2
+      0054  LoadLocalField 6+1
+      0059  LoadValueLocal 0 x2
+      005D  StoreValueLocal 8 x2
+      0061  LoadLocalField 8+1
+      0066  FMul
+      0067  FAdd
+      0068  ReturnValue
+
+  [public] static lerp(a: surtr.math.Vector:Vector2, b: surtr.math.Vector:Vector2, t: float): surtr.math.Vector:Vector2
+    ; entry 13, locals 10, stack 3, code 01EB..0240
+      01EB  Ldl4
+      01EC  StlS 6
+      01EE  LdlS 6
+      01F0  Ldc0
+      01F1  JPFGE +6 -> L0 (01FA)
+      01F4  Ldc0
+      01F5  StlS 7
+      01F7  JP +19 -> L2 (020D)
+    L0:
+      01FA  LdlS 6
+      01FC  Ldc1
+      01FD  JPFLE +6 -> L1 (0206)
+      0200  Ldc1
+      0201  StlS 7
+      0203  JP +7 -> L2 (020D)
+    L1:
+      0206  LdlS 6
+      0208  StlS 7
+      020A  JP +0 -> L2 (020D)
+    L2:
+      020D  LdlS 7
+      020F  Stl5
+      0210  LoadLocalField 0+0
+      0215  LoadLocalField 2+0
+      021A  LoadLocalField 0+0
+      021F  FSub
+      0220  Ldl5
+      0221  FMul
+      0222  FAdd
+      0223  StlS 8
+      0225  LoadLocalField 0+1
+      022A  LoadLocalField 2+1
+      022F  LoadLocalField 0+1
+      0234  FSub
+      0235  Ldl5
+      0236  FMul
+      0237  FAdd
+      0238  StlS 9
+      023A  LdlS 8
+      023C  LdlS 9
+      023E  ReturnValues 2
+
+  [public] normalized(): surtr.math.Vector:Vector2
+    ; entry 9, locals 23, stack 4, code 00B0..0138
+      00B0  LoadValueLocal 0 x2
+      00B4  StoreValueLocal 3 x2
+      00B8  LoadValueLocal 3 x2
+      00BC  StoreValueLocal 5 x2
+      00C0  LoadValueLocal 5 x2
+      00C4  StoreValueLocal 7 x2
+      00C8  LoadLocalField 7+0
+      00CD  LoadValueLocal 5 x2
+      00D1  StoreValueLocal 9 x2
+      00D5  LoadLocalField 9+0
+      00DA  FMul
+      00DB  LoadValueLocal 5 x2
+      00DF  StoreValueLocal 11 x2
+      00E3  LoadLocalField 11+1
+      00E8  LoadValueLocal 5 x2
+      00EC  StoreValueLocal 13 x2
+      00F0  LoadLocalField 13+1
+      00F5  FMul
+      00F6  FAdd
+      00F7  CallModule 0:7 (surtr.math.Math.sqrt) args=1 ret=1
+      00FE  Stl2
+      00FF  Ldl2
+      0100  Ldc3
+      0101  JPFGE +12 -> L0 (0110)
+      0104  Ldc0
+      0105  StlS 15
+      0107  Ldc0
+      0108  StlS 16
+      010A  LdlS 15
+      010C  LdlS 16
+      010E  ReturnValues 2
+    L0:
+      0110  LoadValueLocal 0 x2
+      0114  StoreValueLocal 18 x2
+      0118  LoadLocalField 18+0
+      011D  Ldl2
+      011E  FDiv
+      011F  StlS 17
+      0121  LoadValueLocal 0 x2
+      0125  StoreValueLocal 21 x2
+      0129  LoadLocalField 21+1
+      012E  Ldl2
+      012F  FDiv
+      0130  StlS 20
+      0132  LdlS 17
+      0134  LdlS 20
+      0136  ReturnValues 2
+
+  @surtr:Pure
+  [public] static op_*(a: surtr.math.Vector:Vector2, scalar: float): surtr.math.Vector:Vector2
+    ; entry 16, locals 5, stack 2, code 0278..028C
+      0278  LoadLocalField 0+0
+      027D  Ldl2
+      027E  FMul
+      027F  Stl3
+      0280  LoadLocalField 0+1
+      0285  Ldl2
+      0286  FMul
+      0287  Stl4
+      0288  Ldl3
+      0289  Ldl4
+      028A  ReturnValues 2
+
+  @surtr:Pure
+  [public] static op_*(scalar: float, a: surtr.math.Vector:Vector2): surtr.math.Vector:Vector2
+    ; entry 17, locals 5, stack 2, code 028C..02A0
+      028C  LoadLocalField 1+0
+      0291  Ldl0
+      0292  FMul
+      0293  Stl3
+      0294  LoadLocalField 1+1
+      0299  Ldl0
+      029A  FMul
+      029B  Stl4
+      029C  Ldl3
+      029D  Ldl4
+      029E  ReturnValues 2
+
+  @surtr:Pure
+  [public] static op_+(a: surtr.math.Vector:Vector2, b: surtr.math.Vector:Vector2): surtr.math.Vector:Vector2
+    ; entry 14, locals 6, stack 2, code 0240..025C
+      0240  LoadLocalField 0+0
+      0245  LoadLocalField 2+0
+      024A  FAdd
+      024B  Stl4
+      024C  LoadLocalField 0+1
+      0251  LoadLocalField 2+1
+      0256  FAdd
+      0257  Stl5
+      0258  Ldl4
+      0259  Ldl5
+      025A  ReturnValues 2
+
+  @surtr:Pure
+  [public] static op_-(a: surtr.math.Vector:Vector2, b: surtr.math.Vector:Vector2): surtr.math.Vector:Vector2
+    ; entry 15, locals 6, stack 2, code 025C..0278
+      025C  LoadLocalField 0+0
+      0261  LoadLocalField 2+0
+      0266  FSub
+      0267  Stl4
+      0268  LoadLocalField 0+1
+      026D  LoadLocalField 2+1
+      0272  FSub
+      0273  Stl5
+      0274  Ldl4
+      0275  Ldl5
+      0276  ReturnValues 2
+
+  @surtr:Pure
+  [public] static op_-u(a: surtr.math.Vector:Vector2): surtr.math.Vector:Vector2
+    ; entry 19, locals 4, stack 2, code 02B4..02C6
+      02B4  LoadLocalField 0+0
+      02B9  FNeg
+      02BA  Stl2
+      02BB  LoadLocalField 0+1
+      02C0  FNeg
+      02C1  Stl3
+      02C2  Ldl2
+      02C3  Ldl3
+      02C4  ReturnValues 2
+
+  @surtr:Pure
+  [public] static op_/(a: surtr.math.Vector:Vector2, scalar: float): surtr.math.Vector:Vector2
+    ; entry 18, locals 5, stack 2, code 02A0..02B4
+      02A0  LoadLocalField 0+0
+      02A5  Ldl2
+      02A6  FDiv
+      02A7  Stl3
+      02A8  LoadLocalField 0+1
+      02AD  Ldl2
+      02AE  FDiv
+      02AF  Stl4
+      02B0  Ldl3
+      02B1  Ldl4
+      02B2  ReturnValues 2
+
+  @surtr:Pure
+  [public] static op_==(a: surtr.math.Vector:Vector2, b: surtr.math.Vector:Vector2): bool
+    ; entry 20, locals 4, stack 2, code 02C6..02E5
+      02C6  LoadLocalField 0+0
+      02CB  LoadLocalField 2+0
+      02D0  FEQ
+      02D1  Dup
+      02D2  JPZ +15 -> L0 (02E4)
+      02D5  Pop
+      02D6  LoadLocalField 0+1
+      02DB  LoadLocalField 2+1
+      02E0  FEQ
+      02E1  JP +0 -> L0 (02E4)
+    L0:
+      02E4  ReturnValue
+
+  @surtr:Pure
+  [public] virtual override toString(): string
+    ; entry 11, locals 6, stack 5, code 0160..0193
+      0160  Ldl0
+      0161  UnboxValue 2
+      0163  StoreValueLocal 0 x2
+      0167  Ldc4
+      0168  LoadValueLocal 0 x2
+      016C  StoreValueLocal 2 x2
+      0170  LoadLocalField 2+0
+      0175  BoxFloat
+      0176  InvokeVirtual 83 (toString) args=1 ret=1
+      017B  Ldc5
+      017C  LoadValueLocal 0 x2
+      0180  StoreValueLocal 4 x2
+      0184  LoadLocalField 4+1
+      0189  BoxFloat
+      018A  InvokeVirtual 83 (toString) args=1 ret=1
+      018F  Ldc6
+      0190  StrCat 5
+      0192  ReturnValue
+
+sealed class Vector2Int : surtr:ValueType, surtr:IEquatable<surtr.math.Vector:Vector2Int>  [public]
+  [public] readonly field x: int
+  [public] readonly field y: int
+
+  [public] static property down: surtr.math.Vector:Vector2Int { get; }
+    get:
+      ; entry 49, locals 2, stack 2, code 07C2..07CC
+        07C2  PushI8 0
+        07C4  Stl0
+        07C5  PushI8 -1
+        07C7  Stl1
+        07C8  Ldl0
+        07C9  Ldl1
+        07CA  ReturnValues 2
+
+  [public] static property left: surtr.math.Vector:Vector2Int { get; }
+    get:
+      ; entry 50, locals 2, stack 2, code 07CC..07D6
+        07CC  PushI8 -1
+        07CE  Stl0
+        07CF  PushI8 0
+        07D1  Stl1
+        07D2  Ldl0
+        07D3  Ldl1
+        07D4  ReturnValues 2
+
+  [public] static property one: surtr.math.Vector:Vector2Int { get; }
+    get:
+      ; entry 47, locals 2, stack 2, code 07AE..07B8
+        07AE  PushI8 1
+        07B0  Stl0
+        07B1  PushI8 1
+        07B3  Stl1
+        07B4  Ldl0
+        07B5  Ldl1
+        07B6  ReturnValues 2
+
+  [public] static property right: surtr.math.Vector:Vector2Int { get; }
+    get:
+      ; entry 51, locals 2, stack 2, code 07D6..07E0
+        07D6  PushI8 1
+        07D8  Stl0
+        07D9  PushI8 0
+        07DB  Stl1
+        07DC  Ldl0
+        07DD  Ldl1
+        07DE  ReturnValues 2
+
+  [public] static property up: surtr.math.Vector:Vector2Int { get; }
+    get:
+      ; entry 48, locals 2, stack 2, code 07B8..07C2
+        07B8  PushI8 0
+        07BA  Stl0
+        07BB  PushI8 1
+        07BD  Stl1
+        07BE  Ldl0
+        07BF  Ldl1
+        07C0  ReturnValues 2
+
+  [public] static property zero: surtr.math.Vector:Vector2Int { get; }
+    get:
+      ; entry 46, locals 2, stack 2, code 07A4..07AE
+        07A4  PushI8 0
+        07A6  Stl0
+        07A7  PushI8 0
+        07A9  Stl1
+        07AA  Ldl0
+        07AB  Ldl1
+        07AC  ReturnValues 2
+
+  [public] ctor (x: int, y: int): void
+    ; entry 45, locals 4, stack 0, code 07A3..07A4
+      07A3  ReturnVoid
+
+  [public] equals(other: surtr.math.Vector:Vector2Int): bool
+    ; entry 62, locals 8, stack 2, code 0952..0981
+      0952  LoadValueLocal 0 x2
+      0956  StoreValueLocal 4 x2
+      095A  LoadLocalField 4+0
+      095F  LoadLocalField 2+0
+      0964  EQ
+      0965  Dup
+      0966  JPZ +23 -> L0 (0980)
+      0969  Pop
+      096A  LoadValueLocal 0 x2
+      096E  StoreValueLocal 6 x2
+      0972  LoadLocalField 6+1
+      0977  LoadLocalField 2+1
+      097C  EQ
+      097D  JP +0 -> L0 (0980)
+    L0:
+      0980  ReturnValue
+
+  [public] virtual equals(other: unknown): bool
+    ; entry 63, locals 2, stack 4, code 0981..0990
+      0981  Ldl0
+      0982  UnboxValue 2
+      0984  Ldl1
+      0985  Cast 0 (surtr.math.Vector:Vector2Int)
+      0988  UnboxValue 2
+      098A  InvokeSpecial 62 (equals) args=4 ret=1
+      098F  ReturnValue
+
+  @surtr:Pure
+  [public] length(): float
+    ; entry 53, locals 12, stack 4, code 0818..0864
+      0818  LoadValueLocal 0 x2
+      081C  StoreValueLocal 2 x2
+      0820  LoadValueLocal 2 x2
+      0824  StoreValueLocal 4 x2
+      0828  LoadLocalField 4+0
+      082D  LoadValueLocal 2 x2
+      0831  StoreValueLocal 6 x2
+      0835  LoadLocalField 6+0
+      083A  Mul
+      083B  LoadValueLocal 2 x2
+      083F  StoreValueLocal 8 x2
+      0843  LoadLocalField 8+1
+      0848  LoadValueLocal 2 x2
+      084C  StoreValueLocal 10 x2
+      0850  LoadLocalField 10+1
+      0855  Mul
+      0856  Add
+      0857  InvokeSpecial 84 (toFloat) args=1 ret=1
+      085C  CallModule 0:7 (surtr.math.Math.sqrt) args=1 ret=1
+      0863  ReturnValue
+
+  @surtr:Pure
+  [public] lengthSquared(): int
+    ; entry 52, locals 10, stack 4, code 07E0..0818
+      07E0  LoadValueLocal 0 x2
+      07E4  StoreValueLocal 2 x2
+      07E8  LoadLocalField 2+0
+      07ED  LoadValueLocal 0 x2
+      07F1  StoreValueLocal 4 x2
+      07F5  LoadLocalField 4+0
+      07FA  Mul
+      07FB  LoadValueLocal 0 x2
+      07FF  StoreValueLocal 6 x2
+      0803  LoadLocalField 6+1
+      0808  LoadValueLocal 0 x2
+      080C  StoreValueLocal 8 x2
+      0810  LoadLocalField 8+1
+      0815  Mul
+      0816  Add
+      0817  ReturnValue
+
+  @surtr:Pure
+  [public] static op_*(a: surtr.math.Vector:Vector2Int, scalar: int): surtr.math.Vector:Vector2Int
+    ; entry 58, locals 5, stack 2, code 08F9..090D
+      08F9  LoadLocalField 0+0
+      08FE  Ldl2
+      08FF  Mul
+      0900  Stl3
+      0901  LoadLocalField 0+1
+      0906  Ldl2
+      0907  Mul
+      0908  Stl4
+      0909  Ldl3
+      090A  Ldl4
+      090B  ReturnValues 2
+
+  @surtr:Pure
+  [public] static op_*(scalar: int, a: surtr.math.Vector:Vector2Int): surtr.math.Vector:Vector2Int
+    ; entry 59, locals 5, stack 2, code 090D..0921
+      090D  LoadLocalField 1+0
+      0912  Ldl0
+      0913  Mul
+      0914  Stl3
+      0915  LoadLocalField 1+1
+      091A  Ldl0
+      091B  Mul
+      091C  Stl4
+      091D  Ldl3
+      091E  Ldl4
+      091F  ReturnValues 2
+
+  @surtr:Pure
+  [public] static op_+(a: surtr.math.Vector:Vector2Int, b: surtr.math.Vector:Vector2Int): surtr.math.Vector:Vector2Int
+    ; entry 56, locals 6, stack 2, code 08C1..08DD
+      08C1  LoadLocalField 0+0
+      08C6  LoadLocalField 2+0
+      08CB  Add
+      08CC  Stl4
+      08CD  LoadLocalField 0+1
+      08D2  LoadLocalField 2+1
+      08D7  Add
+      08D8  Stl5
+      08D9  Ldl4
+      08DA  Ldl5
+      08DB  ReturnValues 2
+
+  @surtr:Pure
+  [public] static op_-(a: surtr.math.Vector:Vector2Int, b: surtr.math.Vector:Vector2Int): surtr.math.Vector:Vector2Int
+    ; entry 57, locals 6, stack 2, code 08DD..08F9
+      08DD  LoadLocalField 0+0
+      08E2  LoadLocalField 2+0
+      08E7  Sub
+      08E8  Stl4
+      08E9  LoadLocalField 0+1
+      08EE  LoadLocalField 2+1
+      08F3  Sub
+      08F4  Stl5
+      08F5  Ldl4
+      08F6  Ldl5
+      08F7  ReturnValues 2
+
+  @surtr:Pure
+  [public] static op_-u(a: surtr.math.Vector:Vector2Int): surtr.math.Vector:Vector2Int
+    ; entry 60, locals 4, stack 2, code 0921..0933
+      0921  LoadLocalField 0+0
+      0926  Neg
+      0927  Stl2
+      0928  LoadLocalField 0+1
+      092D  Neg
+      092E  Stl3
+      092F  Ldl2
+      0930  Ldl3
+      0931  ReturnValues 2
+
+  @surtr:Pure
+  [public] static op_==(a: surtr.math.Vector:Vector2Int, b: surtr.math.Vector:Vector2Int): bool
+    ; entry 61, locals 4, stack 2, code 0933..0952
+      0933  LoadLocalField 0+0
+      0938  LoadLocalField 2+0
+      093D  EQ
+      093E  Dup
+      093F  JPZ +15 -> L0 (0951)
+      0942  Pop
+      0943  LoadLocalField 0+1
+      0948  LoadLocalField 2+1
+      094D  EQ
+      094E  JP +0 -> L0 (0951)
+    L0:
+      0951  ReturnValue
+
+  @surtr:Pure
+  [public] virtual override toString(): string
+    ; entry 55, locals 6, stack 5, code 088E..08C1
+      088E  Ldl0
+      088F  UnboxValue 2
+      0891  StoreValueLocal 0 x2
+      0895  Ldc4
+      0896  LoadValueLocal 0 x2
+      089A  StoreValueLocal 2 x2
+      089E  LoadLocalField 2+0
+      08A3  BoxInt
+      08A4  InvokeVirtual 85 (toString) args=1 ret=1
+      08A9  Ldc5
+      08AA  LoadValueLocal 0 x2
+      08AE  StoreValueLocal 4 x2
+      08B2  LoadLocalField 4+1
+      08B7  BoxInt
+      08B8  InvokeVirtual 85 (toString) args=1 ret=1
+      08BD  Ldc6
+      08BE  StrCat 5
+      08C0  ReturnValue
+
+  @surtr:Pure
+  [public] toVector2(): surtr.math.Vector:Vector2
+    ; entry 54, locals 8, stack 2, code 0864..088E
+      0864  LoadValueLocal 0 x2
+      0868  StoreValueLocal 3 x2
+      086C  LoadLocalField 3+0
+      0871  InvokeSpecial 84 (toFloat) args=1 ret=1
+      0876  Stl2
+      0877  LoadValueLocal 0 x2
+      087B  StoreValueLocal 6 x2
+      087F  LoadLocalField 6+1
+      0884  InvokeSpecial 84 (toFloat) args=1 ret=1
+      0889  Stl5
+      088A  Ldl2
+      088B  Ldl5
+      088C  ReturnValues 2
+
+sealed class Vector3 : surtr:ValueType  [public]
+  [public] readonly field x: float
+  [public] readonly field y: float
+  [public] readonly field z: float
+
+  [public] static property back: surtr.math.Vector:Vector3 { get; }
+    get:
+      ; entry 29, locals 3, stack 3, code 0333..033E
+        0333  Ldc0
+        0334  Stl0
+        0335  Ldc0
+        0336  Stl1
+        0337  Ldc2
+        0338  Stl2
+        0339  Ldl0
+        033A  Ldl1
+        033B  Ldl2
+        033C  ReturnValues 3
+
+  [public] static property down: surtr.math.Vector:Vector3 { get; }
+    get:
+      ; entry 25, locals 3, stack 3, code 0307..0312
+        0307  Ldc0
+        0308  Stl0
+        0309  Ldc2
+        030A  Stl1
+        030B  Ldc0
+        030C  Stl2
+        030D  Ldl0
+        030E  Ldl1
+        030F  Ldl2
+        0310  ReturnValues 3
+
+  [public] static property forward: surtr.math.Vector:Vector3 { get; }
+    get:
+      ; entry 28, locals 3, stack 3, code 0328..0333
+        0328  Ldc0
+        0329  Stl0
+        032A  Ldc0
+        032B  Stl1
+        032C  Ldc1
+        032D  Stl2
+        032E  Ldl0
+        032F  Ldl1
+        0330  Ldl2
+        0331  ReturnValues 3
+
+  [public] static property left: surtr.math.Vector:Vector3 { get; }
+    get:
+      ; entry 26, locals 3, stack 3, code 0312..031D
+        0312  Ldc2
+        0313  Stl0
+        0314  Ldc0
+        0315  Stl1
+        0316  Ldc0
+        0317  Stl2
+        0318  Ldl0
+        0319  Ldl1
+        031A  Ldl2
+        031B  ReturnValues 3
+
+  [public] static property one: surtr.math.Vector:Vector3 { get; }
+    get:
+      ; entry 23, locals 3, stack 3, code 02F1..02FC
+        02F1  Ldc1
+        02F2  Stl0
+        02F3  Ldc1
+        02F4  Stl1
+        02F5  Ldc1
+        02F6  Stl2
+        02F7  Ldl0
+        02F8  Ldl1
+        02F9  Ldl2
+        02FA  ReturnValues 3
+
+  [public] static property right: surtr.math.Vector:Vector3 { get; }
+    get:
+      ; entry 27, locals 3, stack 3, code 031D..0328
+        031D  Ldc1
+        031E  Stl0
+        031F  Ldc0
+        0320  Stl1
+        0321  Ldc0
+        0322  Stl2
+        0323  Ldl0
+        0324  Ldl1
+        0325  Ldl2
+        0326  ReturnValues 3
+
+  [public] static property up: surtr.math.Vector:Vector3 { get; }
+    get:
+      ; entry 24, locals 3, stack 3, code 02FC..0307
+        02FC  Ldc0
+        02FD  Stl0
+        02FE  Ldc1
+        02FF  Stl1
+        0300  Ldc0
+        0301  Stl2
+        0302  Ldl0
+        0303  Ldl1
+        0304  Ldl2
+        0305  ReturnValues 3
+
+  [public] static property zero: surtr.math.Vector:Vector3 { get; }
+    get:
+      ; entry 22, locals 3, stack 3, code 02E6..02F1
+        02E6  Ldc0
+        02E7  Stl0
+        02E8  Ldc0
+        02E9  Stl1
+        02EA  Ldc0
+        02EB  Stl2
+        02EC  Ldl0
+        02ED  Ldl1
+        02EE  Ldl2
+        02EF  ReturnValues 3
+
+  @surtr:Pure
+  [public] cross(other: surtr.math.Vector:Vector3): surtr.math.Vector:Vector3
+    ; entry 34, locals 27, stack 4, code 04ED..0570
+      04ED  LoadValueLocal 0 x3
+      04F1  StoreValueLocal 7 x3
+      04F5  LoadLocalField 7+1
+      04FA  LoadLocalField 3+2
+      04FF  FMul
+      0500  LoadValueLocal 0 x3
+      0504  StoreValueLocal 10 x3
+      0508  LoadLocalField 10+2
+      050D  LoadLocalField 3+1
+      0512  FMul
+      0513  FSub
+      0514  StlS 6
+      0516  LoadValueLocal 0 x3
+      051A  StoreValueLocal 14 x3
+      051E  LoadLocalField 14+2
+      0523  LoadLocalField 3+0
+      0528  FMul
+      0529  LoadValueLocal 0 x3
+      052D  StoreValueLocal 17 x3
+      0531  LoadLocalField 17+0
+      0536  LoadLocalField 3+2
+      053B  FMul
+      053C  FSub
+      053D  StlS 13
+      053F  LoadValueLocal 0 x3
+      0543  StoreValueLocal 21 x3
+      0547  LoadLocalField 21+0
+      054C  LoadLocalField 3+1
+      0551  FMul
+      0552  LoadValueLocal 0 x3
+      0556  StoreValueLocal 24 x3
+      055A  LoadLocalField 24+1
+      055F  LoadLocalField 3+0
+      0564  FMul
+      0565  FSub
+      0566  StlS 20
+      0568  LdlS 6
+      056A  LdlS 13
+      056C  LdlS 20
+      056E  ReturnValues 3
+
+  [public] ctor (x: float, y: float, z: float): void
+    ; entry 21, locals 6, stack 0, code 02E5..02E6
+      02E5  ReturnVoid
+
+  [public] static distance(a: surtr.math.Vector:Vector3, b: surtr.math.Vector:Vector3): float
+    ; entry 36, locals 30, stack 6, code 05B7..062B
+      05B7  LoadValueLocal 0 x3
+      05BB  LoadValueLocal 3 x3
+      05BF  InvokeStatic 39 (op_-) args=6 ret=1
+      05C4  StoreValueLocal 6 x3
+      05C8  LoadValueLocal 6 x3
+      05CC  StoreValueLocal 9 x3
+      05D0  LoadValueLocal 9 x3
+      05D4  StoreValueLocal 12 x3
+      05D8  LoadLocalField 12+0
+      05DD  LoadValueLocal 9 x3
+      05E1  StoreValueLocal 15 x3
+      05E5  LoadLocalField 15+0
+      05EA  FMul
+      05EB  LoadValueLocal 9 x3
+      05EF  StoreValueLocal 18 x3
+      05F3  LoadLocalField 18+1
+      05F8  LoadValueLocal 9 x3
+      05FC  StoreValueLocal 21 x3
+      0600  LoadLocalField 21+1
+      0605  FMul
+      0606  FAdd
+      0607  LoadValueLocal 9 x3
+      060B  StoreValueLocal 24 x3
+      060F  LoadLocalField 24+2
+      0614  LoadValueLocal 9 x3
+      0618  StoreValueLocal 27 x3
+      061C  LoadLocalField 27+2
+      0621  FMul
+      0622  FAdd
+      0623  CallModule 0:7 (surtr.math.Math.sqrt) args=1 ret=1
+      062A  ReturnValue
+
+  @surtr:Pure
+  [public] dot(other: surtr.math.Vector:Vector3): float
+    ; entry 33, locals 15, stack 4, code 04B1..04ED
+      04B1  LoadValueLocal 0 x3
+      04B5  StoreValueLocal 6 x3
+      04B9  LoadLocalField 6+0
+      04BE  LoadLocalField 3+0
+      04C3  FMul
+      04C4  LoadValueLocal 0 x3
+      04C8  StoreValueLocal 9 x3
+      04CC  LoadLocalField 9+1
+      04D1  LoadLocalField 3+1
+      04D6  FMul
+      04D7  FAdd
+      04D8  LoadValueLocal 0 x3
+      04DC  StoreValueLocal 12 x3
+      04E0  LoadLocalField 12+2
+      04E5  LoadLocalField 3+2
+      04EA  FMul
+      04EB  FAdd
+      04EC  ReturnValue
+
+  @surtr:Pure
+  [public] length(): float
+    ; entry 31, locals 24, stack 5, code 0392..03F5
+      0392  LoadValueLocal 0 x3
+      0396  StoreValueLocal 3 x3
+      039A  LoadValueLocal 3 x3
+      039E  StoreValueLocal 6 x3
+      03A2  LoadLocalField 6+0
+      03A7  LoadValueLocal 3 x3
+      03AB  StoreValueLocal 9 x3
+      03AF  LoadLocalField 9+0
+      03B4  FMul
+      03B5  LoadValueLocal 3 x3
+      03B9  StoreValueLocal 12 x3
+      03BD  LoadLocalField 12+1
+      03C2  LoadValueLocal 3 x3
+      03C6  StoreValueLocal 15 x3
+      03CA  LoadLocalField 15+1
+      03CF  FMul
+      03D0  FAdd
+      03D1  LoadValueLocal 3 x3
+      03D5  StoreValueLocal 18 x3
+      03D9  LoadLocalField 18+2
+      03DE  LoadValueLocal 3 x3
+      03E2  StoreValueLocal 21 x3
+      03E6  LoadLocalField 21+2
+      03EB  FMul
+      03EC  FAdd
+      03ED  CallModule 0:7 (surtr.math.Math.sqrt) args=1 ret=1
+      03F4  ReturnValue
+
+  @surtr:Pure
+  [public] lengthSquared(): float
+    ; entry 30, locals 21, stack 5, code 033E..0392
+      033E  LoadValueLocal 0 x3
+      0342  StoreValueLocal 3 x3
+      0346  LoadLocalField 3+0
+      034B  LoadValueLocal 0 x3
+      034F  StoreValueLocal 6 x3
+      0353  LoadLocalField 6+0
+      0358  FMul
+      0359  LoadValueLocal 0 x3
+      035D  StoreValueLocal 9 x3
+      0361  LoadLocalField 9+1
+      0366  LoadValueLocal 0 x3
+      036A  StoreValueLocal 12 x3
+      036E  LoadLocalField 12+1
+      0373  FMul
+      0374  FAdd
+      0375  LoadValueLocal 0 x3
+      0379  StoreValueLocal 15 x3
+      037D  LoadLocalField 15+2
+      0382  LoadValueLocal 0 x3
+      0386  StoreValueLocal 18 x3
+      038A  LoadLocalField 18+2
+      038F  FMul
+      0390  FAdd
+      0391  ReturnValue
+
+  [public] static lerp(a: surtr.math.Vector:Vector3, b: surtr.math.Vector:Vector3, t: float): surtr.math.Vector:Vector3
+    ; entry 37, locals 13, stack 3, code 062B..069C
+      062B  LdlS 6
+      062D  StlS 8
+      062F  LdlS 8
+      0631  Ldc0
+      0632  JPFGE +6 -> L0 (063B)
+      0635  Ldc0
+      0636  StlS 9
+      0638  JP +19 -> L2 (064E)
+    L0:
+      063B  LdlS 8
+      063D  Ldc1
+      063E  JPFLE +6 -> L1 (0647)
+      0641  Ldc1
+      0642  StlS 9
+      0644  JP +7 -> L2 (064E)
+    L1:
+      0647  LdlS 8
+      0649  StlS 9
+      064B  JP +0 -> L2 (064E)
+    L2:
+      064E  LdlS 9
+      0650  StlS 7
+      0652  LoadLocalField 0+0
+      0657  LoadLocalField 3+0
+      065C  LoadLocalField 0+0
+      0661  FSub
+      0662  LdlS 7
+      0664  FMul
+      0665  FAdd
+      0666  StlS 10
+      0668  LoadLocalField 0+1
+      066D  LoadLocalField 3+1
+      0672  LoadLocalField 0+1
+      0677  FSub
+      0678  LdlS 7
+      067A  FMul
+      067B  FAdd
+      067C  StlS 11
+      067E  LoadLocalField 0+2
+      0683  LoadLocalField 3+2
+      0688  LoadLocalField 0+2
+      068D  FSub
+      068E  LdlS 7
+      0690  FMul
+      0691  FAdd
+      0692  StlS 12
+      0694  LdlS 10
+      0696  LdlS 11
+      0698  LdlS 12
+      069A  ReturnValues 3
+
+  [public] normalized(): surtr.math.Vector:Vector3
+    ; entry 32, locals 43, stack 5, code 03F5..04B1
+      03F5  LoadValueLocal 0 x3
+      03F9  StoreValueLocal 4 x3
+      03FD  LoadValueLocal 4 x3
+      0401  StoreValueLocal 7 x3
+      0405  LoadValueLocal 7 x3
+      0409  StoreValueLocal 10 x3
+      040D  LoadLocalField 10+0
+      0412  LoadValueLocal 7 x3
+      0416  StoreValueLocal 13 x3
+      041A  LoadLocalField 13+0
+      041F  FMul
+      0420  LoadValueLocal 7 x3
+      0424  StoreValueLocal 16 x3
+      0428  LoadLocalField 16+1
+      042D  LoadValueLocal 7 x3
+      0431  StoreValueLocal 19 x3
+      0435  LoadLocalField 19+1
+      043A  FMul
+      043B  FAdd
+      043C  LoadValueLocal 7 x3
+      0440  StoreValueLocal 22 x3
+      0444  LoadLocalField 22+2
+      0449  LoadValueLocal 7 x3
+      044D  StoreValueLocal 25 x3
+      0451  LoadLocalField 25+2
+      0456  FMul
+      0457  FAdd
+      0458  CallModule 0:7 (surtr.math.Math.sqrt) args=1 ret=1
+      045F  Stl3
+      0460  Ldl3
+      0461  Ldc3
+      0462  JPFGE +17 -> L0 (0476)
+      0465  Ldc0
+      0466  StlS 28
+      0468  Ldc0
+      0469  StlS 29
+      046B  Ldc0
+      046C  StlS 30
+      046E  LdlS 28
+      0470  LdlS 29
+      0472  LdlS 30
+      0474  ReturnValues 3
+    L0:
+      0476  LoadValueLocal 0 x3
+      047A  StoreValueLocal 32 x3
+      047E  LoadLocalField 32+0
+      0483  Ldl3
+      0484  FDiv
+      0485  StlS 31
+      0487  LoadValueLocal 0 x3
+      048B  StoreValueLocal 36 x3
+      048F  LoadLocalField 36+1
+      0494  Ldl3
+      0495  FDiv
+      0496  StlS 35
+      0498  LoadValueLocal 0 x3
+      049C  StoreValueLocal 40 x3
+      04A0  LoadLocalField 40+2
+      04A5  Ldl3
+      04A6  FDiv
+      04A7  StlS 39
+      04A9  LdlS 31
+      04AB  LdlS 35
+      04AD  LdlS 39
+      04AF  ReturnValues 3
+
+  @surtr:Pure
+  [public] static op_*(a: surtr.math.Vector:Vector3, scalar: float): surtr.math.Vector:Vector3
+    ; entry 40, locals 7, stack 3, code 06FA..0719
+      06FA  LoadLocalField 0+0
+      06FF  Ldl3
+      0700  FMul
+      0701  Stl4
+      0702  LoadLocalField 0+1
+      0707  Ldl3
+      0708  FMul
+      0709  Stl5
+      070A  LoadLocalField 0+2
+      070F  Ldl3
+      0710  FMul
+      0711  StlS 6
+      0713  Ldl4
+      0714  Ldl5
+      0715  LdlS 6
+      0717  ReturnValues 3
+
+  @surtr:Pure
+  [public] static op_*(scalar: float, a: surtr.math.Vector:Vector3): surtr.math.Vector:Vector3
+    ; entry 41, locals 7, stack 3, code 0719..0738
+      0719  LoadLocalField 1+0
+      071E  Ldl0
+      071F  FMul
+      0720  Stl4
+      0721  LoadLocalField 1+1
+      0726  Ldl0
+      0727  FMul
+      0728  Stl5
+      0729  LoadLocalField 1+2
+      072E  Ldl0
+      072F  FMul
+      0730  StlS 6
+      0732  Ldl4
+      0733  Ldl5
+      0734  LdlS 6
+      0736  ReturnValues 3
+
+  @surtr:Pure
+  [public] static op_+(a: surtr.math.Vector:Vector3, b: surtr.math.Vector:Vector3): surtr.math.Vector:Vector3
+    ; entry 38, locals 9, stack 3, code 069C..06CB
+      069C  LoadLocalField 0+0
+      06A1  LoadLocalField 3+0
+      06A6  FAdd
+      06A7  StlS 6
+      06A9  LoadLocalField 0+1
+      06AE  LoadLocalField 3+1
+      06B3  FAdd
+      06B4  StlS 7
+      06B6  LoadLocalField 0+2
+      06BB  LoadLocalField 3+2
+      06C0  FAdd
+      06C1  StlS 8
+      06C3  LdlS 6
+      06C5  LdlS 7
+      06C7  LdlS 8
+      06C9  ReturnValues 3
+
+  @surtr:Pure
+  [public] static op_-(a: surtr.math.Vector:Vector3, b: surtr.math.Vector:Vector3): surtr.math.Vector:Vector3
+    ; entry 39, locals 9, stack 3, code 06CB..06FA
+      06CB  LoadLocalField 0+0
+      06D0  LoadLocalField 3+0
+      06D5  FSub
+      06D6  StlS 6
+      06D8  LoadLocalField 0+1
+      06DD  LoadLocalField 3+1
+      06E2  FSub
+      06E3  StlS 7
+      06E5  LoadLocalField 0+2
+      06EA  LoadLocalField 3+2
+      06EF  FSub
+      06F0  StlS 8
+      06F2  LdlS 6
+      06F4  LdlS 7
+      06F6  LdlS 8
+      06F8  ReturnValues 3
+
+  @surtr:Pure
+  [public] static op_-u(a: surtr.math.Vector:Vector3): surtr.math.Vector:Vector3
+    ; entry 43, locals 6, stack 3, code 0757..0771
+      0757  LoadLocalField 0+0
+      075C  FNeg
+      075D  Stl3
+      075E  LoadLocalField 0+1
+      0763  FNeg
+      0764  Stl4
+      0765  LoadLocalField 0+2
+      076A  FNeg
+      076B  Stl5
+      076C  Ldl3
+      076D  Ldl4
+      076E  Ldl5
+      076F  ReturnValues 3
+
+  @surtr:Pure
+  [public] static op_/(a: surtr.math.Vector:Vector3, scalar: float): surtr.math.Vector:Vector3
+    ; entry 42, locals 7, stack 3, code 0738..0757
+      0738  LoadLocalField 0+0
+      073D  Ldl3
+      073E  FDiv
+      073F  Stl4
+      0740  LoadLocalField 0+1
+      0745  Ldl3
+      0746  FDiv
+      0747  Stl5
+      0748  LoadLocalField 0+2
+      074D  Ldl3
+      074E  FDiv
+      074F  StlS 6
+      0751  Ldl4
+      0752  Ldl5
+      0753  LdlS 6
+      0755  ReturnValues 3
+
+  @surtr:Pure
+  [public] static op_==(a: surtr.math.Vector:Vector3, b: surtr.math.Vector:Vector3): bool
+    ; entry 44, locals 6, stack 2, code 0771..07A3
+      0771  LoadLocalField 0+0
+      0776  LoadLocalField 3+0
+      077B  FEQ
+      077C  Dup
+      077D  JPZ +15 -> L0 (078F)
+      0780  Pop
+      0781  LoadLocalField 0+1
+      0786  LoadLocalField 3+1
+      078B  FEQ
+      078C  JP +0 -> L0 (078F)
+    L0:
+      078F  Dup
+      0790  JPZ +15 -> L1 (07A2)
+      0793  Pop
+      0794  LoadLocalField 0+2
+      0799  LoadLocalField 3+2
+      079E  FEQ
+      079F  JP +0 -> L1 (07A2)
+    L1:
+      07A2  ReturnValue
+
+  @surtr:Pure
+  [public] virtual override toString(): string
+    ; entry 35, locals 12, stack 8, code 0570..05B7
+      0570  Ldl0
+      0571  UnboxValue 3
+      0573  StoreValueLocal 0 x3
+      0577  Ldc4
+      0578  LoadValueLocal 0 x3
+      057C  StoreValueLocal 3 x3
+      0580  LoadLocalField 3+0
+      0585  BoxFloat
+      0586  InvokeVirtual 83 (toString) args=1 ret=1
+      058B  Ldc5
+      058C  LoadValueLocal 0 x3
+      0590  StoreValueLocal 6 x3
+      0594  LoadLocalField 6+1
+      0599  BoxFloat
+      059A  InvokeVirtual 83 (toString) args=1 ret=1
+      059F  Ldc5
+      05A0  LoadValueLocal 0 x3
+      05A4  StoreValueLocal 9 x3
+      05A8  LoadLocalField 9+2
+      05AD  BoxFloat
+      05AE  InvokeVirtual 83 (toString) args=1 ret=1
+      05B3  Ldc6
+      05B4  StrCat 7
+      05B6  ReturnValue
+
+sealed class Vector3Int : surtr:ValueType, surtr:IEquatable<surtr.math.Vector:Vector3Int>  [public]
+  [public] readonly field x: int
+  [public] readonly field y: int
+  [public] readonly field z: int
+
+  [public] static property back: surtr.math.Vector:Vector3Int { get; }
+    get:
+      ; entry 72, locals 3, stack 3, code 09F3..0A01
+        09F3  PushI8 0
+        09F5  Stl0
+        09F6  PushI8 0
+        09F8  Stl1
+        09F9  PushI8 -1
+        09FB  Stl2
+        09FC  Ldl0
+        09FD  Ldl1
+        09FE  Ldl2
+        09FF  ReturnValues 3
+
+  [public] static property down: surtr.math.Vector:Vector3Int { get; }
+    get:
+      ; entry 68, locals 3, stack 3, code 09BB..09C9
+        09BB  PushI8 0
+        09BD  Stl0
+        09BE  PushI8 -1
+        09C0  Stl1
+        09C1  PushI8 0
+        09C3  Stl2
+        09C4  Ldl0
+        09C5  Ldl1
+        09C6  Ldl2
+        09C7  ReturnValues 3
+
+  [public] static property forward: surtr.math.Vector:Vector3Int { get; }
+    get:
+      ; entry 71, locals 3, stack 3, code 09E5..09F3
+        09E5  PushI8 0
+        09E7  Stl0
+        09E8  PushI8 0
+        09EA  Stl1
+        09EB  PushI8 1
+        09ED  Stl2
+        09EE  Ldl0
+        09EF  Ldl1
+        09F0  Ldl2
+        09F1  ReturnValues 3
+
+  [public] static property left: surtr.math.Vector:Vector3Int { get; }
+    get:
+      ; entry 69, locals 3, stack 3, code 09C9..09D7
+        09C9  PushI8 -1
+        09CB  Stl0
+        09CC  PushI8 0
+        09CE  Stl1
+        09CF  PushI8 0
+        09D1  Stl2
+        09D2  Ldl0
+        09D3  Ldl1
+        09D4  Ldl2
+        09D5  ReturnValues 3
+
+  [public] static property one: surtr.math.Vector:Vector3Int { get; }
+    get:
+      ; entry 66, locals 3, stack 3, code 099F..09AD
+        099F  PushI8 1
+        09A1  Stl0
+        09A2  PushI8 1
+        09A4  Stl1
+        09A5  PushI8 1
+        09A7  Stl2
+        09A8  Ldl0
+        09A9  Ldl1
+        09AA  Ldl2
+        09AB  ReturnValues 3
+
+  [public] static property right: surtr.math.Vector:Vector3Int { get; }
+    get:
+      ; entry 70, locals 3, stack 3, code 09D7..09E5
+        09D7  PushI8 1
+        09D9  Stl0
+        09DA  PushI8 0
+        09DC  Stl1
+        09DD  PushI8 0
+        09DF  Stl2
+        09E0  Ldl0
+        09E1  Ldl1
+        09E2  Ldl2
+        09E3  ReturnValues 3
+
+  [public] static property up: surtr.math.Vector:Vector3Int { get; }
+    get:
+      ; entry 67, locals 3, stack 3, code 09AD..09BB
+        09AD  PushI8 0
+        09AF  Stl0
+        09B0  PushI8 1
+        09B2  Stl1
+        09B3  PushI8 0
+        09B5  Stl2
+        09B6  Ldl0
+        09B7  Ldl1
+        09B8  Ldl2
+        09B9  ReturnValues 3
+
+  [public] static property zero: surtr.math.Vector:Vector3Int { get; }
+    get:
+      ; entry 65, locals 3, stack 3, code 0991..099F
+        0991  PushI8 0
+        0993  Stl0
+        0994  PushI8 0
+        0996  Stl1
+        0997  PushI8 0
+        0999  Stl2
+        099A  Ldl0
+        099B  Ldl1
+        099C  Ldl2
+        099D  ReturnValues 3
+
+  [public] ctor (x: int, y: int, z: int): void
+    ; entry 64, locals 6, stack 0, code 0990..0991
+      0990  ReturnVoid
+
+  [public] equals(other: surtr.math.Vector:Vector3Int): bool
+    ; entry 83, locals 15, stack 3, code 0C2E..0C78
+      0C2E  LoadValueLocal 0 x3
+      0C32  StoreValueLocal 6 x3
+      0C36  LoadLocalField 6+0
+      0C3B  LoadLocalField 3+0
+      0C40  EQ
+      0C41  Dup
+      0C42  JPZ +23 -> L0 (0C5C)
+      0C45  Pop
+      0C46  LoadValueLocal 0 x3
+      0C4A  StoreValueLocal 9 x3
+      0C4E  LoadLocalField 9+1
+      0C53  LoadLocalField 3+1
+      0C58  EQ
+      0C59  JP +0 -> L0 (0C5C)
+    L0:
+      0C5C  Dup
+      0C5D  JPZ +23 -> L1 (0C77)
+      0C60  Pop
+      0C61  LoadValueLocal 0 x3
+      0C65  StoreValueLocal 12 x3
+      0C69  LoadLocalField 12+2
+      0C6E  LoadLocalField 3+2
+      0C73  EQ
+      0C74  JP +0 -> L1 (0C77)
+    L1:
+      0C77  ReturnValue
+
+  [public] virtual equals(other: unknown): bool
+    ; entry 84, locals 2, stack 6, code 0C78..0C87
+      0C78  Ldl0
+      0C79  UnboxValue 3
+      0C7B  Ldl1
+      0C7C  Cast 1 (surtr.math.Vector:Vector3Int)
+      0C7F  UnboxValue 3
+      0C81  InvokeSpecial 82 (equals) args=6 ret=1
+      0C86  ReturnValue
+
+  @surtr:Pure
+  [public] length(): float
+    ; entry 74, locals 24, stack 5, code 0A55..0ABD
+      0A55  LoadValueLocal 0 x3
+      0A59  StoreValueLocal 3 x3
+      0A5D  LoadValueLocal 3 x3
+      0A61  StoreValueLocal 6 x3
+      0A65  LoadLocalField 6+0
+      0A6A  LoadValueLocal 3 x3
+      0A6E  StoreValueLocal 9 x3
+      0A72  LoadLocalField 9+0
+      0A77  Mul
+      0A78  LoadValueLocal 3 x3
+      0A7C  StoreValueLocal 12 x3
+      0A80  LoadLocalField 12+1
+      0A85  LoadValueLocal 3 x3
+      0A89  StoreValueLocal 15 x3
+      0A8D  LoadLocalField 15+1
+      0A92  Mul
+      0A93  Add
+      0A94  LoadValueLocal 3 x3
+      0A98  StoreValueLocal 18 x3
+      0A9C  LoadLocalField 18+2
+      0AA1  LoadValueLocal 3 x3
+      0AA5  StoreValueLocal 21 x3
+      0AA9  LoadLocalField 21+2
+      0AAE  Mul
+      0AAF  Add
+      0AB0  InvokeSpecial 84 (toFloat) args=1 ret=1
+      0AB5  CallModule 0:7 (surtr.math.Math.sqrt) args=1 ret=1
+      0ABC  ReturnValue
+
+  @surtr:Pure
+  [public] lengthSquared(): int
+    ; entry 73, locals 21, stack 5, code 0A01..0A55
+      0A01  LoadValueLocal 0 x3
+      0A05  StoreValueLocal 3 x3
+      0A09  LoadLocalField 3+0
+      0A0E  LoadValueLocal 0 x3
+      0A12  StoreValueLocal 6 x3
+      0A16  LoadLocalField 6+0
+      0A1B  Mul
+      0A1C  LoadValueLocal 0 x3
+      0A20  StoreValueLocal 9 x3
+      0A24  LoadLocalField 9+1
+      0A29  LoadValueLocal 0 x3
+      0A2D  StoreValueLocal 12 x3
+      0A31  LoadLocalField 12+1
+      0A36  Mul
+      0A37  Add
+      0A38  LoadValueLocal 0 x3
+      0A3C  StoreValueLocal 15 x3
+      0A40  LoadLocalField 15+2
+      0A45  LoadValueLocal 0 x3
+      0A49  StoreValueLocal 18 x3
+      0A4D  LoadLocalField 18+2
+      0A52  Mul
+      0A53  Add
+      0A54  ReturnValue
+
+  @surtr:Pure
+  [public] static op_*(a: surtr.math.Vector:Vector3Int, scalar: int): surtr.math.Vector:Vector3Int
+    ; entry 79, locals 7, stack 3, code 0BA4..0BC3
+      0BA4  LoadLocalField 0+0
+      0BA9  Ldl3
+      0BAA  Mul
+      0BAB  Stl4
+      0BAC  LoadLocalField 0+1
+      0BB1  Ldl3
+      0BB2  Mul
+      0BB3  Stl5
+      0BB4  LoadLocalField 0+2
+      0BB9  Ldl3
+      0BBA  Mul
+      0BBB  StlS 6
+      0BBD  Ldl4
+      0BBE  Ldl5
+      0BBF  LdlS 6
+      0BC1  ReturnValues 3
+
+  @surtr:Pure
+  [public] static op_*(scalar: int, a: surtr.math.Vector:Vector3Int): surtr.math.Vector:Vector3Int
+    ; entry 80, locals 7, stack 3, code 0BC3..0BE2
+      0BC3  LoadLocalField 1+0
+      0BC8  Ldl0
+      0BC9  Mul
+      0BCA  Stl4
+      0BCB  LoadLocalField 1+1
+      0BD0  Ldl0
+      0BD1  Mul
+      0BD2  Stl5
+      0BD3  LoadLocalField 1+2
+      0BD8  Ldl0
+      0BD9  Mul
+      0BDA  StlS 6
+      0BDC  Ldl4
+      0BDD  Ldl5
+      0BDE  LdlS 6
+      0BE0  ReturnValues 3
+
+  @surtr:Pure
+  [public] static op_+(a: surtr.math.Vector:Vector3Int, b: surtr.math.Vector:Vector3Int): surtr.math.Vector:Vector3Int
+    ; entry 77, locals 9, stack 3, code 0B46..0B75
+      0B46  LoadLocalField 0+0
+      0B4B  LoadLocalField 3+0
+      0B50  Add
+      0B51  StlS 6
+      0B53  LoadLocalField 0+1
+      0B58  LoadLocalField 3+1
+      0B5D  Add
+      0B5E  StlS 7
+      0B60  LoadLocalField 0+2
+      0B65  LoadLocalField 3+2
+      0B6A  Add
+      0B6B  StlS 8
+      0B6D  LdlS 6
+      0B6F  LdlS 7
+      0B71  LdlS 8
+      0B73  ReturnValues 3
+
+  @surtr:Pure
+  [public] static op_-(a: surtr.math.Vector:Vector3Int, b: surtr.math.Vector:Vector3Int): surtr.math.Vector:Vector3Int
+    ; entry 78, locals 9, stack 3, code 0B75..0BA4
+      0B75  LoadLocalField 0+0
+      0B7A  LoadLocalField 3+0
+      0B7F  Sub
+      0B80  StlS 6
+      0B82  LoadLocalField 0+1
+      0B87  LoadLocalField 3+1
+      0B8C  Sub
+      0B8D  StlS 7
+      0B8F  LoadLocalField 0+2
+      0B94  LoadLocalField 3+2
+      0B99  Sub
+      0B9A  StlS 8
+      0B9C  LdlS 6
+      0B9E  LdlS 7
+      0BA0  LdlS 8
+      0BA2  ReturnValues 3
+
+  @surtr:Pure
+  [public] static op_-u(a: surtr.math.Vector:Vector3Int): surtr.math.Vector:Vector3Int
+    ; entry 81, locals 6, stack 3, code 0BE2..0BFC
+      0BE2  LoadLocalField 0+0
+      0BE7  Neg
+      0BE8  Stl3
+      0BE9  LoadLocalField 0+1
+      0BEE  Neg
+      0BEF  Stl4
+      0BF0  LoadLocalField 0+2
+      0BF5  Neg
+      0BF6  Stl5
+      0BF7  Ldl3
+      0BF8  Ldl4
+      0BF9  Ldl5
+      0BFA  ReturnValues 3
+
+  @surtr:Pure
+  [public] static op_==(a: surtr.math.Vector:Vector3Int, b: surtr.math.Vector:Vector3Int): bool
+    ; entry 82, locals 6, stack 2, code 0BFC..0C2E
+      0BFC  LoadLocalField 0+0
+      0C01  LoadLocalField 3+0
+      0C06  EQ
+      0C07  Dup
+      0C08  JPZ +15 -> L0 (0C1A)
+      0C0B  Pop
+      0C0C  LoadLocalField 0+1
+      0C11  LoadLocalField 3+1
+      0C16  EQ
+      0C17  JP +0 -> L0 (0C1A)
+    L0:
+      0C1A  Dup
+      0C1B  JPZ +15 -> L1 (0C2D)
+      0C1E  Pop
+      0C1F  LoadLocalField 0+2
+      0C24  LoadLocalField 3+2
+      0C29  EQ
+      0C2A  JP +0 -> L1 (0C2D)
+    L1:
+      0C2D  ReturnValue
+
+  @surtr:Pure
+  [public] virtual override toString(): string
+    ; entry 76, locals 12, stack 8, code 0AFF..0B46
+      0AFF  Ldl0
+      0B00  UnboxValue 3
+      0B02  StoreValueLocal 0 x3
+      0B06  Ldc4
+      0B07  LoadValueLocal 0 x3
+      0B0B  StoreValueLocal 3 x3
+      0B0F  LoadLocalField 3+0
+      0B14  BoxInt
+      0B15  InvokeVirtual 85 (toString) args=1 ret=1
+      0B1A  Ldc5
+      0B1B  LoadValueLocal 0 x3
+      0B1F  StoreValueLocal 6 x3
+      0B23  LoadLocalField 6+1
+      0B28  BoxInt
+      0B29  InvokeVirtual 85 (toString) args=1 ret=1
+      0B2E  Ldc5
+      0B2F  LoadValueLocal 0 x3
+      0B33  StoreValueLocal 9 x3
+      0B37  LoadLocalField 9+2
+      0B3C  BoxInt
+      0B3D  InvokeVirtual 85 (toString) args=1 ret=1
+      0B42  Ldc6
+      0B43  StrCat 7
+      0B45  ReturnValue
+
+  @surtr:Pure
+  [public] toVector3(): surtr.math.Vector:Vector3
+    ; entry 75, locals 15, stack 3, code 0ABD..0AFF
+      0ABD  LoadValueLocal 0 x3
+      0AC1  StoreValueLocal 4 x3
+      0AC5  LoadLocalField 4+0
+      0ACA  InvokeSpecial 84 (toFloat) args=1 ret=1
+      0ACF  Stl3
+      0AD0  LoadValueLocal 0 x3
+      0AD4  StoreValueLocal 8 x3
+      0AD8  LoadLocalField 8+1
+      0ADD  InvokeSpecial 84 (toFloat) args=1 ret=1
+      0AE2  StlS 7
+      0AE4  LoadValueLocal 0 x3
+      0AE8  StoreValueLocal 12 x3
+      0AEC  LoadLocalField 12+2
+      0AF1  InvokeSpecial 84 (toFloat) args=1 ret=1
+      0AF6  StlS 11
+      0AF8  Ldl3
+      0AF9  LdlS 7
+      0AFB  LdlS 11
+      0AFD  ReturnValues 3

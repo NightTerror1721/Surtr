@@ -265,6 +265,20 @@ namespace Surtr.Compiler.CodeGen
                     return total;
                 }
 
+                case BoundCollectionBuildExpression build:
+                {
+                    int total = 2;
+                    foreach (var argument in build.ConstructorArguments)
+                        total += EstimateExpression(argument);
+                    foreach (var fillArgs in build.FillArguments)
+                    {
+                        total += 1;
+                        foreach (var argument in fillArgs)
+                            total += EstimateExpression(argument);
+                    }
+                    return total;
+                }
+
                 case BoundSwitchExpression @switch:
                 {
                     int total = EstimateExpression(@switch.Subject) + 1;

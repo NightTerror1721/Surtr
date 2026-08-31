@@ -9,7 +9,7 @@ Syntax highlighting, hover, go-to-definition and diagnostics for the
 - **Full syntax highlighting** for the surface language described in
   `docs/Language-Syntax.md` (from the repository root):
   - reserved words, modifiers and contextual keywords
-  - built-in type names (`int`, `float`, `bool`, `char`, `string`, `void`, `range`, `unknown`)
+  - built-in type names (`int`, `float`, `bool`, `char`, `string`, `bytes`, `void`, `range`, `unknown`)
   - string interpolation (`"Hello, $name!"`, `"${expr}"`) with `\$` escapes
   - char/string/numeric literals (hex, binary, `_` digit separators)
   - `///` doc comments with `@tag` highlighting
@@ -70,6 +70,20 @@ ways:
 2. **`surtr-lsp` on your PATH** — the default when the setting is empty.
 
 If neither exists, the extension shows a message instead of failing silently.
+
+### `surtr.projectRoot`
+
+The server derives every module's path from where its file sits relative to the
+opened folder (§2.1) — so if the folder you open in VSCode is *not* itself a
+Surtr project root (say, a larger repo where the Surtr sources live a few
+directories down, alongside unrelated project folders), every intermediate
+directory name becomes part of that derivation, and one that isn't a legal
+Surtr identifier (a folder with a dot in its name, for instance) makes every
+file underneath it fail to resolve — the server floods the Problems panel with
+"not a legal identifier" errors that have nothing to do with your actual code.
+Set `surtr.projectRoot` to the folder that *is* the Surtr project root (a path
+relative to the opened folder, or absolute) and the server treats that as the
+root instead.
 
 ## Operators and separators
 

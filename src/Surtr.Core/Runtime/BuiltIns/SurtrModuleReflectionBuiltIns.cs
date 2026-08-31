@@ -181,7 +181,7 @@ namespace Surtr.Runtime.BuiltIns
         }
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-        private static bool IsSynthetic(string name) => name.Length > 0 && name[0] == '$';
+        private static bool IsSynthetic(string name) => SurtrMetadataQuery.IsSynthetic(name);
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
         private static SurtrModule Self(SurtrCallArguments arguments) => arguments.GetUnchecked<SurtrModuleValue>(0).Wrapped;

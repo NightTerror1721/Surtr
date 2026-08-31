@@ -282,10 +282,14 @@ they are decided at the point they happen rather than by a later pass:
   local assigned only inside a loop body is not treated as assigned after it, since nothing proves
   the loop runs. Running on the bound tree also means a compound assignment is already expanded, so
   `x += 1` reads before it writes for free.
-* **Nullability narrowing** is in the binder rather than in the flow pass, because it changes what
-  an expression *is* rather than what can happen. Only the shapes that carry their proof on their
-  face — `x != null`, `x is T`, and the `&&` of two such — and only inside the branch they guard.
-  Stopping there keeps the rule predictable, which matters more than one more shape.
+* **Nullability and type narrowing** is in the binder rather than in the flow pass, because it
+  changes what an expression *is* rather than what can happen. The shapes that carry their proof on
+  their face — `x != null`, `x is T` (which narrows to `T` when `T` fits the declared type), and
+  their combinations through `&&` and `||` — hold inside the branch that proved them, in the `else`
+  of the negation, in the arms of `?:`, on the right of `&&`/`||`, and in a `while`/`for` body
+  whose condition checked them. A guard clause (`if (x == null) return;`) carries the negation to
+  the end of its block, and a write to the variable retracts it. Stopping at these shapes keeps the
+  rule predictable, which matters more than covering one more form.
 * **Generic constraints** are bound in a pass of their own after the hierarchy, since
   `<T : IComparable<T>>` names a type whose own hierarchy is still being resolved while signatures
   are bound. They are checked in another pass at the end, against the *substituted* bound —
@@ -426,7 +430,7 @@ Each is a decision about where code *runs*, not about what a program means:
 | `<=>` and the relational operators on `string` | a call to native `string.compareTo` |
 | string `switch` | `StrHash` + `SwitchOn` + an equality confirm per hash |
 | a `+` spine or an interpolation over strings | one counted `StrCat`, so one allocation rather than n − 1 |
-| a tuple element read | `TupGetC`, the index as an immediate — §5.3 already made it a constant |
+| a tuple element read | `TupGetC`, the index as an immediate for a constant index; a running index reads `unknown` (§5.10) via `TupGet` |
 | a discarded `i++`, `i -= k` or a `for` step over an `int` local | `IncLocal`, one dispatch that never touches the operand stack |
 | `dict` member calls: `m.clear()`, `m.containsKey(k)`, `m.remove(k)`, `m.keys()`, `m.values()`, and the `m.length` read | the `DictClear` / `DictIn` / `DictDel` / `DictKeys` / `DictValues` / `DictLen` opcodes, skipping the native dispatch |
 | an integer or `char` `switch` | `SwitchOn`, which picks a jump table or a key table |
@@ -1010,8 +1014,10 @@ method, and reading a member off a type parameter were all errors — §6's own
 `max<T : IComparable<T>>` example did not compile. What closed it:
 
 * **A bound is what a type parameter reaches through.** `MemberLookup.Reachable` walks a parameter's
-  constraints; an unconstrained one reaches nothing, since there is no root class to fall back to.
-  The bounds themselves were the actual defect: a *method*'s type parameters are declared while its
+  constraints; an unconstrained one still reaches nothing — `object` existing as the root of the
+  class hierarchy did not change that on purpose, so what `T` can do stays exactly what `<T : ...>`
+  says rather than gaining a standing `object` bound. Writing `<T : object>` gets the same effect
+  explicitly. The bounds themselves were the actual defect: a *method*'s type parameters are declared while its
   signature binds, which is after the pass that resolved bounds had already run, so every one of them
   stayed unbounded. Bound resolution now picks up where it left off, and runs again afterwards.
 * **A construction settles its arguments from three sources, in this order**: written at the call
@@ -1233,11 +1239,14 @@ And the two contradictions, both settled in favour of the language rather than t
   a guarantee. Writing to one now names itself and says to write `var`.
 * **Tuple element access is written down** (§5.3): `t[0]`, by a compile-time constant, `const`
   bindings included — which is one thing the implementation did *not* do until now, since a `const`
-  binds as a read rather than a literal. The constant is the type rule showing through rather than a
-  restriction on the syntax: a tuple holds a different type per position, so `t[i]` for a running
-  `i` has no type to give the expression, which is the same fact that leaves `tuple` without a
-  generic parameter or a `get(index)`. An index past the end is a compile error, so there is no
-  bounds check to pay for.
+  binds as a read rather than a literal. A constant index is the type rule showing through rather than
+  a restriction on the syntax: a tuple holds a different type per position, so only a constant has an
+  element type to give the expression — the same fact that leaves `tuple` without a generic parameter
+  or a `get(index)`. An index past the end is a compile error, so the constant form pays no bounds
+  check. A running index still binds, typed `unknown` (§5.10), and lowers to the dynamic `TupGet`,
+  whose trap does the range check at run time. Element names (`(x: int, y: string)`) are sugar for
+  the positions: they never join the signature, so a named tuple and its unnamed twin are the same
+  type, and a name-written access erases to the same constant `TupGetC` an `[i]` does.
 
 One more thing turned up while checking the above and is closed too: **a closure held in a member
 could not be called through it.** `f()` on a local worked and `First.Make()` did not — a call whose

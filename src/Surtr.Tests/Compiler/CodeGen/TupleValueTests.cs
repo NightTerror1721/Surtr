@@ -594,5 +594,128 @@ fun go(): int {
         }
 
         #endregion
+
+        #region Dynamic indexing and element names (§5.3)
+
+        [Fact]
+        public void ARunningIndex_ReadsThroughTupGet_AndComesBackCast()
+        {
+            var runtime = Load(Build(@"
+fun go(): int {
+    let t = (10, 20, 30);
+    let i = 1;
+    let v = t[i];       // unknown: the element type varies per position
+    return v as int;
+}
+"));
+
+            Assert.Equal(20, Int(runtime, "go"));
+        }
+
+        [Fact]
+        public void ARunningIndex_WorksOnASwappedTuple()
+        {
+            var runtime = Load(Build(@"
+fun pick(t: (int, int, int), i: int): int {
+    return t[i] as int;
+}
+
+fun go(): int {
+    let a = pick((1, 2, 3), 0);
+    let b = pick((4, 5, 6), 2);
+    return a * 100 + b;
+}
+"));
+
+            Assert.Equal(106, Int(runtime, "go"));
+        }
+
+        [Fact]
+        public void ANamedTupleElement_ReadsByPosition()
+        {
+            var runtime = Load(Build(@"
+fun go(): int {
+    let t: (x: int, y: int) = (3, 4);
+    return t.x * 10 + t.y;
+}
+"));
+
+            Assert.Equal(34, Int(runtime, "go"));
+        }
+
+        [Fact]
+        public void NamedElements_WorkOverReferences_AndPartiallyNamedTuples()
+        {
+            var runtime = Load(Build(@"
+fun go(): string {
+    let t: (first: string, last: string) = (""a"", ""b"");
+    let mixed: (label: string, int) = (""row"", 7);
+    return t.first + t.last + mixed.label;
+}
+"));
+
+            Assert.Equal("abrow", Text(runtime, "go"));
+        }
+
+        [Fact]
+        public void NamesAreErasedAcrossTheType_AnUnnamedTwinStillReadsPositionally()
+        {
+            // (x: int, y: int) and (int, int) are the same tuple type (§5.3): a value flows across
+            // the boundary and both spellings read it.
+            var runtime = Load(Build(@"
+fun go(): int {
+    let named: (x: int, y: int) = (1, 2);
+    let unnamed: (int, int) = named;
+    let back: (a: int, b: int) = unnamed;
+    return named.x + unnamed[1] + back.b;
+}
+"));
+
+            Assert.Equal(5, Int(runtime, "go"));
+        }
+
+        [Fact]
+        public void ANamedElement_ReadsThroughACallResult()
+        {
+            var runtime = Load(Build(@"
+fun make(): (a: int, b: int) { return (3, 4); }
+
+fun go(): int {
+    let p = make();
+    return make().a * 10 + p.b;
+}
+"));
+
+            Assert.Equal(34, Int(runtime, "go"));
+        }
+
+        [Fact]
+        public void ANamedElement_ReadsOverAParameter()
+        {
+            var runtime = Load(Build(@"
+fun sum(p: (a: int, b: int, c: int)): int { return p.a + p.b + p.c; }
+
+fun go(): int { return sum((1, 2, 3)); }
+"));
+
+            Assert.Equal(6, Int(runtime, "go"));
+        }
+
+        [Fact]
+        public void ARunningIndex_OverAnArrayOfTuples_ReadsThePackedElement()
+        {
+            var runtime = Load(Build(@"
+fun go(): int {
+    let pairs: (int, int)[] = [(1, 2), (3, 4)];
+    let i = 1;
+    let v = pairs[i][1] as int;
+    return v;
+}
+"));
+
+            Assert.Equal(4, Int(runtime, "go"));
+        }
+
+        #endregion
     }
 }

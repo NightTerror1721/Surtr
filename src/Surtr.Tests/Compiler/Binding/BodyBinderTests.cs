@@ -912,10 +912,55 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         [Fact]
-        public void ATupleIndexHasToBeAConstant()
+        public void ARunningTupleIndexReadsAsUnknown()
         {
-            BindIn(out var compilation, "let t = (1, 2);\nlet i = 0;\nlet a = t[i];");
-            AssertReports(compilation, SurtrDiagnosticCode.InvalidTupleIndex);
+            var binder = BindIn(out var compilation, "let t = (1, \"x\", 2.0);\nlet i = 0;\nlet a = t[i];");
+
+            AssertNoErrors(compilation);
+
+            // The element type varies per position, so a running index has no element to type:
+            // the read lowers to the dynamic TupGet and comes back `unknown`, cast at the point
+            // of use (§5.10).
+            var index = Walk(Body(binder)).OfType<BoundIndexExpression>().Single();
+            Assert.Same(compilation.TypeFactory.Unknown, index.Type);
+            Assert.IsNotType<BoundLiteralExpression>(index.Index);
+        }
+
+        [Fact]
+        public void ATupleElementNameReadsByPosition()
+        {
+            var binder = BindIn(out var compilation,
+                "let t: (x: int, y: string) = (1, \"a\");\nlet a = t.x;\nlet b = t.y;\nlet c = t[0];");
+
+            AssertNoErrors(compilation);
+
+            // A name-written access erases to the same constant index read an `[i]` does.
+            var indexes = Walk(Body(binder)).OfType<BoundIndexExpression>().ToList();
+            Assert.Same(compilation.TypeFactory.Int, indexes[0].Type);
+            Assert.Same(compilation.TypeFactory.String, indexes[1].Type);
+            Assert.Same(compilation.TypeFactory.Int, indexes[2].Type);
+
+            var literal = Assert.IsType<BoundLiteralExpression>(indexes[0].Index);
+            Assert.Equal(0L, literal.Value);
+            Assert.Equal(1L, Assert.IsType<BoundLiteralExpression>(indexes[1].Index).Value);
+        }
+
+        [Fact]
+        public void ATupleElementNameThatMatchesNoPositionFallsThroughToTheMemberSurface()
+        {
+            var binder = BindIn(out var compilation, "let t: (x: int, y: string) = (1, \"a\");\nlet n = t.length;");
+
+            AssertNoErrors(compilation);
+            Assert.Same(
+                compilation.TypeFactory.Int,
+                Walk(Body(binder)).OfType<BoundPropertyExpression>().Single().Type);
+        }
+
+        [Fact]
+        public void AnUnnamedTupleHasNoElementNamesToRead()
+        {
+            BindIn(out var compilation, "let t = (1, 2);\nlet a = t.x;");
+            AssertReports(compilation, SurtrDiagnosticCode.UnresolvedMember);
         }
 
         [Fact]

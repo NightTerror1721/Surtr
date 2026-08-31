@@ -1,9 +1,8 @@
 module surtr.collections.Collection
-  constants: 0   types: 2   fields: 0   methods: 18   modules: 0
+  constants: 0   types: 1   fields: 0   methods: 17   modules: 0
 
   type table:
-    #0  T0
-    #1  T0[]
+    #0  T0[]
 
   method table:
     #0  surtr.collections.Collection:IReadOnlyCollection<.get_length() -> int
@@ -14,16 +13,15 @@ module surtr.collections.Collection
     #5  surtr.collections.Collection:ICollection<.remove(T0) -> bool
     #6  surtr.collections.Collection:ICollection<.clear() -> void
     #7  surtr.collections.Collection:ReadOnlyCollection<.ctor(surtr.collections.Collection:IReadOnlyCollection<T0>) -> void
-    #8  surtr.collections.Collection:ReadOnlyCollection<.ctor(surtr.collections.Collection:ICollection<T0>) -> void
-    #9  surtr.collections.Collection:ReadOnlyCollection<.get_length() -> int
-    #10  surtr.collections.Collection:ReadOnlyCollection<.contains(T0) -> bool
-    #11  surtr.collections.Collection:ReadOnlyCollection<.copyTo(T0[], int) -> void
-    #12  surtr.collections.Collection:ReadOnlyCollection<.iterate() -> surtr:IIterator<T0>
-    #13  surtr:IIterable<T0>.iterate() -> surtr:IIterator<T0>
-    #14  surtr.collections.Collection:ReadOnlyCollection<.get_length() -> int
-    #15  surtr.collections.Collection:ReadOnlyCollection<.contains(unknown) -> bool
-    #16  surtr.collections.Collection:ReadOnlyCollection<.copyTo(unknown[], int) -> void
-    #17  surtr.collections.Collection:ReadOnlyCollection<.iterate() -> surtr:IIterator<unknown>
+    #8  surtr.collections.Collection:ReadOnlyCollection<.get_length() -> int
+    #9  surtr.collections.Collection:ReadOnlyCollection<.contains(T0) -> bool
+    #10  surtr.collections.Collection:ReadOnlyCollection<.copyTo(T0[], int) -> void
+    #11  surtr.collections.Collection:ReadOnlyCollection<.iterate() -> surtr:IIterator<T0>
+    #12  surtr:IIterable<T0>.iterate() -> surtr:IIterator<T0>
+    #13  surtr.collections.Collection:ReadOnlyCollection<.get_length() -> int
+    #14  surtr.collections.Collection:ReadOnlyCollection<.contains(unknown) -> bool
+    #15  surtr.collections.Collection:ReadOnlyCollection<.copyTo(unknown[], int) -> void
+    #16  surtr.collections.Collection:ReadOnlyCollection<.iterate() -> surtr:IIterator<unknown>
 
 interface ICollection`1<T> : surtr.collections.Collection:IReadOnlyCollection<T0>  [public]
 
@@ -47,75 +45,70 @@ interface IReadOnlyCollection`1<T> : surtr:IIterable<T0>  [public]
 
   [public] abstract copyTo(array: T0[], arrayIndex: int): void
 
-sealed class ReadOnlyCollection`1<T> : surtr.collections.Collection:IReadOnlyCollection<T0>  [private]
+sealed class ReadOnlyCollection`1<T> : surtr:ValueType, surtr.collections.Collection:IReadOnlyCollection<T0>  [public]
   [private] readonly field _col: surtr.collections.Collection:IReadOnlyCollection<T0>
 
   [public] property length: int { get; }
     get:
-      ; entry 2, locals 1, stack 1, code 0002..0009
-        0002  Ldl0
-        0003  InvokeInterface 0 (get_length) args=1 ret=1
-        0008  ReturnValue
+      ; entry 1, locals 1, stack 1, code 0001..0008
+        0001  Ldl0
+        0002  InvokeInterface 0 (get_length) args=1 ret=1
+        0007  ReturnValue
 
   [public] contains(item: T0): bool
-    ; entry 3, locals 2, stack 2, code 0009..0012
-      0009  Ldl0
-      000A  Ldl1
-      000B  BoxDynamic
-      000C  InvokeInterface 1 (contains) args=2 ret=1
-      0011  ReturnValue
+    ; entry 2, locals 2, stack 2, code 0008..0011
+      0008  Ldl0
+      0009  Ldl1
+      000A  BoxDynamic
+      000B  InvokeInterface 1 (contains) args=2 ret=1
+      0010  ReturnValue
 
   [public] virtual contains(item: unknown): bool
-    ; entry 7, locals 2, stack 2, code 002A..0036
-      002A  Ldl0
-      002B  Unbox
-      002C  Ldl1
-      002D  Cast 0 (T0)
-      0030  InvokeSpecial 10 (contains) args=2 ret=1
-      0035  ReturnValue
+    ; entry 6, locals 2, stack 2, code 0029..0032
+      0029  Ldl0
+      002A  Unbox
+      002B  Ldl1
+      002C  InvokeSpecial 9 (contains) args=2 ret=1
+      0031  ReturnValue
 
   [public] copyTo(array: T0[], arrayIndex: int): void
-    ; entry 4, locals 3, stack 3, code 0012..001B
-      0012  Ldl0
-      0013  Ldl1
-      0014  Ldl2
-      0015  InvokeInterface 2 (copyTo) args=3 ret=0
-      001A  ReturnVoid
+    ; entry 3, locals 3, stack 3, code 0011..001A
+      0011  Ldl0
+      0012  Ldl1
+      0013  Ldl2
+      0014  InvokeInterface 2 (copyTo) args=3 ret=0
+      0019  ReturnVoid
 
   [public] virtual copyTo(array: unknown[], arrayIndex: int): void
-    ; entry 8, locals 3, stack 3, code 0036..0043
-      0036  Ldl0
-      0037  Unbox
-      0038  Ldl1
-      0039  Cast 1 (T0[])
-      003C  Ldl2
-      003D  InvokeSpecial 11 (copyTo) args=3 ret=0
-      0042  ReturnVoid
+    ; entry 7, locals 3, stack 3, code 0032..003F
+      0032  Ldl0
+      0033  Unbox
+      0034  Ldl1
+      0035  Cast 0 (T0[])
+      0038  Ldl2
+      0039  InvokeSpecial 10 (copyTo) args=3 ret=0
+      003E  ReturnVoid
 
   [public] ctor (collection: surtr.collections.Collection:IReadOnlyCollection<T0>): void
     ; entry 0, locals 2, stack 0, code 0000..0001
       0000  ReturnVoid
 
-  [public] ctor (collection: surtr.collections.Collection:ICollection<T0>): void
-    ; entry 1, locals 2, stack 0, code 0001..0002
-      0001  ReturnVoid
-
   [public] virtual get_length(): int
-    ; entry 6, locals 1, stack 1, code 0022..002A
-      0022  Ldl0
-      0023  Unbox
-      0024  InvokeSpecial 9 (get_length) args=1 ret=1
-      0029  ReturnValue
+    ; entry 5, locals 1, stack 1, code 0021..0029
+      0021  Ldl0
+      0022  Unbox
+      0023  InvokeSpecial 8 (get_length) args=1 ret=1
+      0028  ReturnValue
 
   [public] iterate(): surtr:IIterator<T0>
-    ; entry 5, locals 1, stack 1, code 001B..0022
-      001B  Ldl0
-      001C  InvokeInterface 13 (iterate) args=1 ret=1
-      0021  ReturnValue
+    ; entry 4, locals 1, stack 1, code 001A..0021
+      001A  Ldl0
+      001B  InvokeInterface 12 (iterate) args=1 ret=1
+      0020  ReturnValue
 
   [public] virtual iterate(): surtr:IIterator<unknown>
-    ; entry 9, locals 1, stack 1, code 0043..004B
-      0043  Ldl0
-      0044  Unbox
-      0045  InvokeSpecial 12 (iterate) args=1 ret=1
-      004A  ReturnValue
+    ; entry 8, locals 1, stack 1, code 003F..0047
+      003F  Ldl0
+      0040  Unbox
+      0041  InvokeSpecial 11 (iterate) args=1 ret=1
+      0046  ReturnValue

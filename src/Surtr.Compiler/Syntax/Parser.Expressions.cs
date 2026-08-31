@@ -254,6 +254,9 @@ namespace Surtr.Compiler.Syntax
                     ExpressionSyntax decremented = ParseUnary();
                     return new UnaryExpressionSyntax(SpanFrom(start), UnaryOperator.PreDecrement, decremented);
 
+                case TokenType.KeywordDefined:
+                    return ParseDefined();
+
                 default:
                     return ParseCast();
             }
@@ -331,18 +334,25 @@ namespace Surtr.Compiler.Syntax
                             break;
 
                         // A list that closes more angles than it opened was never one.
-                        // After the close comes a `(` (a generic call), or — for the member-access
-                        // form — a `.`/`?.` (a generic name reaching a static member). Both facts are
-                        // answered by the same scan, so a postfix `<` pays for it exactly once.
+                        // After the close comes a `(` (a generic call), a `.`/`?.` (a generic name
+                        // reaching a static member), or a `[`/`{` (a collection literal over a generic
+                        // type — §5.x). All three facts are answered by the same scan, so a postfix
+                        // `<` pays for it exactly once.
                         var following = reader.PeekType(offset + 1);
                         return (
-                            depth == 0 && (following == TokenType.LeftParen || following == TokenType.Dot || following == TokenType.QuestionDot),
+                            depth == 0 && (following == TokenType.LeftParen || following == TokenType.Dot || following == TokenType.QuestionDot
+                                || following == TokenType.LeftBracket || following == TokenType.LeftBrace),
                             depth == 0 && (following == TokenType.Dot || following == TokenType.QuestionDot));
                     }
 
                     // Everything a type can be written with: a name, a qualification, a separator,
                     // `?`, and the bracket forms of an array, a dict, a tuple and a closure.
+                    // `generator` is included because it is the one type name that also lexes as
+                    // its own keyword (§1.2, ParseCoreType) — nested inside another type argument
+                    // list, as in `array<generator<float>>`, it is exactly as valid a type there as
+                    // anywhere else, and this scan has to accept whatever ParseType would.
                     case TokenType.Identifier:
+                    case TokenType.KeywordGenerator:
                     case TokenType.Dot:
                     case TokenType.Comma:
                     case TokenType.Question:
@@ -422,6 +432,21 @@ namespace Surtr.Compiler.Syntax
                         }
 
                         var typeArguments = ParseTypeArgumentList();
+
+                        // `List<int>[1, 2, 3]` / `Map<string, int>{ ... }` — the generic name names a
+                        // type, and the bracket/brace is a collection literal over it. No `(args)`
+                        // call: this is the bare builder form.
+                        if (reader.Check(TokenType.LeftBracket) || reader.Check(TokenType.LeftBrace))
+                        {
+                            if (expression is not IdentifierExpressionSyntax genericIdentifier)
+                                return expression;
+
+                            var genericName = new GenericNameExpressionSyntax(
+                                SpanFrom(genericIdentifier.Span.Start), genericIdentifier.Name, typeArguments);
+                            expression = ParseCollectionInstantiationBody(genericName, reader.Check(TokenType.LeftBracket));
+                            continue;
+                        }
+
                         var arguments = ParseArgumentList();
                         expression = new CallExpressionSyntax(SpanFrom(expression.Span.Start), expression, typeArguments, arguments);
                         continue;
@@ -430,6 +455,17 @@ namespace Surtr.Compiler.Syntax
 
                 if (reader.Check(TokenType.LeftBracket))
                 {
+                    // `IntList[1, 2, 3]`, `List<int>(32)[5]`, `makeList<int>(5)[0]`, `arr[0]` — after
+                    // an identifier, a generic name or a call the bracket is parsed as a comma list,
+                    // and the binder decides between a collection builder and an index by what the
+                    // construction resolves to. Anything else (`obj.field[0]`, `(expr)[i]`) keeps the
+                    // single-expression index path below.
+                    if (expression is IdentifierExpressionSyntax or GenericNameExpressionSyntax or CallExpressionSyntax)
+                    {
+                        expression = ParseCollectionInstantiationBody(expression, bracket: true);
+                        continue;
+                    }
+
                     reader.Advance();
                     ExpressionSyntax index = ParseExpression();
                     reader.Expect(TokenType.RightBracket, "']' to close the index");
@@ -437,6 +473,19 @@ namespace Surtr.Compiler.Syntax
                     // captured, or the node would point at `[` alone.
                     expression = new IndexExpressionSyntax(SpanFrom(expression.Span.Start), expression, index);
                     continue;
+                }
+
+                // `{ k: v }` after a construction is only ever a collection literal body — no `{`
+                // postfix exists in the language.
+                if (reader.Check(TokenType.LeftBrace))
+                {
+                    if (expression is IdentifierExpressionSyntax or GenericNameExpressionSyntax or CallExpressionSyntax)
+                    {
+                        expression = ParseCollectionInstantiationBody(expression, bracket: false);
+                        continue;
+                    }
+
+                    throw reader.Error(SurtrDiagnosticCode.ExpectedExpression, $"Expected an expression, found {reader.CurrentType}.");
                 }
 
                 // A postfix operator spans its operand too: `x++` is the operation, `++` alone is not.
@@ -620,6 +669,26 @@ namespace Surtr.Compiler.Syntax
         }
 
         /// <summary>
+        /// Parses <c>defined(Path)</c> - a compile-time existence test for a build constant (§7.4).
+        /// Mirrors <see cref="ParseModuleOf"/>'s dotted-path shape, but the path names a constant
+        /// rather than a module, so the result is an operator that folds to a bool, not a value.
+        /// </summary>
+        private ExpressionSyntax ParseDefined()
+        {
+            SourceLocation start = reader.CurrentLocation;
+            reader.Advance();
+
+            reader.Expect(TokenType.LeftParen, "'(' after 'defined'");
+
+            List<string> path = new List<string> { reader.ExpectIdentifier("a constant name") };
+            while (reader.Match(TokenType.Dot))
+                path.Add(reader.ExpectIdentifier("a name after '.'"));
+
+            reader.Expect(TokenType.RightParen, "')' to close 'defined'");
+            return new DefinedExpressionSyntax(SpanFrom(start), path);
+        }
+
+        /// <summary>
         /// Whether <c>typeof</c>'s argument, starting at the current token, is a name followed by a
         /// type argument list that closes right before <c>)</c> - the one shape a bare Surtr
         /// expression can never take. Scans exactly like <see cref="LooksLikeTypeArgumentList"/>
@@ -670,7 +739,10 @@ namespace Surtr.Compiler.Syntax
                         return depth == 0 && reader.Peek(offset + 1).Type == TokenType.RightParen;
                     }
 
+                    // Same allowed-token set as LooksLikeTypeArgumentList, including `generator`
+                    // for the same reason (a nested `generator<T>` type argument).
                     case TokenType.Identifier:
+                    case TokenType.KeywordGenerator:
                     case TokenType.Dot:
                     case TokenType.Comma:
                     case TokenType.Question:
@@ -865,7 +937,14 @@ namespace Surtr.Compiler.Syntax
         {
             SourceLocation start = reader.CurrentLocation;
             reader.Expect(TokenType.LeftBracket, "'[' to open the array literal");
+            IReadOnlyList<ExpressionSyntax> elements = ParseArrayLiteralElements();
+            reader.Expect(TokenType.RightBracket, "']' to close the array literal");
+            return new ArrayLiteralExpressionSyntax(SpanFrom(start), elements);
+        }
 
+        /// <summary>Parses the comma-separated element list inside a <c>[ ... ]</c>.</summary>
+        private IReadOnlyList<ExpressionSyntax> ParseArrayLiteralElements()
+        {
             List<ExpressionSyntax> elements = new List<ExpressionSyntax>();
             while (!reader.Check(TokenType.RightBracket))
             {
@@ -876,8 +955,7 @@ namespace Surtr.Compiler.Syntax
                 }
             }
 
-            reader.Expect(TokenType.RightBracket, "']' to close the array literal");
-            return new ArrayLiteralExpressionSyntax(SpanFrom(start), elements);
+            return elements;
         }
 
         /// <summary>Parses <c>{ k: v }</c>. Only reachable in expression position, per §5.4.</summary>
@@ -885,7 +963,14 @@ namespace Surtr.Compiler.Syntax
         {
             SourceLocation start = reader.CurrentLocation;
             reader.Expect(TokenType.LeftBrace, "'{' to open the dictionary literal");
+            IReadOnlyList<DictEntrySyntax> entries = ParseDictEntries();
+            reader.Expect(TokenType.RightBrace, "'}' to close the dictionary literal");
+            return new DictLiteralExpressionSyntax(SpanFrom(start), entries);
+        }
 
+        /// <summary>Parses the <c>key: value</c> entry list inside a <c>{ ... }</c>.</summary>
+        private IReadOnlyList<DictEntrySyntax> ParseDictEntries()
+        {
             List<DictEntrySyntax> entries = new List<DictEntrySyntax>();
             while (!reader.Check(TokenType.RightBrace))
             {
@@ -901,8 +986,37 @@ namespace Surtr.Compiler.Syntax
                 }
             }
 
-            reader.Expect(TokenType.RightBrace, "'}' to close the dictionary literal");
-            return new DictLiteralExpressionSyntax(SpanFrom(start), entries);
+            return entries;
+        }
+
+        /// <summary>
+        /// Parses <c>[ ... ]</c>/<c>{ ... }</c> as the body of a collection instantiation written over
+        /// <paramref name="construction"/> — <c>List&lt;int&gt;[1, 2, 3]</c>, <c>IntList[5]</c>,
+        /// <c>List&lt;int&gt;(32)[1, 2, 3]</c> or <c>Map&lt;string, int&gt;{ "x": 10 }</c>. The binder
+        /// later decides, by what the construction resolves to, whether this is a builder or (for a
+        /// single-element bracket over a value) an index.
+        /// </summary>
+        private ExpressionSyntax ParseCollectionInstantiationBody(ExpressionSyntax construction, bool bracket)
+        {
+            SourceLocation start = construction.Span.Start;
+            ExpressionSyntax body;
+
+            if (bracket)
+            {
+                reader.Expect(TokenType.LeftBracket, "'[' to open the collection literal body");
+                IReadOnlyList<ExpressionSyntax> elements = ParseArrayLiteralElements();
+                reader.Expect(TokenType.RightBracket, "']' to close the collection literal body");
+                body = new ArrayLiteralExpressionSyntax(SpanFrom(start), elements);
+            }
+            else
+            {
+                reader.Expect(TokenType.LeftBrace, "'{' to open the collection literal body");
+                IReadOnlyList<DictEntrySyntax> entries = ParseDictEntries();
+                reader.Expect(TokenType.RightBrace, "'}' to close the collection literal body");
+                body = new DictLiteralExpressionSyntax(SpanFrom(start), entries);
+            }
+
+            return new CollectionInstantiationExpressionSyntax(SpanFrom(start), construction, body);
         }
 
         /// <summary>Parses <c>(a)</c> as a grouping and <c>(a, b)</c> as a tuple.</summary>

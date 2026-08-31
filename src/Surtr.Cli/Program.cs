@@ -3,6 +3,7 @@
 using Surtr.Compiler.Compilation;
 using Surtr.Compiler.Diagnostics;
 using System;
+using System.Collections.Generic;
 using System.IO;
 
 namespace Surtr.Cli
@@ -24,23 +25,68 @@ namespace Surtr.Cli
 
         private static int Main(string[] args)
         {
-            if (args.Length == 0 || IsHelp(args[0]))
+            if (args.Length == 0)
             {
                 Usage();
-                return args.Length == 0 ? BadUsage : Ok;
+                return BadUsage;
+            }
+
+            if (IsHelp(args[0]))
+            {
+                Usage();
+                return Ok;
+            }
+
+            if (IsVersion(args[0]))
+            {
+                Console.WriteLine($"surtrc {VersionText()}");
+                return Ok;
             }
 
             return args[0] switch
             {
                 "build" => Build(args),
+                "help" => OkWith(Usage),
+                "version" => OkWith(() => Console.WriteLine($"surtrc {VersionText()}")),
                 _ => Unknown(args[0]),
             };
         }
 
         private static int Build(string[] args)
         {
-            string target = args.Length > 1 ? args[1] : ".";
-            var build = Locate(target, out string described);
+            bool package = false;
+            string? packageName = null;
+            string? entryModule = null;
+            string? entryFunction = null;
+            var positional = new List<string>();
+
+            for (int i = 1; i < args.Length; i++)
+            {
+                if (args[i] == "--package")
+                {
+                    package = true;
+                    if (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                        packageName = args[++i];
+                }
+                else if (args[i] == "--entry")
+                {
+                    if (i + 2 >= args.Length)
+                    {
+                        Console.Error.WriteLine("surtrc: '--entry' needs a module path and a function name.");
+                        return BadUsage;
+                    }
+
+                    entryModule = args[++i];
+                    entryFunction = args[++i];
+                }
+                else
+                {
+                    positional.Add(args[i]);
+                }
+            }
+
+            string target = positional.Count > 0 ? positional[0] : ".";
+            var build = Locate(target, package, packageName, entryModule, entryFunction, out string described);
 
             if (build is null)
             {
@@ -72,12 +118,13 @@ namespace Surtr.Cli
         /// meaning that file. Two of them is ambiguous and says so rather than picking — the same
         /// rule §3.5 applies to an overloaded call, for the same reason.
         /// </remarks>
-        private static SurtrBuild? Locate(string target, out string problem)
+        private static SurtrBuild? Locate(
+            string target, bool package, string? packageName, string? entryModule, string? entryFunction, out string problem)
         {
             problem = string.Empty;
 
             if (File.Exists(target))
-                return SurtrBuild.Run(target);
+                return SurtrBuild.Run(target, package, packageName, entryModule, entryFunction);
 
             if (!Directory.Exists(target))
             {
@@ -94,10 +141,12 @@ namespace Surtr.Cli
             }
 
             if (projects.Length == 1)
-                return SurtrBuild.Run(projects[0]);
+                return SurtrBuild.Run(projects[0], package, packageName, entryModule, entryFunction);
 
             // No project file, so the directory is the source root and everything takes its default.
-            return SurtrBuild.Run(target, Path.Combine(target, "build"));
+            return SurtrBuild.Run(
+                target, Path.Combine(target, "build"),
+                package: package, packagePath: packageName, entryModulePath: entryModule, entryFunction: entryFunction);
         }
 
         private static void Report(SurtrDiagnostic diagnostic)
@@ -109,6 +158,21 @@ namespace Surtr.Cli
         private static bool IsHelp(string argument)
             => argument is "-h" or "--help" or "help" or "-?" or "/?";
 
+        private static bool IsVersion(string argument)
+            => argument is "-v" or "--version" or "version" or "-V";
+
+        private static string VersionText()
+        {
+            var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+            return version is null ? "0.0.0" : version.ToString();
+        }
+
+        private static int OkWith(Action write)
+        {
+            write();
+            return Ok;
+        }
+
         private static int Unknown(string command)
         {
             Console.Error.WriteLine($"surtrc: '{command}' is not a command.");
@@ -118,18 +182,39 @@ namespace Surtr.Cli
 
         private static void Usage()
         {
-            Console.WriteLine("surtrc build [path]");
+            Console.WriteLine("surtrc - the Surtr compiler");
             Console.WriteLine();
-            Console.WriteLine("  path   a .surtrproj file, a directory holding one, or a source tree.");
-            Console.WriteLine("         Defaults to the current directory.");
+            Console.WriteLine("usage: surtrc <command> [options]");
             Console.WriteLine();
-            Console.WriteLine("A project file is one directive per line:");
+            Console.WriteLine("commands:");
+            Console.WriteLine("  build [path] [--package [name]] [--entry module function]");
+            Console.WriteLine("  help               show this help");
+            Console.WriteLine("  version            show the version");
+            Console.WriteLine();
+            Console.WriteLine("build compiles a .surtr / .surtrproj tree into loadable images.");
+            Console.WriteLine();
+            Console.WriteLine("  path            a .surtrproj file, a directory holding one, or a source");
+            Console.WriteLine("                  tree. Defaults to the current directory.");
+            Console.WriteLine("  --package [name] write a single .surtrx package instead of loose .surtrc");
+            Console.WriteLine("                  images. The 'package' project directive does the same; a");
+            Console.WriteLine("                  name overrides the default ('<module>.surtrx').");
+            Console.WriteLine("  --entry mod fn   set the package entry point, overriding the project's");
+            Console.WriteLine("                  'entry' directive. Without either, a module-level 'main'");
+            Console.WriteLine("                  is auto-detected (an error if there is more than one).");
+            Console.WriteLine();
+            Console.WriteLine("A project file (.surtrproj) is one directive per line:");
             Console.WriteLine();
             Console.WriteLine("  root      = src           where module paths are derived from (§2.1)");
-            Console.WriteLine("  module    = game          what the root itself is called");
+            Console.WriteLine("  module    = game          what the source root itself is called");
             Console.WriteLine("  output    = build         where .surtrc images are written");
             Console.WriteLine("  define    Debug = true    a build constant (§7.4)");
-            Console.WriteLine("  reference ../lib/x.surtrc a module compiled earlier");
+            Console.WriteLine("  reference ../lib/x.surtrc a module image compiled earlier (e.g. the stdlib)");
+            Console.WriteLine("  entry     game main       the module-level function to start from");
+            Console.WriteLine("  package   = true          write a .surtrx package");
+            Console.WriteLine("  warningsAsErrors = true   turn warnings into errors");
+            Console.WriteLine("  suppress  Code1, Code2    silence named diagnostics");
+            Console.WriteLine();
+            Console.WriteLine("To run a program, see 'surtr'. Both tools accept -h/--help and -v/--version.");
         }
     }
 }

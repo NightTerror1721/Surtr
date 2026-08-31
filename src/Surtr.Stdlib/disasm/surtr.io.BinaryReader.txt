@@ -1,0 +1,290 @@
+module surtr.io.BinaryReader
+  constants: 4   types: 1   fields: 2   methods: 19   modules: 0
+  string #0 = "Stream ended in the middle of a char."
+  string #1 = "Stream ended in the middle of an int."
+  string #2 = ""
+  string #3 = "Stream ended before the declared string length could be read."
+
+  type table:
+    #0  surtr.io.Stream:EndOfStreamException
+
+  field table:
+    #0  surtr.io.BinaryReader:BinaryReader._stream: surtr.io.Stream:Stream
+    #1  surtr.io.BinaryReader:BinaryReader._leaveOpen: bool
+
+  method table:
+    #0  surtr.io.BinaryReader:BinaryReader.ctor(surtr.io.Stream:Stream, bool) -> void
+    #1  surtr.io.BinaryReader:BinaryReader.get_baseStream() -> surtr.io.Stream:Stream
+    #2  surtr.io.BinaryReader:BinaryReader.readBool() -> bool
+    #3  surtr.io.BinaryReader:BinaryReader.readByte() -> int
+    #4  surtr.io.BinaryReader:BinaryReader.readByteValue() -> int
+    #5  surtr.io.BinaryReader:BinaryReader.readChar() -> char
+    #6  surtr.io.BinaryReader:BinaryReader.readInt() -> int
+    #7  surtr.io.BinaryReader:BinaryReader.readBytes(int) -> bytes
+    #8  surtr.io.BinaryReader:BinaryReader.readString() -> string
+    #9  surtr.io.BinaryReader:BinaryReader.close() -> void
+    #10  surtr.io.BinaryReader:BinaryReader.dispose() -> void
+    #11  surtr.io.Stream:Stream.readByte() -> int
+    #12  surtr.io.Stream:Stream.readByteValue() -> int
+    #13  surtr.io.Stream:EndOfStreamException.ctor(string) -> void
+    #14  bytes.repeat(int, int) -> bytes
+    #15  surtr.io.Stream:Stream.read(bytes, int, int) -> int
+    #16  bytes.truncate(int) -> void
+    #17  bytes.decodeUTF8() -> string
+    #18  surtr.io.Stream:Stream.dispose() -> void
+
+class BinaryReader : surtr:object  [public]
+  [private] field _leaveOpen: bool
+  [private] field _stream: surtr.io.Stream:Stream
+
+  [public] property baseStream: surtr.io.Stream:Stream { get; }
+    get:
+      ; entry 1, locals 1, stack 1, code 000B..0010
+        000B  Ldl0
+        000C  FieldGet 0 (_stream)
+        000F  ReturnValue
+
+  [public] close(): void
+    ; entry 9, locals 1, stack 1, code 0164..016B
+      0164  Ldl0
+      0165  InvokeSpecial 10 (dispose) args=1 ret=0
+      016A  ReturnVoid
+
+  [public] ctor (stream: surtr.io.Stream:Stream, leaveOpen: bool = false): void
+    ; entry 0, locals 3, stack 2, code 0000..000B
+      0000  Ldl0
+      0001  Ldl1
+      0002  FieldSet 0 (_stream)
+      0005  Ldl0
+      0006  Ldl2
+      0007  FieldSet 1 (_leaveOpen)
+      000A  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 10, locals 1, stack 1, code 016B..017D
+      016B  Ldl0
+      016C  FieldGet 1 (_leaveOpen)
+      016F  Inv
+      0170  JPZ +9 -> L0 (017C)
+      0173  Ldl0
+      0174  FieldGet 0 (_stream)
+      0177  InvokeVirtual 18 (dispose) args=1 ret=0
+    L0:
+      017C  ReturnVoid
+
+  [public] readBool(): bool
+    ; entry 2, locals 2, stack 2, code 0010..001F
+      0010  Ldl0
+      0011  FieldGet 0 (_stream)
+      0014  InvokeVirtual 11 (readByte) args=1 ret=1
+      0019  Stl1
+      001A  Ldl1
+      001B  PushI8 0
+      001D  NE
+      001E  ReturnValue
+
+  [public] readByte(): int
+    ; entry 3, locals 1, stack 1, code 001F..0029
+      001F  Ldl0
+      0020  FieldGet 0 (_stream)
+      0023  InvokeVirtual 11 (readByte) args=1 ret=1
+      0028  ReturnValue
+
+  [public] readByteValue(): int
+    ; entry 4, locals 1, stack 1, code 0029..0033
+      0029  Ldl0
+      002A  FieldGet 0 (_stream)
+      002D  InvokeSpecial 12 (readByteValue) args=1 ret=1
+      0032  ReturnValue
+
+  [public] readBytes(count: int): bytes
+    ; entry 7, locals 5, stack 5, code 00D8..0116
+      00D8  PushI8 0
+      00DA  Ldl1
+      00DB  InvokeStatic 14 (repeat) args=2 ret=1
+      00E0  Stl2
+      00E1  PushI8 0
+      00E3  Stl3
+    L0:
+      00E4  Ldl3
+      00E5  Ldl1
+      00E6  JPGE +31 -> L2 (0108)
+      00E9  Ldl0
+      00EA  FieldGet 0 (_stream)
+      00ED  Ldl2
+      00EE  Ldl3
+      00EF  Ldl1
+      00F0  Ldl3
+      00F1  Sub
+      00F2  InvokeVirtual 15 (read) args=4 ret=1
+      00F7  Stl4
+      00F8  Ldl4
+      00F9  PushI8 0
+      00FB  JPGT +3 -> L1 (0101)
+      00FE  JP +7 -> L2 (0108)
+    L1:
+      0101  Ldl3
+      0102  Ldl4
+      0103  Add
+      0104  Stl3
+      0105  JP -36 -> L0 (00E4)
+    L2:
+      0108  Ldl3
+      0109  Ldl1
+      010A  JPGE +7 -> L3 (0114)
+      010D  Ldl2
+      010E  Ldl3
+      010F  InvokeSpecial 16 (truncate) args=2 ret=0
+    L3:
+      0114  Ldl2
+      0115  ReturnValue
+
+  [public] readChar(): char
+    ; entry 5, locals 4, stack 3, code 0033..006C
+      0033  Ldl0
+      0034  FieldGet 0 (_stream)
+      0037  InvokeVirtual 11 (readByte) args=1 ret=1
+      003C  Stl1
+      003D  Ldl1
+      003E  PushI8 0
+      0040  JPGE +4 -> L0 (0047)
+      0043  PushI8 0
+      0045  I2C
+      0046  ReturnValue
+    L0:
+      0047  Ldl0
+      0048  FieldGet 0 (_stream)
+      004B  InvokeVirtual 11 (readByte) args=1 ret=1
+      0050  Stl2
+      0051  Ldl2
+      0052  PushI8 0
+      0054  JPGE +11 -> L1 (0062)
+      0057  ObjNew 0 (surtr.io.Stream:EndOfStreamException)
+      005A  Dup
+      005B  Ldc0
+      005C  InvokeSpecial 13 (ctor) args=2 ret=0
+      0061  Throw
+    L1:
+      0062  Ldl2
+      0063  PushI8 8
+      0065  Shl
+      0066  Ldl1
+      0067  Or
+      0068  Stl3
+      0069  Ldl3
+      006A  I2C
+      006B  ReturnValue
+
+  [public] readInt(): int
+    ; entry 6, locals 5, stack 3, code 006C..00D8
+      006C  Ldl0
+      006D  FieldGet 0 (_stream)
+      0070  InvokeVirtual 11 (readByte) args=1 ret=1
+      0075  Stl1
+      0076  Ldl1
+      0077  PushI8 0
+      0079  JPGE +3 -> L0 (007F)
+      007C  PushI8 0
+      007E  ReturnValue
+    L0:
+      007F  Ldl0
+      0080  FieldGet 0 (_stream)
+      0083  InvokeVirtual 11 (readByte) args=1 ret=1
+      0088  Stl2
+      0089  Ldl0
+      008A  FieldGet 0 (_stream)
+      008D  InvokeVirtual 11 (readByte) args=1 ret=1
+      0092  Stl3
+      0093  Ldl0
+      0094  FieldGet 0 (_stream)
+      0097  InvokeVirtual 11 (readByte) args=1 ret=1
+      009C  Stl4
+      009D  Ldl2
+      009E  PushI8 0
+      00A0  LT
+      00A1  Dup
+      00A2  JPNZ +8 -> L1 (00AD)
+      00A5  Pop
+      00A6  Ldl3
+      00A7  PushI8 0
+      00A9  LT
+      00AA  JP +0 -> L1 (00AD)
+    L1:
+      00AD  Dup
+      00AE  JPNZ +8 -> L2 (00B9)
+      00B1  Pop
+      00B2  Ldl4
+      00B3  PushI8 0
+      00B5  LT
+      00B6  JP +0 -> L2 (00B9)
+    L2:
+      00B9  JPZ +11 -> L3 (00C7)
+      00BC  ObjNew 0 (surtr.io.Stream:EndOfStreamException)
+      00BF  Dup
+      00C0  Ldc1
+      00C1  InvokeSpecial 13 (ctor) args=2 ret=0
+      00C6  Throw
+    L3:
+      00C7  Ldl1
+      00C8  Ldl2
+      00C9  PushI8 8
+      00CB  Shl
+      00CC  Or
+      00CD  Ldl3
+      00CE  PushI8 16
+      00D0  Shl
+      00D1  Or
+      00D2  Ldl4
+      00D3  PushI8 24
+      00D5  Shl
+      00D6  Or
+      00D7  ReturnValue
+
+  [public] readString(): string
+    ; entry 8, locals 5, stack 5, code 0116..0164
+      0116  Ldl0
+      0117  InvokeSpecial 6 (readInt) args=1 ret=1
+      011C  Stl1
+      011D  Ldl1
+      011E  PushI8 0
+      0120  JPGT +2 -> L0 (0125)
+      0123  Ldc2
+      0124  ReturnValue
+    L0:
+      0125  PushI8 0
+      0127  Ldl1
+      0128  InvokeStatic 14 (repeat) args=2 ret=1
+      012D  Stl2
+      012E  PushI8 0
+      0130  Stl3
+    L1:
+      0131  Ldl3
+      0132  Ldl1
+      0133  JPGE +39 -> L3 (015D)
+      0136  Ldl0
+      0137  FieldGet 0 (_stream)
+      013A  Ldl2
+      013B  Ldl3
+      013C  Ldl1
+      013D  Ldl3
+      013E  Sub
+      013F  InvokeVirtual 15 (read) args=4 ret=1
+      0144  Stl4
+      0145  Ldl4
+      0146  PushI8 0
+      0148  JPGT +11 -> L2 (0156)
+      014B  ObjNew 0 (surtr.io.Stream:EndOfStreamException)
+      014E  Dup
+      014F  Ldc3
+      0150  InvokeSpecial 13 (ctor) args=2 ret=0
+      0155  Throw
+    L2:
+      0156  Ldl3
+      0157  Ldl4
+      0158  Add
+      0159  Stl3
+      015A  JP -44 -> L1 (0131)
+    L3:
+      015D  Ldl2
+      015E  InvokeSpecial 17 (decodeUTF8) args=1 ret=1
+      0163  ReturnValue

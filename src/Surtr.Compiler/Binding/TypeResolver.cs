@@ -175,7 +175,7 @@ namespace Surtr.Compiler.Binding
                         Resolve(dictionary.ValueType, scope, sourceName));
 
                 case TupleTypeSyntax tuple:
-                    return _factory.Tuple(ResolveAll(tuple.ElementTypes, scope, sourceName));
+                    return _factory.Tuple(ResolveAll(tuple.ElementTypes, scope, sourceName), tuple.ElementNames);
 
                 case ClosureTypeSyntax closure:
                     return _factory.Closure(

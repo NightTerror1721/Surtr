@@ -1,5 +1,5 @@
 module surtr.text.StringBuilder
-  constants: 2   types: 3   fields: 1   methods: 13   modules: 0
+  constants: 2   types: 3   fields: 3   methods: 23   modules: 0
   string #0 = "Initial capacity must be greater than 0"
   string #1 = "Index out of range"
 
@@ -9,149 +9,586 @@ module surtr.text.StringBuilder
     #2  surtr:IndexOutOfRangeException
 
   field table:
-    #0  surtr.text.StringBuilder:StringBuilder._buffer: char[]
+    #0  surtr.text.StringBuilder:StringBuilder._capacity: int
+    #1  surtr.text.StringBuilder:StringBuilder._buffer: char[]
+    #2  surtr.text.StringBuilder:StringBuilder._length: int
 
   method table:
     #0  surtr.text.StringBuilder:StringBuilder.ctor(int) -> void
     #1  surtr.text.StringBuilder:StringBuilder.get_length() -> int
-    #2  surtr.text.StringBuilder:StringBuilder.get_isEmpty() -> bool
-    #3  surtr.text.StringBuilder:StringBuilder.get(int) -> char
-    #4  surtr.text.StringBuilder:StringBuilder.append(string) -> surtr.text.StringBuilder:StringBuilder
-    #5  surtr.text.StringBuilder:StringBuilder.appendChar(char) -> surtr.text.StringBuilder:StringBuilder
-    #6  surtr.text.StringBuilder:StringBuilder.appendLine(string) -> surtr.text.StringBuilder:StringBuilder
-    #7  surtr.text.StringBuilder:StringBuilder.clear() -> surtr.text.StringBuilder:StringBuilder
-    #8  surtr.text.StringBuilder:StringBuilder.toString() -> string
-    #9  surtr.text.StringBuilder:StringBuilder.op_[](surtr.text.StringBuilder:StringBuilder, int) -> char
-    #10  surtr:ArgumentException.ctor(string) -> void
-    #11  surtr:IndexOutOfRangeException.ctor(string) -> void
-    #12  string.fromCharArray(char[]) -> string
+    #2  surtr.text.StringBuilder:StringBuilder.get_capacity() -> int
+    #3  surtr.text.StringBuilder:StringBuilder.get_isEmpty() -> bool
+    #4  surtr.text.StringBuilder:StringBuilder.get(int) -> char
+    #5  surtr.text.StringBuilder:StringBuilder.set(int, char) -> void
+    #6  surtr.text.StringBuilder:StringBuilder.append(string) -> surtr.text.StringBuilder:StringBuilder
+    #7  surtr.text.StringBuilder:StringBuilder.appendChar(char) -> surtr.text.StringBuilder:StringBuilder
+    #8  surtr.text.StringBuilder:StringBuilder.appendLine(string) -> surtr.text.StringBuilder:StringBuilder
+    #9  surtr.text.StringBuilder:StringBuilder.clear() -> surtr.text.StringBuilder:StringBuilder
+    #10  surtr.text.StringBuilder:StringBuilder.insert(int, string) -> surtr.text.StringBuilder:StringBuilder
+    #11  surtr.text.StringBuilder:StringBuilder.remove(int, int) -> surtr.text.StringBuilder:StringBuilder
+    #12  surtr.text.StringBuilder:StringBuilder.replace(int, int, string) -> surtr.text.StringBuilder:StringBuilder
+    #13  surtr.text.StringBuilder:StringBuilder.indexOf(char) -> int
+    #14  surtr.text.StringBuilder:StringBuilder.indexOf(string) -> int
+    #15  surtr.text.StringBuilder:StringBuilder.substring(int, int) -> string
+    #16  surtr.text.StringBuilder:StringBuilder.toString() -> string
+    #17  surtr.text.StringBuilder:StringBuilder.ensureCapacity(int) -> void
+    #18  surtr.text.StringBuilder:StringBuilder.op_[](surtr.text.StringBuilder:StringBuilder, int) -> char
+    #19  surtr.text.StringBuilder:StringBuilder.op_[](surtr.text.StringBuilder:StringBuilder, int, char) -> void
+    #20  surtr:ArgumentException.ctor(string) -> void
+    #21  surtr:IndexOutOfRangeException.ctor(string) -> void
+    #22  string.fromCharArraySlice(char[], int, int) -> string
 
-class StringBuilder  [public]
+class StringBuilder : surtr:object  [public]
   [private] field _buffer: char[]
+  [private] field _capacity: int
+  [private] field _length: int
+
+  [public] property capacity: int { get; }
+    get:
+      ; entry 2, locals 1, stack 1, code 002D..0032
+        002D  Ldl0
+        002E  FieldGet 0 (_capacity)
+        0031  ReturnValue
 
   [public] property isEmpty: bool { get; }
     get:
-      ; entry 2, locals 1, stack 2, code 0020..0029
-        0020  Ldl0
-        0021  FieldGet 0 (_buffer)
-        0024  ArrLen
-        0025  PushI8 0
-        0027  EQ
-        0028  ReturnValue
+      ; entry 3, locals 1, stack 2, code 0032..003A
+        0032  Ldl0
+        0033  FieldGet 2 (_length)
+        0036  PushI8 0
+        0038  EQ
+        0039  ReturnValue
 
   [public] property length: int { get; }
     get:
-      ; entry 1, locals 1, stack 1, code 001A..0020
-        001A  Ldl0
-        001B  FieldGet 0 (_buffer)
-        001E  ArrLen
-        001F  ReturnValue
+      ; entry 1, locals 1, stack 1, code 0028..002D
+        0028  Ldl0
+        0029  FieldGet 2 (_length)
+        002C  ReturnValue
 
   [public] append(value: string): surtr.text.StringBuilder:StringBuilder
-    ; entry 4, locals 3, stack 3, code 0051..006A
-      0051  PushI8 0
-      0053  Stl2
+    ; entry 6, locals 5, stack 4, code 0089..00C4
+      0089  Ldl0
+      008A  Ldl0
+      008B  FieldGet 2 (_length)
+      008E  Ldl1
+      008F  StrLen
+      0090  Add
+      0091  InvokeSpecial 17 (ensureCapacity) args=2 ret=0
+      0096  PushI8 0
+      0098  Stl2
     L0:
-      0054  Ldl2
-      0055  Ldl1
-      0056  StrLen
-      0057  JPGE +14 -> L1 (0068)
-      005A  Ldl0
-      005B  FieldGet 0 (_buffer)
-      005E  Ldl1
-      005F  Ldl2
-      0060  StrGet
-      0061  ArrPush
-      0062  IncLocal 2 by 1
-      0065  JP -20 -> L0 (0054)
+      0099  Ldl2
+      009A  Ldl1
+      009B  StrLen
+      009C  JPGE +35 -> L1 (00C2)
+      009F  Ldl0
+      00A0  FieldGet 1 (_buffer)
+      00A3  Ldl0
+      00A4  FieldGet 2 (_length)
+      00A7  Ldl1
+      00A8  Ldl2
+      00A9  StrGet
+      00AA  ArrSet
+      00AB  Ldl0
+      00AC  FieldGet 2 (_length)
+      00AF  Stl3
+      00B0  Ldl3
+      00B1  PushI8 1
+      00B3  Add
+      00B4  Stl4
+      00B5  Ldl0
+      00B6  Ldl4
+      00B7  FieldSet 2 (_length)
+      00BA  Ldl3
+      00BB  Pop
+      00BC  IncLocal 2 by 1
+      00BF  JP -41 -> L0 (0099)
     L1:
-      0068  Ldl0
-      0069  ReturnValue
+      00C2  Ldl0
+      00C3  ReturnValue
 
   [public] appendChar(value: char): surtr.text.StringBuilder:StringBuilder
-    ; entry 5, locals 2, stack 2, code 006A..0072
-      006A  Ldl0
-      006B  FieldGet 0 (_buffer)
-      006E  Ldl1
-      006F  ArrPush
-      0070  Ldl0
-      0071  ReturnValue
+    ; entry 7, locals 4, stack 3, code 00C4..00EE
+      00C4  Ldl0
+      00C5  Ldl0
+      00C6  FieldGet 2 (_length)
+      00C9  PushI8 1
+      00CB  Add
+      00CC  InvokeSpecial 17 (ensureCapacity) args=2 ret=0
+      00D1  Ldl0
+      00D2  FieldGet 1 (_buffer)
+      00D5  Ldl0
+      00D6  FieldGet 2 (_length)
+      00D9  Ldl1
+      00DA  ArrSet
+      00DB  Ldl0
+      00DC  FieldGet 2 (_length)
+      00DF  Stl2
+      00E0  Ldl2
+      00E1  PushI8 1
+      00E3  Add
+      00E4  Stl3
+      00E5  Ldl0
+      00E6  Ldl3
+      00E7  FieldSet 2 (_length)
+      00EA  Ldl2
+      00EB  Pop
+      00EC  Ldl0
+      00ED  ReturnValue
 
   [public] appendLine(value: string): surtr.text.StringBuilder:StringBuilder
-    ; entry 6, locals 2, stack 2, code 0072..0083
-      0072  Ldl0
-      0073  Ldl1
-      0074  InvokeSpecial 4 (append) args=2 ret=0
-      0079  Ldl0
-      007A  FieldGet 0 (_buffer)
-      007D  PushChar U+000A
-      0080  ArrPush
-      0081  Ldl0
-      0082  ReturnValue
+    ; entry 8, locals 2, stack 2, code 00EE..0100
+      00EE  Ldl0
+      00EF  Ldl1
+      00F0  InvokeSpecial 6 (append) args=2 ret=0
+      00F5  Ldl0
+      00F6  PushChar U+000A
+      00F9  InvokeSpecial 7 (appendChar) args=2 ret=0
+      00FE  Ldl0
+      00FF  ReturnValue
 
   [public] clear(): surtr.text.StringBuilder:StringBuilder
-    ; entry 7, locals 1, stack 1, code 0083..008A
-      0083  Ldl0
-      0084  FieldGet 0 (_buffer)
-      0087  ArrClear
-      0088  Ldl0
-      0089  ReturnValue
+    ; entry 9, locals 1, stack 2, code 0100..0108
+      0100  Ldl0
+      0101  PushI8 0
+      0103  FieldSet 2 (_length)
+      0106  Ldl0
+      0107  ReturnValue
 
   [public] ctor (initialCapacity: int = 16): void
-    ; entry 0, locals 2, stack 3, code 0000..001A
+    ; entry 0, locals 2, stack 3, code 0000..0028
       0000  Ldl1
       0001  PushI8 1
       0003  JPGE +11 -> L0 (0011)
       0006  ObjNew 0 (surtr:ArgumentException)
       0009  Dup
       000A  Ldc0
-      000B  InvokeSpecial 10 (ctor) args=2 ret=0
+      000B  InvokeSpecial 20 (ctor) args=2 ret=0
       0010  Throw
     L0:
       0011  Ldl0
       0012  Ldl1
-      0013  ArrNew 1 (char[])
-      0016  FieldSet 0 (_buffer)
-      0019  ReturnVoid
+      0013  FieldSet 0 (_capacity)
+      0016  Ldl0
+      0017  Ldl0
+      0018  FieldGet 0 (_capacity)
+      001B  ArrNew 1 (char[])
+      001E  FieldSet 1 (_buffer)
+      0021  Ldl0
+      0022  PushI8 0
+      0024  FieldSet 2 (_length)
+      0027  ReturnVoid
+
+  [private] ensureCapacity(min: int): void
+    ; entry 17, locals 5, stack 4, code 02A6..02F6
+      02A6  Ldl0
+      02A7  FieldGet 0 (_capacity)
+      02AA  Ldl1
+      02AB  JPGE +71 -> L5 (02F5)
+      02AE  Ldl0
+      02AF  FieldGet 0 (_capacity)
+      02B2  PushI8 0
+      02B4  EQ
+      02B5  JPZ +5 -> L0 (02BD)
+      02B8  PushI8 16
+      02BA  JP +7 -> L1 (02C4)
+    L0:
+      02BD  Ldl0
+      02BE  FieldGet 0 (_capacity)
+      02C1  PushI8 2
+      02C3  Mul
+    L1:
+      02C4  Stl2
+      02C5  Ldl2
+      02C6  Ldl1
+      02C7  JPGE +2 -> L2 (02CC)
+      02CA  Ldl1
+      02CB  Stl2
+    L2:
+      02CC  Ldl2
+      02CD  ArrNew 1 (char[])
+      02D0  Stl3
+      02D1  PushI8 0
+      02D3  Stl4
+    L3:
+      02D4  Ldl4
+      02D5  Ldl0
+      02D6  FieldGet 2 (_length)
+      02D9  JPGE +15 -> L4 (02EB)
+      02DC  Ldl3
+      02DD  Ldl4
+      02DE  Ldl0
+      02DF  FieldGet 1 (_buffer)
+      02E2  Ldl4
+      02E3  ArrGet
+      02E4  ArrSet
+      02E5  IncLocal 4 by 1
+      02E8  JP -23 -> L3 (02D4)
+    L4:
+      02EB  Ldl0
+      02EC  Ldl3
+      02ED  FieldSet 1 (_buffer)
+      02F0  Ldl0
+      02F1  Ldl2
+      02F2  FieldSet 0 (_capacity)
+    L5:
+      02F5  ReturnVoid
 
   [public] get(index: int): char
-    ; entry 3, locals 2, stack 3, code 0029..0051
-      0029  Ldl1
-      002A  PushI8 0
-      002C  LT
-      002D  Dup
-      002E  JPNZ +11 -> L0 (003C)
-      0031  Pop
-      0032  Ldl1
-      0033  Ldl0
-      0034  FieldGet 0 (_buffer)
-      0037  ArrLen
-      0038  GE
-      0039  JP +0 -> L0 (003C)
+    ; entry 4, locals 2, stack 3, code 003A..0061
+      003A  Ldl1
+      003B  PushI8 0
+      003D  LT
+      003E  Dup
+      003F  JPNZ +10 -> L0 (004C)
+      0042  Pop
+      0043  Ldl1
+      0044  Ldl0
+      0045  FieldGet 2 (_length)
+      0048  GE
+      0049  JP +0 -> L0 (004C)
     L0:
-      003C  JPZ +11 -> L1 (004A)
-      003F  ObjNew 2 (surtr:IndexOutOfRangeException)
-      0042  Dup
-      0043  Ldc1
-      0044  InvokeSpecial 11 (ctor) args=2 ret=0
-      0049  Throw
+      004C  JPZ +11 -> L1 (005A)
+      004F  ObjNew 2 (surtr:IndexOutOfRangeException)
+      0052  Dup
+      0053  Ldc1
+      0054  InvokeSpecial 21 (ctor) args=2 ret=0
+      0059  Throw
     L1:
-      004A  Ldl0
-      004B  FieldGet 0 (_buffer)
-      004E  Ldl1
-      004F  ArrGet
-      0050  ReturnValue
+      005A  Ldl0
+      005B  FieldGet 1 (_buffer)
+      005E  Ldl1
+      005F  ArrGet
+      0060  ReturnValue
+
+  [public] indexOf(value: char): int
+    ; entry 13, locals 3, stack 2, code 01F1..0211
+      01F1  PushI8 0
+      01F3  Stl2
+    L0:
+      01F4  Ldl2
+      01F5  Ldl0
+      01F6  FieldGet 2 (_length)
+      01F9  JPGE +18 -> L2 (020E)
+      01FC  Ldl0
+      01FD  FieldGet 1 (_buffer)
+      0200  Ldl2
+      0201  ArrGet
+      0202  Ldl1
+      0203  JPNE +2 -> L1 (0208)
+      0206  Ldl2
+      0207  ReturnValue
+    L1:
+      0208  IncLocal 2 by 1
+      020B  JP -26 -> L0 (01F4)
+    L2:
+      020E  PushI8 -1
+      0210  ReturnValue
+
+  [public] indexOf(value: string): int
+    ; entry 14, locals 5, stack 3, code 0211..025C
+      0211  Ldl1
+      0212  StrLen
+      0213  PushI8 0
+      0215  JPNE +3 -> L0 (021B)
+      0218  PushI8 0
+      021A  ReturnValue
+    L0:
+      021B  PushI8 0
+      021D  Stl2
+    L1:
+      021E  Ldl2
+      021F  Ldl0
+      0220  FieldGet 2 (_length)
+      0223  Ldl1
+      0224  StrLen
+      0225  Sub
+      0226  JPGT +48 -> L6 (0259)
+      0229  PushTrue
+      022A  Stl3
+      022B  PushI8 0
+      022D  Stl4
+    L2:
+      022E  Ldl4
+      022F  Ldl1
+      0230  StrLen
+      0231  JPGE +25 -> L4 (024D)
+      0234  Ldl0
+      0235  FieldGet 1 (_buffer)
+      0238  Ldl2
+      0239  Ldl4
+      023A  Add
+      023B  ArrGet
+      023C  Ldl1
+      023D  Ldl4
+      023E  StrGet
+      023F  JPEQ +5 -> L3 (0247)
+      0242  PushFalse
+      0243  Stl3
+      0244  JP +6 -> L4 (024D)
+    L3:
+      0247  IncLocal 4 by 1
+      024A  JP -31 -> L2 (022E)
+    L4:
+      024D  Ldl3
+      024E  JPZ +2 -> L5 (0253)
+      0251  Ldl2
+      0252  ReturnValue
+    L5:
+      0253  IncLocal 2 by 1
+      0256  JP -59 -> L1 (021E)
+    L6:
+      0259  PushI8 -1
+      025B  ReturnValue
+
+  [public] insert(index: int, value: string): surtr.text.StringBuilder:StringBuilder
+    ; entry 10, locals 6, stack 4, code 0108..0185
+      0108  Ldl1
+      0109  PushI8 0
+      010B  LT
+      010C  Dup
+      010D  JPNZ +10 -> L0 (011A)
+      0110  Pop
+      0111  Ldl1
+      0112  Ldl0
+      0113  FieldGet 2 (_length)
+      0116  GT
+      0117  JP +0 -> L0 (011A)
+    L0:
+      011A  JPZ +11 -> L1 (0128)
+      011D  ObjNew 2 (surtr:IndexOutOfRangeException)
+      0120  Dup
+      0121  Ldc1
+      0122  InvokeSpecial 21 (ctor) args=2 ret=0
+      0127  Throw
+    L1:
+      0128  Ldl2
+      0129  StrLen
+      012A  Stl3
+      012B  Ldl3
+      012C  PushI8 0
+      012E  JPNE +2 -> L2 (0133)
+      0131  Ldl0
+      0132  ReturnValue
+    L2:
+      0133  Ldl0
+      0134  Ldl0
+      0135  FieldGet 2 (_length)
+      0138  Ldl3
+      0139  Add
+      013A  InvokeSpecial 17 (ensureCapacity) args=2 ret=0
+      013F  Ldl0
+      0140  FieldGet 2 (_length)
+      0143  PushI8 1
+      0145  Sub
+      0146  Stl4
+    L3:
+      0147  Ldl4
+      0148  Ldl1
+      0149  JPLT +20 -> L4 (0160)
+      014C  Ldl0
+      014D  FieldGet 1 (_buffer)
+      0150  Ldl4
+      0151  Ldl3
+      0152  Add
+      0153  Ldl0
+      0154  FieldGet 1 (_buffer)
+      0157  Ldl4
+      0158  ArrGet
+      0159  ArrSet
+      015A  IncLocal 4 by -1
+      015D  JP -25 -> L3 (0147)
+    L4:
+      0160  PushI8 0
+      0162  Stl5
+    L5:
+      0163  Ldl5
+      0164  Ldl3
+      0165  JPGE +17 -> L6 (0179)
+      0168  Ldl0
+      0169  FieldGet 1 (_buffer)
+      016C  Ldl1
+      016D  Ldl5
+      016E  Add
+      016F  Ldl2
+      0170  Ldl5
+      0171  StrGet
+      0172  ArrSet
+      0173  IncLocal 5 by 1
+      0176  JP -22 -> L5 (0163)
+    L6:
+      0179  Ldl0
+      017A  Ldl0
+      017B  FieldGet 2 (_length)
+      017E  Ldl3
+      017F  Add
+      0180  FieldSet 2 (_length)
+      0183  Ldl0
+      0184  ReturnValue
 
   [public] static op_[](self: surtr.text.StringBuilder:StringBuilder, index: int): char
-    ; entry 9, locals 2, stack 2, code 0094..009C
-      0094  Ldl0
-      0095  Ldl1
-      0096  InvokeSpecial 3 (get) args=2 ret=1
-      009B  ReturnValue
+    ; entry 18, locals 2, stack 2, code 02F6..02FE
+      02F6  Ldl0
+      02F7  Ldl1
+      02F8  InvokeSpecial 4 (get) args=2 ret=1
+      02FD  ReturnValue
 
-  [public] toString(): string
-    ; entry 8, locals 1, stack 1, code 008A..0094
-      008A  Ldl0
-      008B  FieldGet 0 (_buffer)
-      008E  InvokeStatic 12 (fromCharArray) args=1 ret=1
-      0093  ReturnValue
+  [public] static op_[](self: surtr.text.StringBuilder:StringBuilder, index: int, value: char): void
+    ; entry 19, locals 3, stack 3, code 02FE..0307
+      02FE  Ldl0
+      02FF  Ldl1
+      0300  Ldl2
+      0301  InvokeSpecial 5 (set) args=3 ret=0
+      0306  ReturnVoid
+
+  [public] remove(start: int, length: int): surtr.text.StringBuilder:StringBuilder
+    ; entry 11, locals 4, stack 4, code 0185..01DF
+      0185  Ldl1
+      0186  PushI8 0
+      0188  LT
+      0189  Dup
+      018A  JPNZ +8 -> L0 (0195)
+      018D  Pop
+      018E  Ldl2
+      018F  PushI8 0
+      0191  LT
+      0192  JP +0 -> L0 (0195)
+    L0:
+      0195  Dup
+      0196  JPNZ +12 -> L1 (01A5)
+      0199  Pop
+      019A  Ldl1
+      019B  Ldl2
+      019C  Add
+      019D  Ldl0
+      019E  FieldGet 2 (_length)
+      01A1  GT
+      01A2  JP +0 -> L1 (01A5)
+    L1:
+      01A5  JPZ +11 -> L2 (01B3)
+      01A8  ObjNew 2 (surtr:IndexOutOfRangeException)
+      01AB  Dup
+      01AC  Ldc1
+      01AD  InvokeSpecial 21 (ctor) args=2 ret=0
+      01B2  Throw
+    L2:
+      01B3  Ldl1
+      01B4  Ldl2
+      01B5  Add
+      01B6  Stl3
+    L3:
+      01B7  Ldl3
+      01B8  Ldl0
+      01B9  FieldGet 2 (_length)
+      01BC  JPGE +20 -> L4 (01D3)
+      01BF  Ldl0
+      01C0  FieldGet 1 (_buffer)
+      01C3  Ldl3
+      01C4  Ldl2
+      01C5  Sub
+      01C6  Ldl0
+      01C7  FieldGet 1 (_buffer)
+      01CA  Ldl3
+      01CB  ArrGet
+      01CC  ArrSet
+      01CD  IncLocal 3 by 1
+      01D0  JP -28 -> L3 (01B7)
+    L4:
+      01D3  Ldl0
+      01D4  Ldl0
+      01D5  FieldGet 2 (_length)
+      01D8  Ldl2
+      01D9  Sub
+      01DA  FieldSet 2 (_length)
+      01DD  Ldl0
+      01DE  ReturnValue
+
+  [public] replace(start: int, length: int, value: string): surtr.text.StringBuilder:StringBuilder
+    ; entry 12, locals 4, stack 3, code 01DF..01F1
+      01DF  Ldl0
+      01E0  Ldl1
+      01E1  Ldl2
+      01E2  InvokeSpecial 11 (remove) args=3 ret=0
+      01E7  Ldl0
+      01E8  Ldl1
+      01E9  Ldl3
+      01EA  InvokeSpecial 10 (insert) args=3 ret=0
+      01EF  Ldl0
+      01F0  ReturnValue
+
+  [public] set(index: int, value: char): void
+    ; entry 5, locals 3, stack 3, code 0061..0089
+      0061  Ldl1
+      0062  PushI8 0
+      0064  LT
+      0065  Dup
+      0066  JPNZ +10 -> L0 (0073)
+      0069  Pop
+      006A  Ldl1
+      006B  Ldl0
+      006C  FieldGet 2 (_length)
+      006F  GE
+      0070  JP +0 -> L0 (0073)
+    L0:
+      0073  JPZ +11 -> L1 (0081)
+      0076  ObjNew 2 (surtr:IndexOutOfRangeException)
+      0079  Dup
+      007A  Ldc1
+      007B  InvokeSpecial 21 (ctor) args=2 ret=0
+      0080  Throw
+    L1:
+      0081  Ldl0
+      0082  FieldGet 1 (_buffer)
+      0085  Ldl1
+      0086  Ldl2
+      0087  ArrSet
+      0088  ReturnVoid
+
+  [public] substring(start: int, length: int): string
+    ; entry 15, locals 3, stack 3, code 025C..0296
+      025C  Ldl1
+      025D  PushI8 0
+      025F  LT
+      0260  Dup
+      0261  JPNZ +8 -> L0 (026C)
+      0264  Pop
+      0265  Ldl2
+      0266  PushI8 0
+      0268  LT
+      0269  JP +0 -> L0 (026C)
+    L0:
+      026C  Dup
+      026D  JPNZ +12 -> L1 (027C)
+      0270  Pop
+      0271  Ldl1
+      0272  Ldl2
+      0273  Add
+      0274  Ldl0
+      0275  FieldGet 2 (_length)
+      0278  GT
+      0279  JP +0 -> L1 (027C)
+    L1:
+      027C  JPZ +11 -> L2 (028A)
+      027F  ObjNew 2 (surtr:IndexOutOfRangeException)
+      0282  Dup
+      0283  Ldc1
+      0284  InvokeSpecial 21 (ctor) args=2 ret=0
+      0289  Throw
+    L2:
+      028A  Ldl0
+      028B  FieldGet 1 (_buffer)
+      028E  Ldl1
+      028F  Ldl2
+      0290  InvokeStatic 22 (fromCharArraySlice) args=3 ret=1
+      0295  ReturnValue
+
+  [public] virtual override toString(): string
+    ; entry 16, locals 1, stack 3, code 0296..02A6
+      0296  Ldl0
+      0297  FieldGet 1 (_buffer)
+      029A  PushI8 0
+      029C  Ldl0
+      029D  FieldGet 2 (_length)
+      02A0  InvokeStatic 22 (fromCharArraySlice) args=3 ret=1
+      02A5  ReturnValue

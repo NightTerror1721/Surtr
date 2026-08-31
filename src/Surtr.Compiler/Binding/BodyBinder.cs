@@ -66,7 +66,19 @@ namespace Surtr.Compiler.Binding
         // those members, so nothing else from the module leaks into bare-name resolution.
         private readonly IReadOnlyList<ImportedModule> _imported;
 
-        private readonly HashSet<Symbol> _narrowed = new HashSet<Symbol>();
+        /// <summary>
+        /// What a symbol reads as right now — the type a condition proved for it, keyed by the
+        /// symbol itself (so shadowing, already handled by <see cref="Scope"/>, needs no second
+        /// mechanism). Empty is the un-narrowed state: every read is the declared type.
+        /// </summary>
+        private Dictionary<Symbol, TypeSymbol> _narrowed = new Dictionary<Symbol, TypeSymbol>();
+
+        /// <summary>
+        /// One snapshot of <see cref="_narrowed"/> per branch being bound, so popping a branch
+        /// restores exactly what held before it — a nested <c>if</c> cannot lose the narrowing an
+        /// outer one proved.
+        /// </summary>
+        private readonly Stack<Dictionary<Symbol, TypeSymbol>> _narrowingStack = new Stack<Dictionary<Symbol, TypeSymbol>>();
 
         /// <summary>
         /// A local declared <c>const</c> (§7.1), by the folded value it reads as everywhere it is
@@ -421,79 +433,178 @@ namespace Surtr.Compiler.Binding
         }
         #endregion
 
-        #region Nullability narrowing
+        #region Nullability and type narrowing
         /// <summary>
-        /// What a condition proves about a nullable local, for as long as it holds.
+        /// What a condition proves about a nullable or typed local while the condition holds.
         /// </summary>
         /// <remarks>
         /// <para>
         /// Only the shapes that carry their proof on their face: <c>x != null</c>, <c>x is T</c>,
         /// and the <c>&amp;&amp;</c> of two such. That is where the value is — a null check followed
         /// by a use — and stopping there keeps the rule something a reader can predict, which
-        /// matters more here than covering one more shape.
+        /// matters more here than covering one more shape. A <c>== null</c> proves the value null,
+        /// which no read wants, and the positive half of an <c>||</c> does not say which side was
+        /// true, so neither records anything.
+        /// </para>
+        /// <para>
+        /// <c>x is T</c> narrows the <em>type</em>, not just the nullability: inside the branch the
+        /// value reads as <c>T</c>, which is what makes a downcast to <c>T</c> the check's own
+        /// consequence rather than a written cast.
         /// </para>
         /// <para>
         /// Narrowing is scoped to the branch and undone on the way out, so nothing leaks past the
-        /// condition that proved it.
+        /// condition that proved it — except a guard clause, where the branch is a <c>return</c> or
+        /// a <c>throw</c> and the condition's negation therefore holds for the rest of the block.
         /// </para>
         /// </remarks>
-        private List<Symbol> NarrowingsFrom(ExpressionSyntax condition)
+        private Dictionary<Symbol, TypeSymbol> NarrowingsFrom(ExpressionSyntax condition)
         {
-            var narrowed = new List<Symbol>();
+            var narrowed = new Dictionary<Symbol, TypeSymbol>();
             Collect(condition, narrowed);
             return narrowed;
+        }
 
-            void Collect(ExpressionSyntax syntax, List<Symbol> into)
+        /// <summary>
+        /// What the false half of <paramref name="condition"/> proves — the mirror of
+        /// <see cref="NarrowingsFrom"/>, used for the <c>else</c> of an <c>if</c>, the second half
+        /// of an <c>||</c>, and the statement after a guard clause.
+        /// </summary>
+        private Dictionary<Symbol, TypeSymbol> NegatedNarrowingsFrom(ExpressionSyntax condition)
+        {
+            var narrowed = new Dictionary<Symbol, TypeSymbol>();
+            CollectNegated(condition, narrowed);
+            return narrowed;
+        }
+
+        private void Collect(ExpressionSyntax syntax, Dictionary<Symbol, TypeSymbol> into)
+        {
+            switch (syntax)
             {
-                switch (syntax)
-                {
-                    case BinaryExpressionSyntax { Operator: BinaryOperator.LogicalAnd } and:
-                        Collect(and.Left, into);
-                        Collect(and.Right, into);
-                        return;
+                case BinaryExpressionSyntax { Operator: BinaryOperator.LogicalAnd } and:
+                    Collect(and.Left, into);
+                    Collect(and.Right, into);
+                    return;
 
-                    case BinaryExpressionSyntax { Operator: BinaryOperator.NotEqual } test:
-                    {
-                        if (IsNullLiteral(test.Right) && test.Left is IdentifierExpressionSyntax left)
-                            Add(left.Name, into);
-                        else if (IsNullLiteral(test.Left) && test.Right is IdentifierExpressionSyntax right)
-                            Add(right.Name, into);
+                case BinaryExpressionSyntax { Operator: BinaryOperator.NotEqual } test:
+                    AddNonNullable(test.Left, test.Right, into);
+                    return;
 
-                        return;
-                    }
-
-                    case TypeTestExpressionSyntax { Operand: IdentifierExpressionSyntax operand }:
-                        Add(operand.Name, into);
-                        return;
-                }
+                case TypeTestExpressionSyntax { Operand: IdentifierExpressionSyntax operand } test:
+                    AddTyped(operand.Name, test.TargetType, into);
+                    return;
             }
+        }
 
-            void Add(string name, List<Symbol> into)
+        private void CollectNegated(ExpressionSyntax syntax, Dictionary<Symbol, TypeSymbol> into)
+        {
+            switch (syntax)
             {
-                var found = _values.Lookup(name).Symbol;
-                if (found is LocalSymbol or ParameterSymbol)
-                    into.Add(found);
+                // !(x == null) is x != null.
+                case BinaryExpressionSyntax { Operator: BinaryOperator.Equal } test:
+                    AddNonNullable(test.Left, test.Right, into);
+                    return;
+
+                // !(a || b) is !a && !b: both sides are false.
+                case BinaryExpressionSyntax { Operator: BinaryOperator.LogicalOr } or:
+                    CollectNegated(or.Left, into);
+                    CollectNegated(or.Right, into);
+                    return;
             }
+        }
+
+        private void AddNonNullable(ExpressionSyntax left, ExpressionSyntax right, Dictionary<Symbol, TypeSymbol> into)
+        {
+            if (IsNullLiteral(right) && left is IdentifierExpressionSyntax leftName)
+                Add(leftName.Name, symbol => DeclaredTypeOf(symbol).NonNullable, into);
+            else if (IsNullLiteral(left) && right is IdentifierExpressionSyntax rightName)
+                Add(rightName.Name, symbol => DeclaredTypeOf(symbol).NonNullable, into);
+        }
+
+        private void AddTyped(string name, TypeSyntax targetType, Dictionary<Symbol, TypeSymbol> into)
+        {
+            var tested = _resolver.Resolve(targetType, _typeScope, _sourceName);
+            if (tested.IsError)
+                return;
+
+            Add(name, symbol =>
+            {
+                var declared = DeclaredTypeOf(symbol);
+                // Only the tested type when it fits inside the declared one — `x is T` proves T,
+                // and only T, when it holds. An unrelated `is` can never be true; the branch is
+                // dead, so it reads as the plain non-nullable form and nothing the emitter emits
+                // ever runs.
+                return !ReferenceEquals(tested, declared) && _conversions.IsAssignable(tested, declared)
+                    ? tested
+                    : declared.NonNullable;
+            }, into);
+        }
+
+        private static TypeSymbol DeclaredTypeOf(Symbol symbol) => symbol switch
+        {
+            LocalSymbol local => local.Type,
+            ParameterSymbol parameter => parameter.Type,
+            _ => throw new ArgumentOutOfRangeException(nameof(symbol)),
+        };
+
+        private void Add(string name, Func<Symbol, TypeSymbol> typeOf, Dictionary<Symbol, TypeSymbol> into)
+        {
+            var found = _values.Lookup(name).Symbol;
+            if (found is LocalSymbol or ParameterSymbol)
+                into[found] = typeOf(found);
         }
 
         private static bool IsNullLiteral(ExpressionSyntax syntax)
             => syntax is LiteralExpressionSyntax { Literal.Type: TokenType.KeywordNull };
 
-        private void PushNarrowings(List<Symbol> narrowed)
+        /// <summary>Snapshot of the current narrowings, saved and restored around a branch or a block.</summary>
+        private Dictionary<Symbol, TypeSymbol> SnapshotNarrowings() => new Dictionary<Symbol, TypeSymbol>(_narrowed);
+
+        private void RestoreNarrowings(Dictionary<Symbol, TypeSymbol> snapshot) => _narrowed = snapshot;
+
+        private void PushNarrowings(Dictionary<Symbol, TypeSymbol> narrowings)
         {
-            foreach (var symbol in narrowed)
-                _narrowed.Add(symbol);
+            var snapshot = SnapshotNarrowings();
+            foreach (var entry in narrowings)
+                _narrowed[entry.Key] = entry.Value;
+            _narrowingStack.Push(snapshot);
         }
 
-        private void PopNarrowings(List<Symbol> narrowed)
+        private void PopNarrowings() => _narrowed = _narrowingStack.Pop();
+
+        /// <summary>Proves a condition's negation for the rest of the enclosing block — a guard clause.</summary>
+        private void KeepNarrowings(Dictionary<Symbol, TypeSymbol> narrowings)
         {
-            foreach (var symbol in narrowed)
-                _narrowed.Remove(symbol);
+            foreach (var entry in narrowings)
+                _narrowed[entry.Key] = entry.Value;
+        }
+
+        /// <summary>Whether a statement always leaves the enclosing block, never falling through.</summary>
+        private static bool Terminates(BoundStatement statement) => statement switch
+        {
+            BoundReturnStatement or BoundThrowStatement => true,
+            BoundBlockStatement block => block.Statements.Count > 0 && Terminates(block.Statements[block.Statements.Count - 1]),
+            BoundLabeledStatement labeled => Terminates(labeled.Statement),
+            BoundIfStatement @if => @if.Else is not null && Terminates(@if.Then) && Terminates(@if.Else),
+            _ => false,
+        };
+
+        /// <summary>A write to a local or a parameter stops whatever a condition proved about it.</summary>
+        private void InvalidateNarrowing(BoundExpression target)
+        {
+            switch (target)
+            {
+                case BoundLocalExpression local:
+                    _narrowed.Remove(local.Local);
+                    break;
+                case BoundParameterExpression parameter:
+                    _narrowed.Remove(parameter.Parameter);
+                    break;
+            }
         }
 
         /// <summary>The type a symbol reads as here, which is its own unless a condition narrowed it.</summary>
         private TypeSymbol TypeOf(Symbol symbol, TypeSymbol declared)
-            => _narrowed.Contains(symbol) ? declared.NonNullable : declared;
+            => _narrowed.TryGetValue(symbol, out var narrowed) ? narrowed : declared;
         #endregion
 
         #region Types from expressions

@@ -203,9 +203,24 @@ namespace Surtr.Compiler.Syntax
             reader.Expect(TokenType.LeftParen, "'(' to open the type");
 
             List<TypeSyntax> elements = new List<TypeSyntax>();
+            List<string?> names = new List<string?>();
             while (!reader.Check(TokenType.RightParen))
             {
+                // A named element is written `x: int` (§5.3), the same `name: type` colon the
+                // dictionary type uses. The lookahead is unambiguous: no type syntax contains a
+                // colon, so an identifier followed by one can only be the field's name.
+                if (reader.Check(TokenType.Identifier) && reader.CheckAt(1, TokenType.Colon))
+                {
+                    names.Add(reader.Advance().ToString());
+                    reader.Expect(TokenType.Colon, "':' after the element name");
+                }
+                else
+                {
+                    names.Add(null);
+                }
+
                 elements.Add(ParseType());
+
                 if (!reader.Match(TokenType.Comma))
                 {
                     break;
@@ -216,11 +231,21 @@ namespace Surtr.Compiler.Syntax
 
             if (reader.Match(TokenType.Arrow))
             {
+                if (names.Count > 0 && names.Exists(name => name is not null))
+                {
+                    // The arrow form is a closure, whose parameters are positional (§5.3); there is
+                    // nowhere for a name to land.
+                    throw reader.Error(
+                        SurtrDiagnosticCode.UnexpectedToken,
+                        "A closure type's parameters cannot be named; only a tuple's elements can carry names.",
+                        start);
+                }
+
                 TypeSyntax closureReturn = ParseType();
                 return new ClosureTypeSyntax(SpanFrom(start), elements, closureReturn);
             }
 
-            return new TupleTypeSyntax(SpanFrom(start), elements);
+            return new TupleTypeSyntax(SpanFrom(start), elements, names);
         }
 
         /// <summary>Parses <c>&lt;T, U : IComparable&lt;U&gt; &amp; IEquatable&lt;U&gt;&gt;</c> (§6), each parameter optionally annotated <c>out</c>/<c>in</c>.</summary>

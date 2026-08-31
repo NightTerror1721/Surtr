@@ -1,0 +1,205 @@
+module surtr.io.BinaryWriter
+  constants: 0   types: 0   fields: 2   methods: 19   modules: 0
+
+  field table:
+    #0  surtr.io.BinaryWriter:BinaryWriter._stream: surtr.io.Stream:Stream
+    #1  surtr.io.BinaryWriter:BinaryWriter._leaveOpen: bool
+
+  method table:
+    #0  surtr.io.BinaryWriter:BinaryWriter.ctor(surtr.io.Stream:Stream, bool) -> void
+    #1  surtr.io.BinaryWriter:BinaryWriter.get_baseStream() -> surtr.io.Stream:Stream
+    #2  surtr.io.BinaryWriter:BinaryWriter.writeBool(bool) -> void
+    #3  surtr.io.BinaryWriter:BinaryWriter.writeByte(int) -> void
+    #4  surtr.io.BinaryWriter:BinaryWriter.writeByteValue(int) -> void
+    #5  surtr.io.BinaryWriter:BinaryWriter.writeChar(char) -> void
+    #6  surtr.io.BinaryWriter:BinaryWriter.writeInt(int) -> void
+    #7  surtr.io.BinaryWriter:BinaryWriter.writeBytes(bytes) -> void
+    #8  surtr.io.BinaryWriter:BinaryWriter.writeString(string) -> void
+    #9  surtr.io.BinaryWriter:BinaryWriter.flush() -> void
+    #10  surtr.io.BinaryWriter:BinaryWriter.close() -> void
+    #11  surtr.io.BinaryWriter:BinaryWriter.dispose() -> void
+    #12  surtr.io.Stream:Stream.writeByte(int) -> bool
+    #13  char.toInt() -> int
+    #14  bytes.get_length() -> int
+    #15  surtr.io.Stream:Stream.write(bytes, int, int) -> int
+    #16  bytes.fromUTF8(string) -> bytes
+    #17  surtr.io.Stream:Stream.flush() -> void
+    #18  surtr.io.Stream:Stream.dispose() -> void
+
+class BinaryWriter : surtr:object  [public]
+  [private] field _leaveOpen: bool
+  [private] field _stream: surtr.io.Stream:Stream
+
+  [public] property baseStream: surtr.io.Stream:Stream { get; }
+    get:
+      ; entry 1, locals 1, stack 1, code 000B..0010
+        000B  Ldl0
+        000C  FieldGet 0 (_stream)
+        000F  ReturnValue
+
+  [public] close(): void
+    ; entry 10, locals 1, stack 1, code 0106..010D
+      0106  Ldl0
+      0107  InvokeSpecial 11 (dispose) args=1 ret=0
+      010C  ReturnVoid
+
+  [public] ctor (stream: surtr.io.Stream:Stream, leaveOpen: bool = false): void
+    ; entry 0, locals 3, stack 2, code 0000..000B
+      0000  Ldl0
+      0001  Ldl1
+      0002  FieldSet 0 (_stream)
+      0005  Ldl0
+      0006  Ldl2
+      0007  FieldSet 1 (_leaveOpen)
+      000A  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 11, locals 1, stack 1, code 010D..011F
+      010D  Ldl0
+      010E  FieldGet 1 (_leaveOpen)
+      0111  Inv
+      0112  JPZ +9 -> L0 (011E)
+      0115  Ldl0
+      0116  FieldGet 0 (_stream)
+      0119  InvokeVirtual 18 (dispose) args=1 ret=0
+    L0:
+      011E  ReturnVoid
+
+  [public] flush(): void
+    ; entry 9, locals 1, stack 1, code 00FC..0106
+      00FC  Ldl0
+      00FD  FieldGet 0 (_stream)
+      0100  InvokeVirtual 17 (flush) args=1 ret=0
+      0105  ReturnVoid
+
+  [public] writeBool(value: bool): void
+    ; entry 2, locals 2, stack 2, code 0010..0025
+      0010  Ldl0
+      0011  FieldGet 0 (_stream)
+      0014  Ldl1
+      0015  JPZ +5 -> L0 (001D)
+      0018  PushI8 1
+      001A  JP +2 -> L1 (001F)
+    L0:
+      001D  PushI8 0
+    L1:
+      001F  InvokeVirtual 12 (writeByte) args=2 ret=0
+      0024  ReturnVoid
+
+  [public] writeByte(value: int): void
+    ; entry 3, locals 2, stack 3, code 0025..0034
+      0025  Ldl0
+      0026  FieldGet 0 (_stream)
+      0029  Ldl1
+      002A  PushI16 255
+      002D  And
+      002E  InvokeVirtual 12 (writeByte) args=2 ret=0
+      0033  ReturnVoid
+
+  [public] writeByteValue(value: int): void
+    ; entry 4, locals 3, stack 2, code 0034..003E
+      0034  Ldl0
+      0035  Ldl1
+      0036  Stl2
+      0037  Ldl2
+      0038  InvokeSpecial 3 (writeByte) args=2 ret=0
+      003D  ReturnVoid
+
+  [public] writeBytes(value: bytes): void
+    ; entry 7, locals 2, stack 4, code 00A7..00BE
+      00A7  Ldl1
+      00A8  JPN +18 -> L0 (00BD)
+      00AB  Ldl0
+      00AC  FieldGet 0 (_stream)
+      00AF  Ldl1
+      00B0  PushI8 0
+      00B2  Ldl1
+      00B3  InvokeSpecial 14 (get_length) args=1 ret=1
+      00B8  InvokeVirtual 15 (write) args=4 ret=0
+    L0:
+      00BD  ReturnVoid
+
+  [public] writeChar(value: char): void
+    ; entry 5, locals 3, stack 3, code 003E..0065
+      003E  Ldl1
+      003F  InvokeSpecial 13 (toInt) args=1 ret=1
+      0044  Stl2
+      0045  Ldl0
+      0046  FieldGet 0 (_stream)
+      0049  Ldl2
+      004A  PushI16 255
+      004D  And
+      004E  InvokeVirtual 12 (writeByte) args=2 ret=0
+      0053  Ldl0
+      0054  FieldGet 0 (_stream)
+      0057  Ldl2
+      0058  PushI8 8
+      005A  Sar
+      005B  PushI16 255
+      005E  And
+      005F  InvokeVirtual 12 (writeByte) args=2 ret=0
+      0064  ReturnVoid
+
+  [public] writeInt(value: int): void
+    ; entry 6, locals 2, stack 3, code 0065..00A7
+      0065  Ldl0
+      0066  FieldGet 0 (_stream)
+      0069  Ldl1
+      006A  PushI16 255
+      006D  And
+      006E  InvokeVirtual 12 (writeByte) args=2 ret=0
+      0073  Ldl0
+      0074  FieldGet 0 (_stream)
+      0077  Ldl1
+      0078  PushI8 8
+      007A  Sar
+      007B  PushI16 255
+      007E  And
+      007F  InvokeVirtual 12 (writeByte) args=2 ret=0
+      0084  Ldl0
+      0085  FieldGet 0 (_stream)
+      0088  Ldl1
+      0089  PushI8 16
+      008B  Sar
+      008C  PushI16 255
+      008F  And
+      0090  InvokeVirtual 12 (writeByte) args=2 ret=0
+      0095  Ldl0
+      0096  FieldGet 0 (_stream)
+      0099  Ldl1
+      009A  PushI8 24
+      009C  Sar
+      009D  PushI16 255
+      00A0  And
+      00A1  InvokeVirtual 12 (writeByte) args=2 ret=0
+      00A6  ReturnVoid
+
+  [public] writeString(value: string): void
+    ; entry 8, locals 3, stack 4, code 00BE..00FC
+      00BE  Ldl1
+      00BF  JPNN +9 -> L0 (00CB)
+      00C2  Ldl0
+      00C3  PushI8 0
+      00C5  InvokeSpecial 6 (writeInt) args=2 ret=0
+      00CA  ReturnVoid
+    L0:
+      00CB  Ldl1
+      00CC  InvokeStatic 16 (fromUTF8) args=1 ret=1
+      00D1  Stl2
+      00D2  Ldl0
+      00D3  Ldl2
+      00D4  InvokeSpecial 14 (get_length) args=1 ret=1
+      00D9  InvokeSpecial 6 (writeInt) args=2 ret=0
+      00DE  Ldl2
+      00DF  InvokeSpecial 14 (get_length) args=1 ret=1
+      00E4  PushI8 0
+      00E6  JPLE +18 -> L1 (00FB)
+      00E9  Ldl0
+      00EA  FieldGet 0 (_stream)
+      00ED  Ldl2
+      00EE  PushI8 0
+      00F0  Ldl2
+      00F1  InvokeSpecial 14 (get_length) args=1 ret=1
+      00F6  InvokeVirtual 15 (write) args=4 ret=0
+    L1:
+      00FB  ReturnVoid

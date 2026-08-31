@@ -65,6 +65,13 @@ namespace Surtr.Compiler.Syntax
         internal TokenType CurrentType => PeekType(0);
 
         /// <summary>
+        /// True when the current token starts on a later line than the one before it. That is the
+        /// signal a statement or declaration ends even without a <c>;</c>: nothing on this line can
+        /// continue it, so the line break itself is the terminator (§1).
+        /// </summary>
+        internal bool IsAfterLineBreak => Position > 0 && Current.Location.Line > Peek(-1).Location.Line;
+
+        /// <summary>
         /// The type of the token <paramref name="offset"/> slots ahead, without copying the whole
         /// <see cref="Token"/> — the type is one byte, the token is ~64. The parser's lookahead and
         /// the type-argument scans read types far more often than whole tokens, so this is the read

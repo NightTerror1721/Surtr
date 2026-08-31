@@ -37,7 +37,9 @@ namespace Surtr.Tests.Runtime.BuiltIns
             foreach (var subclass in subclasses)
             {
                 Assert.True(subclass.IsSubclassOf(SurtrBuiltIns.Exception), $"{subclass.Name} does not derive from Exception.");
-                Assert.Equal(1, subclass.Depth);
+                // object (0) -> Exception (1) -> this subclass (2), now that every class extends
+                // object by default.
+                Assert.Equal(2, subclass.Depth);
             }
         }
 

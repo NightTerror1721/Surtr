@@ -22,28 +22,32 @@ namespace Surtr.LanguageServer.Workspace
     /// or ordinary identifiers, all of which the grammar already gets right on its own.
     /// </summary>
     /// <remarks>
-    /// Everything here is tagged as the single <c>keyword</c> token type with no modifiers — the
-    /// point of this pass is *which spans* are really a contextual keyword, not a second type
-    /// hierarchy (hover and the "in module ..." card already answer where a type comes from).
+    /// The pass resolves what a regex grammar genuinely cannot: which spans are really a contextual
+    /// keyword (§1.2/§3.4, including the variance <c>out</c>), which identifiers name a type in any
+    /// position, which type parameters are declarations, and which names are an enum's cases (§2.4).
+    /// Everything else — comments, strings, literals, operators and ordinary identifiers — stays the
+    /// grammar's. Contextual keywords ride the same <c>keyword</c> slot as the reserved words, so a
+    /// theme colours them alike; the modifier/variable slots are not used for them.
     /// </remarks>
     public static class SemanticTokensProvider
     {
         /// <summary>
-        /// The legend this server declares. Broad enough that the one pass can answer the three
+        /// The legend this server declares. Broad enough that the one pass can answer the four
         /// things a regex grammar genuinely cannot: which spans are really a contextual keyword
         /// (§1.2) rather than a position-blind lookahead guess, which identifiers name a type in
-        /// *any* position (a regex only sees type positions it can spell out), and which type
-        /// parameters are declarations. The client merges these over the TextMate grammar, so the
-        /// grammar still owns comments, strings, literals, operators and ordinary identifiers.
+        /// *any* position (a regex only sees type positions it can spell out), which type
+        /// parameters are declarations, and which names an enum declares as its cases (§2.4). The
+        /// client merges these over the TextMate grammar, so the grammar still owns comments,
+        /// strings, literals, operators and ordinary identifiers.
         /// </summary>
         public static readonly string[] TokenTypes =
         {
             "keyword",
             "type",
             "typeParameter",
-            "variable",
             "function",
             "modifier",
+            "enumMember",
         };
 
         public static readonly string[] TokenModifiers = Array.Empty<string>();
@@ -51,9 +55,9 @@ namespace Surtr.LanguageServer.Workspace
         private const int KeywordTokenType = 0;
         private const int TypeTokenType = 1;
         private const int TypeParameterTokenType = 2;
-        private const int VariableTokenType = 3;
-        private const int FunctionTokenType = 4;
-        private const int ModifierTokenType = 5;
+        private const int FunctionTokenType = 3;
+        private const int ModifierTokenType = 4;
+        private const int EnumMemberTokenType = 5;
 
         /// <summary>A semantic span plus the token type it is tagged with.</summary>
         private readonly struct TaggedSpan
@@ -219,7 +223,7 @@ namespace Surtr.LanguageServer.Workspace
             {
                 SourceSpan span = thisExpression.Span;
                 if (span.End <= text.Length && IsThisOrSuper(text, span))
-                    spans.Add(new TaggedSpan(span, VariableTokenType));
+                    spans.Add(new TaggedSpan(span, KeywordTokenType));
             }
 
             switch (expression)
@@ -240,6 +244,17 @@ namespace Surtr.LanguageServer.Workspace
                 case BoundTypeOfExpression typeOf:
                     if (typeOf.TargetType is TypeSymbol target)
                         TagTypeSymbol(target, typeOf.Syntax.Span, tokens, spans, TypeTokenType);
+                    break;
+
+                case BoundFieldExpression field:
+                    // An enum case use (§2.4) is a read of the case's static field; tag the written
+                    // name the same as the declaration, so a use renders like the case it names.
+                    if (field.Field.EnumValue is not null
+                        && FindNameToken(field.Span, tokens, field.Field.Name) is Token fieldToken)
+                    {
+                        spans.Add(new TaggedSpan(fieldToken.Span, EnumMemberTokenType));
+                    }
+
                     break;
             }
 
@@ -387,6 +402,17 @@ namespace Surtr.LanguageServer.Workspace
                     }
                     break;
 
+                case BoundCollectionBuildExpression build:
+                    foreach (var argument in build.ConstructorArguments)
+                        yield return argument;
+
+                    foreach (var fillArgs in build.FillArguments)
+                    {
+                        foreach (var argument in fillArgs)
+                            yield return argument;
+                    }
+                    break;
+
                 case BoundInterpolatedStringExpression interpolated:
                     foreach (var part in interpolated.Parts)
                         yield return part;
@@ -444,13 +470,13 @@ namespace Surtr.LanguageServer.Workspace
                         if (type.Kind == TypeDeclarationKind.ValueClass)
                         {
                             if (FindKeywordToken(type.Span, tokens, "value") is Token valueToken)
-                                spans.Add(new TaggedSpan(valueToken.Span, ModifierTokenType));
+                                spans.Add(new TaggedSpan(valueToken.Span, KeywordTokenType));
                         }
 
                         if (type.IsAttribute)
                         {
                             if (FindKeywordToken(type.Span, tokens, "attribute") is Token attributeToken)
-                                spans.Add(new TaggedSpan(attributeToken.Span, ModifierTokenType));
+                                spans.Add(new TaggedSpan(attributeToken.Span, KeywordTokenType));
                         }
 
                         TagAccessorKeywords(type.Members, tokens, spans);
@@ -478,7 +504,7 @@ namespace Surtr.LanguageServer.Workspace
                 {
                     string keyword = accessor.IsGetter ? "get" : "set";
                     if (FindKeywordToken(accessor.Span, tokens, keyword) is Token accessorToken)
-                        spans.Add(new TaggedSpan(accessorToken.Span, ModifierTokenType));
+                        spans.Add(new TaggedSpan(accessorToken.Span, KeywordTokenType));
                 }
             }
         }
@@ -498,6 +524,22 @@ namespace Surtr.LanguageServer.Workspace
             }
 
             return null;
+        }
+
+        /// <summary>Tags each enum case's written name (§2.4) as an enum member.</summary>
+        /// <remarks>
+        /// A regex grammar only sees the case list as ordinary identifiers, and nothing else in this
+        /// pass covers it — cases are not members (they have no declaration node of their own), so
+        /// the walk over <c>type.Members</c> never visits them. Tagging the name keeps it out of the
+        /// plain-identifier bucket without disturbing the grammar's handling of the enum body.
+        /// </remarks>
+        private static void TagEnumCaseNames(TypeDeclarationSyntax type, List<Token> tokens, List<TaggedSpan> spans)
+        {
+            foreach (var @case in type.EnumCases)
+            {
+                if (FindNameToken(@case.Span, tokens, @case.Name) is Token nameToken)
+                    spans.Add(new TaggedSpan(nameToken.Span, EnumMemberTokenType));
+            }
         }
 
         // ------------------------------------------------------------------------------------
@@ -522,6 +564,7 @@ namespace Surtr.LanguageServer.Workspace
                     TagTypeParameters(type.TypeParameters, tokens, spans);
                     foreach (var baseType in type.BaseTypes)
                         TagType(baseType, tokens, spans);
+                    TagEnumCaseNames(type, tokens, spans);
                     foreach (var member in type.Members)
                         CollectTypePositions(member, tokens, spans);
                     break;
@@ -603,7 +646,7 @@ namespace Surtr.LanguageServer.Workspace
             foreach (var parameter in parameters)
             {
                 if (parameter.Variance == VarianceModifier.Covariant && FindKeywordToken(parameter.Span, tokens, "out") is Token outToken)
-                    spans.Add(new TaggedSpan(outToken.Span, ModifierTokenType));
+                    spans.Add(new TaggedSpan(outToken.Span, KeywordTokenType));
 
                 if (FindNameToken(parameter.Span, tokens, parameter.Name) is Token nameToken)
                     spans.Add(new TaggedSpan(nameToken.Span, TypeParameterTokenType));
@@ -676,7 +719,7 @@ namespace Surtr.LanguageServer.Workspace
         }
 
         private static bool IsBuiltinName(string name)
-            => name is "int" or "float" or "bool" or "char" or "string" or "void" or "range" or "unknown";
+            => name is "int" or "float" or "bool" or "char" or "string" or "bytes" or "void" or "range" or "unknown";
 
         // ------------------------------------------------------------------------------------
         // Encoding

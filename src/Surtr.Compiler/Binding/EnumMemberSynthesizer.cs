@@ -93,6 +93,12 @@ namespace Surtr.Compiler.Binding
         /// <summary>
         /// The instance equality body: one comparison per field, the same walk <c>==</c> emits.
         /// </summary>
+        /// <remarks>
+        /// A real override of <c>object.equals(other: object?)</c>, not a same-type overload: an
+        /// enum whose synthetic <c>value</c> is its whole state still has to type-check <c>other</c>
+        /// before reading it, since a case of a *different* enum is not this one whatever integer it
+        /// happens to wrap.
+        /// </remarks>
         internal static BoundStatement EqualsBody(
             TypeSymbolFactory factory,
             NamedTypeSymbol type,
@@ -102,20 +108,23 @@ namespace Surtr.Compiler.Binding
             var receiver = This(type);
             var other = new BoundParameterExpression(NoSyntax, method.Parameters[0]);
 
-            BoundExpression? walk = null;
+            BoundExpression walk = new BoundTypeTestExpression(NoSyntax, other, type, factory.Bool);
+            var typedOther = new BoundConversionExpression(
+                NoSyntax, other, type, Conversion.Of(ConversionKind.ExplicitReference), isExplicit: false);
+
             for (int i = 0; i < fields.Count; i++)
             {
                 var pair = new BoundBinaryExpression(
                     NoSyntax,
                     BinaryOperator.Equal,
                     ThisField(receiver, fields[i]),
-                    ThisField(other, fields[i]),
+                    ThisField(typedOther, fields[i]),
                     factory.Bool);
 
-                walk = walk is null ? pair : new BoundBinaryExpression(NoSyntax, BinaryOperator.LogicalAnd, walk, pair, factory.Bool);
+                walk = new BoundBinaryExpression(NoSyntax, BinaryOperator.LogicalAnd, walk, pair, factory.Bool);
             }
 
-            return ReturnBlock(walk!);
+            return ReturnBlock(walk);
         }
 
         /// <summary>

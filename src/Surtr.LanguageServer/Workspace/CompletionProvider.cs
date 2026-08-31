@@ -410,9 +410,9 @@ namespace Surtr.LanguageServer.Workspace
         private static readonly string[] Keywords =
         {
             "abstract", "alias", "as", "attribute", "break", "case", "catch", "class", "const", "constructor",
-            "continue", "default", "else", "enum", "export", "extension", "false", "finally", "for", "forceinline", "fun",
+            "continue", "default", "defined", "else", "enum", "export", "extension", "false", "finally", "for", "forceinline", "fun",
             "generator", "if", "import", "in", "inline", "interface", "internal", "is", "let", "moduleof", "native",
-            "noinline", "null", "operator", "override", "private", "protected", "public", "range", "return", "sealed",
+            "noinline", "null", "operator", "override", "private", "protected", "public", "bytes", "range", "return", "sealed",
             "singleton", "static", "super", "switch", "this", "throw", "true", "try", "typeof",
             "unknown", "using", "value", "var", "virtual", "while", "yield",
         };
@@ -1205,6 +1205,17 @@ namespace Surtr.LanguageServer.Workspace
                     {
                         yield return entry.Key;
                         yield return entry.Value;
+                    }
+                    break;
+
+                case BoundCollectionBuildExpression build:
+                    foreach (var argument in build.ConstructorArguments)
+                        yield return argument;
+
+                    foreach (var fillArgs in build.FillArguments)
+                    {
+                        foreach (var argument in fillArgs)
+                            yield return argument;
                     }
                     break;
 

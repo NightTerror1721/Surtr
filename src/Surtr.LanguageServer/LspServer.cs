@@ -148,6 +148,21 @@ namespace Surtr.LanguageServer
             if (root.Length > 0)
             {
                 root = Workspace.Workspace.PathFromUri(root);
+
+                // surtr.projectRoot (SurtrInitializationOptions.ProjectRoot): the opened folder is
+                // not always a Surtr project root by itself - see the option's own remarks. A
+                // relative override resolves against the opened folder; an absolute one is used as
+                // given.
+                string? projectRoot = parameters?.InitializationOptions?.ProjectRoot;
+                if (!string.IsNullOrEmpty(projectRoot))
+                {
+                    root = Path.IsPathRooted(projectRoot)
+                        ? Path.GetFullPath(projectRoot)
+                        : Path.GetFullPath(Path.Combine(root, projectRoot));
+                }
+
+                LogStartup(root, projectRoot);
+
                 _workspace?.Dispose();
                 _workspace = new Workspace.Workspace(root);
                 PublishAll(_workspace.Rebuild());
@@ -538,6 +553,40 @@ namespace Surtr.LanguageServer
             {
                 // Nowhere to write and nothing to report it on; the request already failed cleanly.
             }
+        }
+
+        /// <summary>
+        /// Announces, once per session, exactly which binary is running and what it resolved the
+        /// workspace root to - via <c>window/logMessage</c>, so it shows up in the editor's own
+        /// "Surtr Language Server" Output channel with no extra setup. Diagnosing "the server seems
+        /// to be running old code" or "the wrong folder got picked" from the editor side otherwise
+        /// means reasoning about a process neither the user nor whoever is helping them can inspect
+        /// directly - this makes both immediately visible instead.
+        /// </summary>
+        private void LogStartup(string resolvedRoot, string? projectRootSetting)
+        {
+            string binary = System.Reflection.Assembly.GetExecutingAssembly().Location;
+            string built = "unknown";
+            try
+            {
+                built = File.GetLastWriteTime(binary).ToString("yyyy-MM-dd HH:mm:ss");
+            }
+            catch (IOException)
+            {
+                // Nothing to report the build time against; the rest of the message still helps.
+            }
+
+            string projectRootNote = string.IsNullOrEmpty(projectRootSetting)
+                ? "surtr.projectRoot: (not set)"
+                : $"surtr.projectRoot: '{projectRootSetting}'";
+
+            _connection.Write(RpcMessage.Notification("window/logMessage",
+                new ShowMessageParams
+                {
+                    Type = 4,
+                    Message = $"Surtr Language Server starting - binary: {binary} (built {built}); "
+                        + $"{projectRootNote}; workspace root: {resolvedRoot}",
+                }));
         }
 
         private void Reply(RpcMessage request, object? result)

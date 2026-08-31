@@ -2,6 +2,7 @@
 
 using Surtr.Bytecode.Image;
 using Surtr.Runtime;
+using Surtr.Stdlib;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -79,13 +80,29 @@ namespace Surtr.Run
         /// </exception>
         internal static List<string> Load(SurtrRuntime runtime, IReadOnlyList<string> files)
         {
-            var pending = new List<SurtrModuleImage>(files.Count);
+            var images = Read(files);
+            SurtrStdlib.LoadAll(runtime);
+            runtime.LoadModules(images);
+
+            var loaded = new List<string>(images.Count);
+            foreach (var image in images)
+                if (runtime.TryGetModule(image.Path, out _))
+                    loaded.Add(image.Path);
+
+            return loaded;
+        }
+
+        /// <summary>Reads every image a path names into memory, reporting a read failure once.</summary>
+        /// <exception cref="LoadFailure">An image's bytes could not be read.</exception>
+        internal static List<SurtrModuleImage> Read(IReadOnlyList<string> files)
+        {
+            var images = new List<SurtrModuleImage>(files.Count);
 
             foreach (string file in files)
             {
                 try
                 {
-                    pending.Add(SurtrModuleImage.FromBytes(File.ReadAllBytes(file)));
+                    images.Add(SurtrModuleImage.FromBytes(File.ReadAllBytes(file)));
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SurtrImageFormatException)
                 {
@@ -93,41 +110,7 @@ namespace Surtr.Run
                 }
             }
 
-            var loaded = new List<string>(pending.Count);
-            var lastError = new Dictionary<string, string>(StringComparer.Ordinal);
-
-            while (pending.Count > 0)
-            {
-                var stillPending = new List<SurtrModuleImage>();
-
-                foreach (var image in pending)
-                {
-                    try
-                    {
-                        runtime.LoadModule(image);
-                        loaded.Add(image.Path);
-                    }
-                    catch (InvalidOperationException exception)
-                    {
-                        lastError[image.Path] = exception.Message;
-                        stillPending.Add(image);
-                    }
-                }
-
-                if (stillPending.Count == pending.Count)
-                {
-                    var reasons = stillPending
-                        .Select(image => $"  '{image.Path}': {lastError[image.Path]}")
-                        .OrderBy(line => line, StringComparer.Ordinal);
-
-                    throw new LoadFailure(
-                        $"{stillPending.Count} module(s) could not be loaded:\n" + string.Join("\n", reasons));
-                }
-
-                pending = stillPending;
-            }
-
-            return loaded;
+            return images;
         }
     }
 }

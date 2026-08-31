@@ -62,11 +62,23 @@ namespace Surtr.Runtime.Classes
         /// </remarks>
         Range       = 11,
 
+        /// <summary>
+        /// The built-in bytes type: a mutable array of bytes, behind every <c>SurtrBytes</c>.
+        /// </summary>
+        /// <remarks>
+        /// A plain single-slot reference type, like <c>string</c>: the compiler proves the element
+        /// accesses and the runtime stores the data as a CLR <c>byte[]</c>. It sits inside the
+        /// built-in run so <c>IsBuiltIn</c> and <c>IsReferenceType</c> stay single range compares,
+        /// and it is not parameterised - a byte is always a byte - so its descriptor is a bare
+        /// symbol rather than a nesting form.
+        /// </remarks>
+        Bytes       = 12,
+
         /// <summary>A class declared in Surtr source.</summary>
-        Object      = 12,
+        Object      = 13,
 
         /// <summary>A type defined by the embedding host rather than by Surtr source.</summary>
-        Native      = 13,
+        Native      = 14,
 
         /// <summary>
         /// What a generic type parameter erases to.
@@ -87,7 +99,7 @@ namespace Surtr.Runtime.Classes
         /// case.
         /// </para>
         /// </remarks>
-        Erased      = 14,
+        Erased      = 15,
 
         /// <summary>
         /// The absence of a value: the return "type" of a method that returns nothing.
@@ -99,7 +111,7 @@ namespace Surtr.Runtime.Classes
         /// <c>ReturnVoid</c> methods have nothing else to name. Kept last so every real type,
         /// reference types included, forms one contiguous range below it.
         /// </remarks>
-        Void        = 15,
+        Void        = 16,
     }
 
     /// <summary>Classification predicates and conversions for <see cref="SurtrValueTypeCode"/>.</summary>
@@ -122,11 +134,14 @@ namespace Surtr.Runtime.Classes
             /// <summary>Whether the code is a primitive (integer, float, boolean or character).</summary>
             public bool IsPrimitive => code >= SurtrValueTypeCode.Integer && code <= SurtrValueTypeCode.Character;
 
-            /// <summary>Whether the code is a built-in composite (string, array, tuple, dictionary, closure, generator or range).</summary>
-            public bool IsBuiltIn => code >= SurtrValueTypeCode.String && code <= SurtrValueTypeCode.Range;
+            /// <summary>Whether the code is a built-in composite (string, array, tuple, dictionary, closure, generator, range or bytes).</summary>
+            public bool IsBuiltIn => code >= SurtrValueTypeCode.String && code <= SurtrValueTypeCode.Bytes;
 
             /// <summary>Whether the code is <see cref="SurtrValueTypeCode.Range"/>.</summary>
             public bool IsRange => code == SurtrValueTypeCode.Range;
+
+            /// <summary>Whether the code is <see cref="SurtrValueTypeCode.Bytes"/>.</summary>
+            public bool IsBytes => code == SurtrValueTypeCode.Bytes;
 
             /// <summary>Whether the code is <see cref="SurtrValueTypeCode.Generator"/>.</summary>
             public bool IsGenerator => code == SurtrValueTypeCode.Generator;

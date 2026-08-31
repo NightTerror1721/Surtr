@@ -235,6 +235,43 @@ namespace Surtr.Tests.Stdlib
             Assert.Equal(7, PopEmptyUnderCatch(AllImages(), runtime));
         }
 
+        /// <summary>Categories added for io/diagnostics: previously excluded by any selection narrower than <c>All</c>.</summary>
+        [Fact]
+        public void SelectingIo_LoadsOnlyTheIoCategory()
+        {
+            using var runtime = new SurtrRuntime();
+            SurtrStdlib.LoadInto(runtime, AllImages(), StdlibModules.Io);
+
+            Assert.True(runtime.TryGetModule("surtr.io.Stream", out _));
+            Assert.True(runtime.TryGetModule("surtr.io.Enums", out _));
+            Assert.False(runtime.TryGetModule("surtr.collections.Stack", out _));
+        }
+
+        [Fact]
+        public void SelectingDiagnostics_LoadsOnlyTheDiagnosticsCategory()
+        {
+            using var runtime = new SurtrRuntime();
+            SurtrStdlib.LoadInto(runtime, AllImages(), StdlibModules.Diagnostics);
+
+            Assert.True(runtime.TryGetModule("surtr.diagnostics.Assert", out _));
+            Assert.False(runtime.TryGetModule("surtr.math.Math", out _));
+        }
+
+        /// <summary>
+        /// The predicate overload gives finer granularity than a whole category: exactly one module
+        /// out of <c>Math</c> (<c>Angle</c>, which has no dependency on <c>Math</c> itself),
+        /// without its sibling.
+        /// </summary>
+        [Fact]
+        public void ThePredicateOverload_SelectsASingleModuleWithoutItsCategorySiblings()
+        {
+            using var runtime = new SurtrRuntime();
+            SurtrStdlib.LoadInto(runtime, AllImages(), (string path) => path == "surtr.math.Angle");
+
+            Assert.True(runtime.TryGetModule("surtr.math.Angle", out _));
+            Assert.False(runtime.TryGetModule("surtr.math.Math", out _));
+        }
+
         /// <summary>
         /// Compiles and loads a driver over the given images and runs an empty-stack
         /// <c>pop()</c> under <c>catch (e: InvalidOperationException)</c>. The name binds to

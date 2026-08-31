@@ -1,5 +1,3 @@
-import surtr.core.Exception;
-
 public interface IReadOnlyCollection<T> : IIterable<T>
 {
     length: int { get; }
@@ -17,16 +15,17 @@ public interface ICollection<T> : IReadOnlyCollection<T>
     fun clear(): void;
 }
 
-private value class ReadOnlyCollection<T> : IReadOnlyCollection<T>
+// A thin read-only view over another collection - wraps rather than copies, so it stays live if the
+// wrapped collection changes. `List<T>.asReadOnly()`/`Set<T>.asReadOnly()` are what construct one;
+// nothing outside this file needs to name the type itself, only the `IReadOnlyCollection<T>` it
+// returns as. One constructor only, deliberately: `ICollection<T>` already extends
+// `IReadOnlyCollection<T>`, so a second overload typed by it would be redundant and every caller
+// (a `List<T>`/`Set<T>`) satisfies the one constructor already declared.
+public value class ReadOnlyCollection<T> : IReadOnlyCollection<T>
 {
     private let _col: IReadOnlyCollection<T>;
 
     public constructor(collection: IReadOnlyCollection<T>)
-    {
-        this._col = collection;
-    }
-
-    public constructor(collection: ICollection<T>)
     {
         this._col = collection;
     }

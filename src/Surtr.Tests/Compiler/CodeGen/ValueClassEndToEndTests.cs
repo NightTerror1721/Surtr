@@ -121,6 +121,9 @@ value class Vec2 {
         private static int Int(SurtrRuntime runtime, string name, params SurtrValue[] arguments)
             => runtime.Invoke(Function(runtime, name), arguments).AsInt;
 
+        private static string Text(SurtrRuntime runtime, string name, params SurtrValue[] arguments)
+            => runtime.Resolve<SurtrString>(runtime.Invoke(Function(runtime, name), arguments))!.Value;
+
         #region Construction and fields
 
         [Fact]
@@ -346,16 +349,16 @@ fun direct(): float {
         }
 
         /// <summary>
-        /// The unsupported shape: an explicitly non-Direct method on a multi-field value class.
-        /// §6.3's boxed-receiver convention exists for single fields only - the box names the class
-        /// and unwraps to the very field the frame holds - while a multi-field box crosses the call
-        /// as one reference slot its callee frame can never agree with, so the construct is refused
-        /// at emit rather than compiled against two disagreeing conventions.
+        /// A multi-field value class calling one of its own non-Direct methods, reached through a
+        /// receiver statically typed as `object` so the call cannot devirtualise to a direct one.
+        /// §6.3's boxed-receiver convention now covers a multi-field block, not just a single field:
+        /// the caller boxes the whole block into one reference (BoxValue over its full width) and
+        /// the callee's prologue unpacks it back into its per-field slots before the body runs.
         /// </summary>
         [Fact]
-        public void AMultiFieldValueClassDeclaringANonDirectMethod_IsRefused()
+        public void AMultiFieldValueClassDeclaringANonDirectMethod_DispatchesThroughTheVirtualSlot()
         {
-            BuildFails(@"
+            var runtime = Run(@"
 interface IMeasure {
     fun lengthSquared(): float;
 }
@@ -378,7 +381,15 @@ fun throughInterface(): float {
     let m: IMeasure = Vec2(3.0, 4.0);
     return m.lengthSquared();
 }
-", "multi-field value class");
+
+fun throughObject(): string {
+    let o: object = Vec2(3.0, 4.0);
+    return o.toString();
+}
+");
+
+            Assert.Equal(25.0, Float(runtime, "throughInterface"));
+            Assert.Equal("Vec2", Text(runtime, "throughObject"));
         }
 
         #endregion

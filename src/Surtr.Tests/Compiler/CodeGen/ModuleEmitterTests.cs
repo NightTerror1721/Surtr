@@ -663,6 +663,10 @@ var runtime = Run(
                 "surtr.collections.Set",
                 File.ReadAllText(collections + "/Set.surtr"));
             project.AddSourceFile(
+                Root + "/surtr/collections/Map.surtr",
+                "surtr.collections.Map",
+                File.ReadAllText(collections + "/Map.surtr"));
+            project.AddSourceFile(
                 Root + "/surtr/collections/Sequence.surtr", "surtr.collections.Sequence", sequenceSource);
 
             var compilation = SurtrCompilation.Create(project);
@@ -2128,6 +2132,40 @@ var runtime = Run(
                     + "fun check(): int { return make() == null && pick() == null ? 1 : 0; }");
 
             Assert.Equal(1, Int(runtime, "check"));
+        }
+
+        /// <summary>
+        /// Regression: a <c>forceinline</c> call's spliced result temp used to be sized from the
+        /// <em>enclosing</em> method's return type rather than the callee's own — so a single-slot
+        /// <c>float</c> result spliced into a caller that itself returns a multi-field value class
+        /// declared a 2-slot temp for a 1-slot value, and storing the callee's `return` into it
+        /// underflowed the stack. Constructing the value class after the inlined call is what
+        /// triggers it; the caller's own return type is what decides the (wrong) temp width.
+        /// </summary>
+        [Fact]
+        public void ForceInlineCallFollowedByMultiFieldValueClassConstructionDoesNotUnderflow()
+        {
+            var runtime = Run(
+                "import game.math.*;\n"
+                    + "value class Vec2 {\n"
+                    + "  public let x: float;\n"
+                    + "  public let y: float;\n"
+                    + "  public constructor(x: float, y: float) { this.x = x; this.y = y; }\n"
+                    + "}\n"
+                    + "fun make(t: float): Vec2 {\n"
+                    + "  let c = clamp01(t);\n"
+                    + "  return Vec2(c, c);\n"
+                    + "}",
+                ("/game/math/Math.surtr",
+                    "public forceinline fun clamp01(value: float): float {\n"
+                        + "  if (value < 0.0) return 0.0;\n"
+                        + "  if (value > 1.0) return 1.0;\n"
+                        + "  return value;\n"
+                        + "}"));
+
+            var instance = runtime.Resolve<SurtrInstance>(Call(runtime, "make", SurtrValue.CreateFloat(2.5)))!;
+            Assert.Equal(1.0, instance[0].AsFloat);
+            Assert.Equal(1.0, instance[1].AsFloat);
         }
 
         /// <summary>
@@ -3621,15 +3659,20 @@ var runtime = Run(
         [Fact]
         public void AChainToASuperThatDoesNotExistIsReported()
         {
+            // Every class now implicitly extends `object`, so `super()` with no arguments against
+            // a base that declares no constructor is legal (it calls nothing, same as an omitted
+            // chain - BodyBinder.Expressions.cs's TryResolveConstructor says so explicitly). What
+            // is still illegal is passing an argument to a base with no constructor to receive it -
+            // reported as an unresolved call against zero candidates, not InvalidConstructorChain.
             var project = new SurtrProject(Root);
             project.AddSourceFile(
                 Root + "/game/core/Test.surtr",
-                "class C { public constructor() : super() { } }");
+                "class C { public constructor() : super(5) { } }");
 
             using var compilation = SurtrCompilation.Create(project);
             compilation.Bind().BindBodies();
 
-            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidConstructorChain);
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.UnresolvedCall);
         }
 
         /// <summary>
@@ -4330,6 +4373,43 @@ var runtime = Run(
         }
 
         /// <summary>
+        /// Regression: an abstract property's bodyless accessors were mistaken for the
+        /// auto-generated form, so the emitter synthesised a backing field for a member that must
+        /// not implement anything. An abstract property is signature-only — no storage, no
+        /// accessor bodies (§3.3, §3.4).
+        /// </summary>
+        [Fact]
+        public void AnAbstractPropertyGetsNoBackingField()
+        {
+            var emitter = Build(
+                "abstract class Shape {\n"
+                    + "  public abstract name: string { get; set; }\n"
+                    + "}\n");
+
+            var shape = Assert.Single(emitter.Modules).FindClass("Shape");
+            Assert.False(shape!.TryGetField("$backing$name", out _));
+        }
+
+        /// <summary>
+        /// The abstract property's accessors are declared signature-only, and a concrete subclass
+        /// satisfies them with real bodies — the same bargain as an abstract method (§3.3, §3.4).
+        /// </summary>
+        [Fact]
+        public void AnAbstractPropertyIsSatisfiedByAConcreteSubclass()
+        {
+            var runtime = Run(
+                "abstract class Shape {\n"
+                    + "  public abstract name: string { get; set; }\n"
+                    + "}\n"
+                    + "class Square : Shape {\n"
+                    + "  public override name: string { get => \"sq\"; set { } }\n"
+                    + "}\n"
+                    + "fun run(): string { let s: Shape = Square(); return s.name; }");
+
+            Assert.Equal("sq", Text(runtime, "run"));
+        }
+
+        /// <summary>
         /// An abstract class implementing an interface but never even redeclaring the member
         /// abstract leaves no vtable slot at all — a load-time crash with no diagnostic before this
         /// fix, since the compiler treated "abstract" as a blanket exemption.
@@ -4952,8 +5032,8 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// The value members are real methods, not call-site lowering: they exist in the image as
-        /// the <c>$</c>-prefixed ABI members §11.1 names, and a host can invoke them by reflection.
+        /// The value members are real methods, not call-site lowering: they exist in the image
+        /// under the same real names §11.1 gives them, and a host can invoke them by reflection.
         /// </summary>
         [Fact]
         public void AValueClassEmitsRealValueMembers()
@@ -4972,9 +5052,9 @@ var runtime = Run(
             runtime.LoadModule(module);
 
             var vec = module.FindClass("Vec2")!;
-            Assert.True(vec.TryGetMethods("$equals", out var equals) && equals.Length == 1);
-            Assert.True(vec.TryGetMethods("$hashCode", out var hashCode) && hashCode.Length == 1);
-            Assert.True(vec.TryGetMethods("$toDisplayString", out var display) && display.Length == 1);
+            Assert.True(vec.TryGetMethods("equals", out var equals) && equals.Length == 1);
+            Assert.True(vec.TryGetMethods("hashCode", out var hashCode) && hashCode.Length == 1);
+            Assert.True(vec.TryGetMethods("toString", out var display) && display.Length == 1);
 
             var a = runtime.NewInstance(vec);
             var b = runtime.NewInstance(vec);
@@ -6013,19 +6093,183 @@ var runtime = Run(
         }
 
         [Fact]
-        public void TypeBaseTypeWalksToTheDeclaredParentAndIsNullAtTheRoot()
+        public void TypeBaseTypeWalksToTheDeclaredParentAndIsObjectAtTheRoot()
         {
             var runtime = Run(
                 "class Animal { public let legs: int = 4; }\n"
                     + "class Dog : Animal { public let name: string = \"Rex\"; }\n"
                     + "fun dogBaseName(): string { return Type.of(Dog()).baseType.name; }\n"
-                    + "fun animalHasNoBase(): int {\n"
-                    + "  if (Type.of(Animal()).baseType == null) { return 1; }\n"
+                    + "fun animalBaseIsObject(): int {\n"
+                    + "  if (Type.of(Animal()).baseType.name == \"object\") { return 1; }\n"
                     + "  return 0;\n"
                     + "}");
 
             Assert.Equal("Animal", Text(runtime, "dogBaseName"));
-            Assert.Equal(1, Int(runtime, "animalHasNoBase"));
+            Assert.Equal(1, Int(runtime, "animalBaseIsObject"));
+        }
+
+        /// <summary>
+        /// The polymorphic smoke test the whole feature exists for: a value statically known only
+        /// as `object` still reaches equals/hashCode/toString through the vtable, landing on
+        /// whatever the concrete class - here one with no override of its own - actually is.
+        /// </summary>
+        [Fact]
+        public void APlainClassAnsweredThroughObjectUsesTheInheritedDefaults()
+        {
+            var runtime = Run(
+                "class Animal { public let legs: int = 4; }\n"
+                    + "fun sameInstanceEqualsItself(): int {\n"
+                    + "  let a = Animal();\n"
+                    + "  let asObject: object = a;\n"
+                    + "  return asObject.equals(a) ? 1 : 0;\n"
+                    + "}\n"
+                    + "fun differentInstancesAreNotEqual(): int {\n"
+                    + "  let asObject: object = Animal();\n"
+                    + "  return asObject.equals(Animal()) ? 1 : 0;\n"
+                    + "}\n"
+                    + "fun defaultToStringNamesTheClass(): string {\n"
+                    + "  let asObject: object = Animal();\n"
+                    + "  return asObject.toString();\n"
+                    + "}\n"
+                    + "fun hashCodeIsStableForTheSameInstance(): int {\n"
+                    + "  let a = Animal();\n"
+                    + "  let asObject: object = a;\n"
+                    + "  return asObject.hashCode() == asObject.hashCode() ? 1 : 0;\n"
+                    + "}");
+
+            Assert.Equal(1, Int(runtime, "sameInstanceEqualsItself"));
+            Assert.Equal(0, Int(runtime, "differentInstancesAreNotEqual"));
+            Assert.Equal("Animal", Text(runtime, "defaultToStringNamesTheClass"));
+            Assert.Equal(1, Int(runtime, "hashCodeIsStableForTheSameInstance"));
+        }
+
+        /// <summary>
+        /// `object`/`Enum`/`ValueType` declare no constructor, so a class whose base resolves to
+        /// one implicitly - no constructor of its own, no field initializer - gets no synthesised
+        /// chain at all (`ModuleEmitter.NeedsConstruction` walks the base chain and finds nothing
+        /// to call). Constructing an instance must not throw or otherwise misbehave for that reason.
+        /// </summary>
+        [Fact]
+        public void AClassWithNoConstructorAndNoBaseToConstructBuildsCleanly()
+        {
+            var runtime = Run(
+                "class Empty { }\n"
+                    + "fun make(): int {\n"
+                    + "  let e = Empty();\n"
+                    + "  return e == null ? 0 : 1;\n"
+                    + "}");
+
+            Assert.Equal(1, Int(runtime, "make"));
+        }
+
+        /// <summary>
+        /// A primitive boxed behind `object` reaches the same default equals/hashCode/toString a
+        /// user class does, and its own toString() - now a real override of object's slot - is
+        /// what actually runs, not object's generic class-name fallback.
+        /// </summary>
+        [Fact]
+        public void APrimitiveThroughObjectUsesItsOwnToStringNotTheGenericDefault()
+        {
+            var runtime = Run(
+                "fun boxedIntToString(): string {\n"
+                    + "  let asObject: object = 5;\n"
+                    + "  return asObject.toString();\n"
+                    + "}\n"
+                    + "fun boxedIntsCompareByValue(): int {\n"
+                    + "  let a: object = 5;\n"
+                    + "  let b: object = 5;\n"
+                    + "  return a.equals(b) ? 1 : 0;\n"
+                    + "}");
+
+            Assert.Equal("5", Text(runtime, "boxedIntToString"));
+            Assert.Equal(1, Int(runtime, "boxedIntsCompareByValue"));
+        }
+
+        /// <summary>
+        /// A range's inline three-slot representation needed its own receiver-convention fix,
+        /// separate from a multi-field value class's: <c>SurtrMethodInfo.ArgumentSlotCount</c>
+        /// hardcoded the receiver width to 3 for any member declared on <c>range</c> regardless of
+        /// dispatch, which only <c>toString()</c> - now an override of <c>object</c>'s virtual slot
+        /// - ever exercised as a non-Direct call. This is the same polymorphic path the multi-field
+        /// value class test above exercises, for the representation that needed a different fix.
+        /// </summary>
+        [Fact]
+        public void ARangeThroughObjectUsesItsOwnToStringNotTheGenericDefault()
+        {
+            var runtime = Run(
+                "fun rangeAsObjectToString(): string {\n"
+                    + "  let asObject: object = 1..4;\n"
+                    + "  return asObject.toString();\n"
+                    + "}");
+
+            Assert.Equal("1..4", Text(runtime, "rangeAsObjectToString"));
+        }
+
+        /// <summary>Every built-in is declared sealed once it extends object, so nothing may extend it.</summary>
+        [Fact]
+        public void ExtendingABuiltInIsRejected()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(Root + "/game/core/Test.surtr", "class Foo : int { }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidBaseType);
+        }
+
+        /// <summary>
+        /// The baseline this feature must not disturb: <c>array&lt;T&gt;.indexOf</c>/<c>contains</c>
+        /// reach an ordinary class instance's equality through <c>SurtrValueComparer</c>'s untyped
+        /// fallback (there is no <c>SurtrInstance</c> case for a non-value-type class - see
+        /// <c>ReferencesEqual</c>'s <c>default:</c>), and a class declaring no <c>equals</c> of its
+        /// own must still compare by identity there, exactly as before <c>SurtrObject.EqualsOverridable</c>
+        /// existed.
+        /// </summary>
+        [Fact]
+        public void AnArrayOfPlainClassesWithNoEqualsOverride_IndexOfStillComparesByIdentity()
+        {
+            var runtime = Run(
+                "class Point { public let x: int; public constructor(x: int) { this.x = x; } }\n"
+                    + "fun run(): int {\n"
+                    + "  let a = Point(1);\n"
+                    + "  let b = Point(1);\n"
+                    + "  let xs = [a];\n"
+                    + "  return (xs.contains(a) ? 1 : 0) * 10 + (xs.contains(b) ? 1 : 0);\n"
+                    + "}");
+
+            Assert.Equal(10, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// The new behaviour Part B of the <c>object</c> root work exists for: a class writing a
+        /// real <c>override fun equals(other: object?): bool</c> is now honoured by the same
+        /// generic/untyped <c>array&lt;T&gt;.indexOf</c>/<c>contains</c> path the identity test
+        /// above exercises - the vtable slot no longer resolves to <c>object.equals</c>, so
+        /// <see cref="Surtr.Runtime.Objects.SurtrObject.EqualsOverridable"/>'s slow path runs the
+        /// override instead of the comparer's identity default.
+        /// </summary>
+        [Fact]
+        public void AnArrayOfPlainClassesWithARealEqualsOverride_IndexOfNowRespectsIt()
+        {
+            var runtime = Run(
+                "class Point {\n"
+                    + "  public let x: int;\n"
+                    + "  public constructor(x: int) { this.x = x; }\n"
+                    + "  public override fun equals(other: object?): bool {\n"
+                    + "    let p = other as? Point;\n"
+                    + "    return p != null && p.x == this.x;\n"
+                    + "  }\n"
+                    + "}\n"
+                    + "fun run(): int {\n"
+                    + "  let a = Point(1);\n"
+                    + "  let b = Point(1);\n"
+                    + "  let c = Point(2);\n"
+                    + "  let xs = [a];\n"
+                    + "  return (xs.contains(b) ? 1 : 0) * 10 + (xs.contains(c) ? 1 : 0);\n"
+                    + "}");
+
+            Assert.Equal(10, Int(runtime, "run"));
         }
         #endregion
 
@@ -6824,6 +7068,39 @@ using var compilation = Reject(
                     + "fun run(): bool { let xs: int[] = [1, 2, 3]; let ys: int[] = [1, 2, 3]; return same(xs, xs) && !same(xs, ys); }");
 
             Assert.True(Call(runtime, "run").AsBool);
+        }
+
+        /// <summary>
+        /// Regression: calling a method through a <em>user-declared</em> generic interface, where
+        /// the parameter is that interface's own type parameter, used to crash the VM with
+        /// <c>InvalidCastException: A '&lt;class&gt;' cannot be cast to 'erased'</c>, for every
+        /// element type - unlike the built-in <c>IComparable&lt;T&gt;</c>/<c>IEquatable&lt;T&gt;</c>
+        /// cases above, which always worked. The bridge <c>ModuleEmitter.EmitBridges</c> synthesizes
+        /// to satisfy the interface's erased vtable slot forwards to the class's own <c>has(item: T)</c>
+        /// - and since a generic class keeps one compiled body regardless of instantiation (§6), that
+        /// body's own parameter is <em>itself</em> still erased. <c>Narrow</c> (the bridge's argument
+        /// conversion) had no case for its destination already being a bare type parameter, so it
+        /// fell into the general "cast to a concrete type" path and cast an already-erased value to
+        /// the `Erased` marker class itself - which nothing is ever "a subclass of", so the cast
+        /// failed unconditionally. Both the direct-dispatch call (<c>viaConcrete</c>, always worked)
+        /// and the interface-dispatch one (<c>viaInterface</c>, the regression) are covered so a
+        /// future change cannot fix one path while re-breaking the other.
+        /// </summary>
+        [Fact]
+        public void AUserDeclaredGenericInterfaceDispatchesAMethodTakingItsOwnTypeParameter()
+        {
+            var runtime = Run(
+                "interface IHolder<T> { fun has(item: T): bool; }\n"
+                    + "class Box<T> : IHolder<T> {\n"
+                    + "    private let _v: T;\n"
+                    + "    public constructor(v: T) { _v = v; }\n"
+                    + "    public fun has(item: T): bool => _v == item;\n"
+                    + "}\n"
+                    + "fun viaConcrete(): bool { let b = Box<int>(5); return b.has(5); }\n"
+                    + "fun viaInterface(): bool { let b: IHolder<int> = Box<int>(5); return b.has(5); }\n");
+
+            Assert.True(Call(runtime, "viaConcrete").AsBool);
+            Assert.True(Call(runtime, "viaInterface").AsBool);
         }
 
         /// <summary>An unconstrained parameter promises nothing, and there is no root class to fall back to.</summary>
@@ -9760,6 +10037,61 @@ using var compilation = Reject(
                     + "fun run(): int { let p = Player(); p.health = next(); return calls; }");
 
             Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// Regression for B11 (docs/Plan-Revision-Stdlib.md §6.3c), now fixed: a generic method
+        /// invoking its own closure parameter with a value of its own generic type, synchronously,
+        /// in the same method - the doc's exact minimal repro. Root cause, confirmed by reading the
+        /// emitted bytecode: a lambda's unwritten parameter type is bound against the *substituted*
+        /// closure type it lands in (<c>apply(5, (v) => v * 100)</c> types <c>v</c> as concrete
+        /// <c>int</c>, which is what lets <c>v * 100</c> type-check at all), so the lifted lambda's
+        /// compiled body reads its parameter raw - but <c>apply</c>'s own body is generic (<c>f: (T0)
+        /// -&gt; T0</c>, fully erased), so its call to <c>f(v)</c> always pushes a boxed value, the
+        /// convention every <c>T0</c>-typed value at rest in a generic body follows. The lambda's raw
+        /// read then multiplies a boxed reference's own raw bits (an entity id) instead of the value
+        /// inside the box. Fix: every lifted lambda body defensively unboxes a primitive or
+        /// single-field-value-class parameter at entry (<c>MethodBodyEmitter.
+        /// EmitLambdaParameterUnboxIfNeeded</c>) - a no-op when the value already arrived raw (an
+        /// ordinary, concretely-typed call), and the missing unbox when it arrived boxed (the
+        /// generic-erased call).
+        /// </summary>
+        /// <remarks>
+        /// Also covers three variants that turned out to matter while narrowing this down: T fixed
+        /// by a class's own generic parameter rather than inferred fresh in this call (closer to
+        /// <c>Sequence&lt;T&gt;</c>'s shape), two separate type parameters instead of reusing one for
+        /// both the value and the closure's return, and an explicit type argument instead of
+        /// inference - all four reproduced identically before the fix. A lambda that only calls a
+        /// method on its parameter (<c>v.toString()</c>) never reproduced this at all: dynamic
+        /// dispatch reads a value's class off its own reference regardless of whether the reader's
+        /// static type is erased or concrete, so it was never a counterexample to the root cause -
+        /// unlike the doc's original "synchronous vs deferred invocation" theory, which this rules
+        /// out (Box&lt;T&gt;.apply here calls its closure synchronously, in the same shape as the
+        /// working theory's "unaffected" examples, and reproduced anyway).
+        /// </remarks>
+        [Fact]
+        public void GenericMethodInvokesItsOwnClosureParameterWithTheRightValue()
+        {
+            var runtime = Run(
+                "fun apply<T>(v: T, f: (T) -> T): T { return f(v); }\n"
+                    + "fun run(): int { return apply(5, (v) => v * 100); }\n"
+                    + "class Box<T> {\n"
+                    + "  private var _value: T;\n"
+                    + "  public constructor(value: T) { this._value = value; }\n"
+                    + "  public fun apply(f: (T) -> T): T { return f(_value); }\n"
+                    + "}\n"
+                    + "fun runClassField(): int { let b = Box<int>(5); return b.apply((v) => v * 100); }\n"
+                    + "fun applyTwoParams<T, U>(v: T, f: (T) -> U): U { return f(v); }\n"
+                    + "fun runTwoTypeParams(): int { return applyTwoParams(5, (v) => v * 100); }\n"
+                    + "fun runExplicitTypeArgument(): int { return apply<int>(5, (v) => v * 100); }\n"
+                    + "fun applyToString<T>(v: T, f: (T) -> string): string { return f(v); }\n"
+                    + "fun runMethodCallOnParam(): int { return applyToString(5, (v) => v.toString()).length; }\n");
+
+            Assert.Equal(500, Int(runtime, "run"));
+            Assert.Equal(500, Int(runtime, "runClassField"));
+            Assert.Equal(500, Int(runtime, "runTwoTypeParams"));
+            Assert.Equal(500, Int(runtime, "runExplicitTypeArgument"));
+            Assert.Equal(1, Int(runtime, "runMethodCallOnParam"));
         }
 
         #endregion

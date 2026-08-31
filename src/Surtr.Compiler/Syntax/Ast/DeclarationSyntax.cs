@@ -332,6 +332,13 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>The enum's cases, empty for every other kind.</summary>
         public IReadOnlyList<EnumCaseSyntax> EnumCases { get; }
 
+        /// <summary>
+        /// The default concrete class a collection literal target-typed to this interface builds,
+        /// written as <c>interface IList&lt;T&gt; default List&lt;T&gt; : ...</c>. Null for a class,
+        /// enum, value class, singleton, or an interface without one.
+        /// </summary>
+        public TypeSyntax? DefaultBuilder { get; }
+
         /// <summary>The members declared in the body.</summary>
         public IReadOnlyList<DeclarationSyntax> Members { get; }
 
@@ -373,6 +380,7 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <param name="kind">Which kind of type this declares.</param>
         /// <param name="name">The type's name.</param>
         /// <param name="typeParameters">Its type parameters.</param>
+        /// <param name="defaultBuilder">The interface's default builder class, or <see langword="null"/>.</param>
         /// <param name="baseTypes">The <c>:</c> list.</param>
         /// <param name="enumCases">The enum's cases, or an empty list.</param>
         /// <param name="members">The members declared in the body.</param>
@@ -383,7 +391,7 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <param name="attributeTargets">The declaration kinds it may be written on, or none for unrestricted.</param>
         /// <param name="isCompileTimeOnlyAttribute">True when its retention is <c>CompileTimeOnly</c>.</param>
         public TypeDeclarationSyntax(SourceSpan span, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
-            TypeDeclarationKind kind, string name, IReadOnlyList<TypeParameterSyntax> typeParameters, IReadOnlyList<TypeSyntax> baseTypes,
+            TypeDeclarationKind kind, string name, IReadOnlyList<TypeParameterSyntax> typeParameters, TypeSyntax? defaultBuilder, IReadOnlyList<TypeSyntax> baseTypes,
             IReadOnlyList<EnumCaseSyntax> enumCases, IReadOnlyList<DeclarationSyntax> members, bool isAbstract, bool isSealed, bool isStatic,
             bool isAttribute = false, SurtrAttributeTargets attributeTargets = SurtrAttributeTargets.None, bool isCompileTimeOnlyAttribute = false)
             : base(span, attributes, docComment, visibility)
@@ -391,6 +399,7 @@ namespace Surtr.Compiler.Syntax.Ast
             Kind = kind;
             Name = name;
             TypeParameters = typeParameters;
+            DefaultBuilder = defaultBuilder;
             BaseTypes = baseTypes;
             EnumCases = enumCases;
             Members = members;
@@ -784,6 +793,19 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>Its body.</summary>
         public BlockStatementSyntax Body { get; }
 
+        /// <summary>
+        /// The <c>each</c> clause's parameters — one (<c>item: T</c>, for <c>[ ... ]</c> literals) or
+        /// two (<c>key: K, value: V</c>, for <c>{ ... }</c> literals). Null when the constructor has
+        /// no <c>each</c> clause and is not a collection builder.
+        /// </summary>
+        public IReadOnlyList<ParameterSyntax>? EachParameters { get; }
+
+        /// <summary>
+        /// The <c>each</c> clause's body — the per-element fill phase, compiled as the private
+        /// <c>$fill$...</c> method. Null when the constructor has no <c>each</c> clause.
+        /// </summary>
+        public BlockStatementSyntax? EachBody { get; }
+
         /// <summary>Initializes a constructor declaration.</summary>
         /// <param name="span">The source the declaration covers.</param>
         /// <param name="attributes">Attributes attached to it.</param>
@@ -793,14 +815,19 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <param name="chainArguments">The chained constructor's arguments, or <c>null</c>.</param>
         /// <param name="chainsToThis">True when the chain was <c>this(...)</c>.</param>
         /// <param name="body">Its body.</param>
+        /// <param name="eachParameters">The <c>each</c> clause's parameters, or <c>null</c>.</param>
+        /// <param name="eachBody">The <c>each</c> clause's body, or <c>null</c>.</param>
         public ConstructorDeclarationSyntax(SourceSpan span, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
-            IReadOnlyList<ParameterSyntax> parameters, IReadOnlyList<ArgumentSyntax>? chainArguments, bool chainsToThis, BlockStatementSyntax body)
+            IReadOnlyList<ParameterSyntax> parameters, IReadOnlyList<ArgumentSyntax>? chainArguments, bool chainsToThis, BlockStatementSyntax body,
+            IReadOnlyList<ParameterSyntax>? eachParameters = null, BlockStatementSyntax? eachBody = null)
             : base(span, attributes, docComment, visibility)
         {
             Parameters = parameters;
             ChainArguments = chainArguments;
             ChainsToThis = chainsToThis;
             Body = body;
+            EachParameters = eachParameters;
+            EachBody = eachBody;
         }
     }
 

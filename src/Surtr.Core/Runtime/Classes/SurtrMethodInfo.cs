@@ -216,6 +216,20 @@ namespace Surtr.Runtime.Classes
         private readonly string[][] _genericConstraints;
         private SurtrClassReference _signature;
         private string? _signatureKey;
+        private SurtrTypeHandle[] _eachParameters = Array.Empty<SurtrTypeHandle>();
+
+        /// <summary>
+        /// The types of a collection builder's <c>each</c> clause parameters (§5.x) — one for a
+        /// <c>[ ... ]</c> builder, two for a <c>{ ... }</c> builder, empty for any other method.
+        /// Only meaningful on a constructor; a front end importing the method uses it to rebuild
+        /// the constructor's each parameters so a target-typed literal can still bind against it.
+        /// </summary>
+        public SurtrTypeHandle[] EachParameters
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _eachParameters;
+            set => _eachParameters = value ?? Array.Empty<SurtrTypeHandle>();
+        }
 
         /// <summary>
         /// This method's index in its declaring class's virtual method table, or
@@ -490,8 +504,14 @@ namespace Surtr.Runtime.Classes
         {
             get
             {
+                // The unboxed-block receiver convention is Direct-only (§6.3): a non-Direct call
+                // resolves the receiver's class through the entity registry, which only a boxed
+                // reference is in, so InvokeVirtual/InvokeInterface always read exactly one slot at
+                // the frame base regardless of what the receiver's own type would flatten to. A
+                // Direct call on a tuple-wide/range/multi-field-value receiver never boxes, so it
+                // keeps the full inline width.
                 int slots = DeclaringType is not null && !IsStatic && !IsInstanceFactoryConstructor
-                    ? SlotWidthOf(DeclaringType)
+                    ? (_dispatch == SurtrMethodDispatch.Direct ? SlotWidthOf(DeclaringType) : 1)
                     : 0;
 
                 for (int i = 0; i < _parameters.Length; i++)

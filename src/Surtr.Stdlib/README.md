@@ -66,32 +66,58 @@ it is core object-model machinery, not library content:
 | Core interfaces `IIterable<T>`/`IIterator<T>`/`IComparable<T>`/`IEquatable<T>` | `Surtr.Core`'s `SurtrStandardLibrary.DeclareCoreInterfaces` |
 | Collection members (`array`/`tuple`/`dict`/`closure`), incl. `array.sort` | `Surtr.Core`'s `SurtrCompositeBuiltIns` |
 | String members, incl. `string.format` | `Surtr.Core`'s `SurtrStringBuiltIn` |
+| `bytes`, the built-in mutable byte buffer | `Surtr.Core`'s `SurtrBytesBuiltIn` |
 | `Iterator` cursor | `Surtr.Core`'s `SurtrIteratorBuiltIns` |
 | `Math`'s trig/float operations (`sin`, `cos`, `sqrt`, `pow`, `log`, `floor`, `hypot`, …) | **this project**'s `Native/SurtrMathNative.cs`, bound to `surtr.math.Math`'s `native fun` declarations by link name |
+| `Profiler`'s `stopwatchTimestamp`, and `Debug`'s `debugPrint`/`debugDump`/`debugBreakpoint`/`debugStack`/`debugIsDebuggerAttached`, and `RuntimeInfo`'s native property getters | **this project**'s `Native/SurtrDiagnosticsNative.cs` |
 
-`Math` is the one member of that list that is *not* core object-model content — it needs C# only
-because it calls into the CLR's `System.Math`, not because it needs anything `Surtr.Core` alone can
-provide. That is why it lives here rather than in `SurtrBuiltIns`: nothing about `Math` is more
-fundamental to the language than `StringBuilder` or `LinkedList<T>` are, it just happens to still
+`Math` and the diagnostics natives are the only members of that list that are *not* core
+object-model content — they need C# only because they call into the CLR (`System.Math`,
+`System.Diagnostics`, `Environment`), not because they need anything `Surtr.Core` alone can
+provide. That is why they live here rather than in `SurtrBuiltIns`: nothing about them is more
+fundamental to the language than `StringBuilder` or `LinkedList<T>` are, they just happen to still
 be native. `abs`, `min`, `max`, `clamp`, `sign`, `lerp` and the `pi`/`tau`/`epsilon`-style constants
 need none of that and are ordinary `const`/`const fun` Surtr in `Math.surtr` itself.
 
 ## The modules
 
+Every module is a file under `src/surtr/`; its dotted path is its location relative to that root.
+
 | Module | Source | Contents |
 |---|---|---|
-| `surtr.core.Contracts` | `src/surtr/core/Contracts.surtr` | `IDisposable<T>`. |
-| `surtr.core.Exception` | `src/surtr/core/Exception.surtr` | Exception subclasses beyond the ones `SurtrBuiltIns` declares (e.g. `NoSupportedException`) — each a constructor and nothing else, the same shape the built-in subclasses have. |
+| `surtr.core.Exception` | `src/surtr/core/Exception.surtr` | Exception subclasses beyond the ones `SurtrBuiltIns` declares (`NotSupportedException`) — each a constructor and nothing else, the same shape the built-in subclasses have. |
+| `surtr.core.byte` | `src/surtr/core/byte.surtr` | The `byte` value class: a type-safe, always-in-range wrapper over a single 8-bit value. |
 | `surtr.math.Angle` | `src/surtr/math/Angle.surtr` | The `Angle` value class. |
 | `surtr.math.Math` | `src/surtr/math/Math.surtr` | The float constants, the trig/float `native fun` declarations whose bodies `SurtrStdlib.LoadInto` publishes from `Native/SurtrMathNative.cs`, and ordinary Surtr logic over them (`abs`, `min`, `max`, `clamp`, `lerp`, `degreesToRadians`, …). The **only** `Math` the language has — `Surtr.Core` declares none. |
-| `surtr.collections.Collection` | `src/surtr/collections/Collection.surtr` | `IReadOnlyCollection<T>`/`ICollection<T>`. |
-| `surtr.collections.Collections` | `src/surtr/collections/Collections.surtr` | Collection helpers. |
-| `surtr.collections.List` | `src/surtr/collections/List.surtr` | `IReadOnlyList<T>`/`IList<T>`, and a `LinkedList<T>` implementing them. |
+| `surtr.math.Vector` | `src/surtr/math/Vector.surtr` | `Vector2` and `Vector3` value classes. |
+| `surtr.math.Quaternion` | `src/surtr/math/Quaternion.surtr` | `Quaternion` value class (depends on `Vector`). |
+| `surtr.math.Random` | `src/surtr/math/Random.surtr` | `Random`, a pure-Surtr xorshift32 PRNG, host-seeded by default via a `native fun`. |
+| `surtr.collections.Collection` | `src/surtr/collections/Collection.surtr` | `IReadOnlyCollection<T>`/`ICollection<T>`, and `ReadOnlyCollection<T>`, a read-only view over either. |
+| `surtr.collections.List` | `src/surtr/collections/List.surtr` | `IReadOnlyList<T>`/`IList<T>`, `List<T>`, a `LinkedList<T>` implementing them, and `ReadOnlyList<T>`. |
+| `surtr.collections.Stack` | `src/surtr/collections/Stack.surtr` | `IStack<T>`/`Stack<T>`. |
+| `surtr.collections.Queue` | `src/surtr/collections/Queue.surtr` | `IQueue<T>`/`IDeque<T>`, `Queue<T>`, and `Deque<T>` (its own doubly-linked structure, not a `Queue<T>` subclass). |
+| `surtr.collections.Set` | `src/surtr/collections/Set.surtr` | `IReadOnlySet<T>`/`ISet<T>`, `ReadOnlySet<T>`, `Set<T>`. |
+| `surtr.collections.PriorityQueue` | `src/surtr/collections/PriorityQueue.surtr` | `IPriorityQueue<T>`/`PriorityQueue<T>`, a binary min-heap over a flat array. |
+| `surtr.collections.Map` | `src/surtr/collections/Map.surtr` | `IReadOnlyMap<K,V>`/`IMap<K,V>`, `Map<K,V>` and `ReadOnlyMap<K,V>`, wrapping `{K: V}`. |
+| `surtr.collections.Sequence` | `src/surtr/collections/Sequence.surtr` | `Sequence<T>`, a lazy LINQ-style pipeline (`map`/`filter`/`take`/`zip`/…) built on generators, plus `IIterable<T>` extension methods (`forEach`, `toList`, `toSet`, `reduce`, …). |
 | `surtr.text.StringBuilder` | `src/surtr/text/StringBuilder.surtr` | The `StringBuilder` class. |
+| `surtr.io.Enums` | `src/surtr/io/Enums.surtr` | `SeekOrigin`. |
+| `surtr.io.Stream` | `src/surtr/io/Stream.surtr` | The `IWritableStream`/`IReadableStream`/`ISeekableStream` interfaces, the abstract `Stream` class, and `ObjectDisposedException`/`EndOfStreamException`. |
+| `surtr.io.MemoryStream` | `src/surtr/io/MemoryStream.surtr` | `MemoryStream`, a `Stream` over an in-memory `bytes` buffer. |
+| `surtr.io.BufferedStream` | `src/surtr/io/BufferedStream.surtr` | `BufferedStream`, a read/write-buffering `Stream` decorator. |
+| `surtr.io.BinaryReader` / `surtr.io.BinaryWriter` | `src/surtr/io/BinaryReader.surtr`, `BinaryWriter.surtr` | Little-endian primitive reads/writes over a `Stream`. |
+| `surtr.io.StreamReader` / `surtr.io.StreamWriter` | `src/surtr/io/StreamReader.surtr`, `StreamWriter.surtr` | UTF-8 text reads/writes over a `Stream`. |
+| `surtr.diagnostics.Assert` | `src/surtr/diagnostics/Assert.surtr` | `AssertionException` and the `assert*` family, for tests. |
+| `surtr.diagnostics.Contracts` | `src/surtr/diagnostics/Contracts.surtr` | Design-by-contract: `PreconditionException`/`PostconditionException`/`InvariantException` and the `require`/`ensure`/`invariant` helper families. |
+| `surtr.diagnostics.Debug` | `src/surtr/diagnostics/Debug.surtr` | `print`/`dump`/`breakpoint`/`stackTrace`/`isDebuggerAttached`, over the natives in `Native/SurtrDiagnosticsNative.cs`. |
+| `surtr.diagnostics.Log` | `src/surtr/diagnostics/Log.surtr` | `LogLevel`, `LogSink`, `Logger`, and a default-logger module surface (`info`/`warn`/`error`/…). |
+| `surtr.diagnostics.Profiler` | `src/surtr/diagnostics/Profiler.surtr` | `Stopwatch`, `Profiler`/`ProfilerScope`/`ProfilerEntry`, over the native `stopwatchTimestamp`. |
+| `surtr.diagnostics.RuntimeInfo` | `src/surtr/diagnostics/RuntimeInfo.surtr` | `native let` properties (`Platform`, `EngineVersion`, `ProcessorCount`, …) over the host/CLR. |
 
 More modules can be added by dropping a `.surtr` file anywhere under `src/surtr/`; the build picks
 it up automatically. The dividing line to keep: if a member needs `unsafe`, a raw pointer or a VM
 service, it is C# (in `Native/`, following `Math`'s example); otherwise it is Surtr.
+`docs/Plan-Revision-Stdlib.md` tracks known issues and planned additions across all of the above.
 
 ## How the standard library reaches a runtime
 

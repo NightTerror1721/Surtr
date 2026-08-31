@@ -1,0 +1,45 @@
+// Fase 8, §6.3/P4. A flat array under a `(x, y)` index rather than `array<array<T>>`: one
+// allocation instead of `height + 1`, and every row the same length by construction - a jagged
+// `array<array<T>>` has neither guarantee. The board/tilemap shape every 2D game needs.
+public class Grid<T>
+{
+    private var _items: T[];
+    private let _width: int;
+    private let _height: int;
+
+    public constructor(width: int, height: int)
+    {
+        if (width < 0 || height < 0) throw IndexOutOfRangeException("width and height must be non-negative");
+        this._width = width;
+        this._height = height;
+        this._items = array<T>(width * height);
+    }
+
+    public inline width: int => _width;
+    public inline height: int => _height;
+    public inline length: int => _items.length;
+
+    @Pure
+    public inline fun isInBounds(x: int, y: int): bool => x >= 0 && x < _width && y >= 0 && y < _height;
+
+    public fun get(x: int, y: int): T
+    {
+        if (!isInBounds(x, y)) throw IndexOutOfRangeException("Grid coordinates out of range");
+        return _items[y * _width + x];
+    }
+
+    public fun set(x: int, y: int, value: T): void
+    {
+        if (!isInBounds(x, y)) throw IndexOutOfRangeException("Grid coordinates out of range");
+        _items[y * _width + x] = value;
+    }
+
+    public fun fill(value: T): void
+    {
+        for (var i = 0; i < _items.length; i++)
+            _items[i] = value;
+    }
+
+    /// Row-major: every cell of row 0, then row 1, and so on.
+    public inline fun iterate(): IIterator<T> => _items.iterate();
+}

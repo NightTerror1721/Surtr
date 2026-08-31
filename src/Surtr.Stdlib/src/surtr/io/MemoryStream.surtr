@@ -1,0 +1,187 @@
+import surtr.io.Stream;
+import surtr.io.Enums;
+
+// An in-memory Stream backed by a mutable bytes buffer. Two shapes: wrap an existing buffer
+// (non-resizable), or own a growable buffer of a requested capacity.
+public class MemoryStream : Stream
+{
+    private var _buffer: bytes;
+    private var _position: int;
+    private var _length: int;
+    private var _writable: bool;
+    private var _expandable: bool;
+    private var _isOpen: bool;
+
+    // Wraps an existing buffer; the stream cannot grow past it.
+    public constructor(buffer: bytes, writable: bool)
+    {
+        this._buffer = buffer;
+        this._length = buffer.length;
+        this._position = 0;
+        this._writable = writable;
+        this._expandable = false;
+        this._isOpen = true;
+    }
+
+    // Owned, growable buffer of the requested capacity.
+    public constructor(size: int)
+    {
+        let capacity = size < 0 ? 0 : size;
+        this._buffer = bytes.repeat(0, capacity);
+        this._length = 0;
+        this._position = 0;
+        this._writable = true;
+        this._expandable = true;
+        this._isOpen = true;
+    }
+
+    public sealed override canRead: bool => true;
+    public sealed override canWrite: bool => _writable;
+    public sealed override canSeek: bool => true;
+    public sealed override eof: bool => _position >= _length;
+
+    public inline capacity: int => _buffer.capacity;
+    public sealed override length: int => _length;
+    public inline isExpandable: bool => _expandable;
+    public override position: int
+    {
+        get { return _position; }
+        set { _position = value; }
+    }
+
+    public fun getBuffer(): bytes => _buffer;
+
+    public fun toArray(): bytes
+    {
+        let result = bytes.repeat(0, _length);
+        for (var i = 0; i < _length; i++)
+            result[i] = _buffer[i];
+        return result;
+    }
+
+    public fun writeTo(destination: Stream): void
+    {
+        destination.write(_buffer, 0, _length);
+    }
+
+    public fun setCapacity(value: int): void
+    {
+        if (value < 0) throw ArgumentOutOfRangeException("value");
+        if (!_expandable) throw InvalidOperationException("Cannot resize a non-resizable MemoryStream");
+        _buffer.reserve(value);
+        if (_length > value) _length = value;
+        if (_position > _length) _position = _length;
+    }
+
+    public override fun setLength(value: int): void
+    {
+        if (value < 0) throw ArgumentOutOfRangeException("value");
+
+        if (value > _buffer.length)
+        {
+            if (!_expandable) throw InvalidOperationException("Cannot expand a non-resizable MemoryStream");
+            _buffer.reserve(value);
+            while (_buffer.length < value) _buffer.push(0);
+        }
+        else if (value < _buffer.length)
+        {
+            _buffer.truncate(value);
+        }
+
+        _length = value;
+        if (_position > _length) _position = _length;
+    }
+
+    public override fun read(buffer: bytes, offset: int, count: int): int
+    {
+        if (offset < 0 || count < 0) throw ArgumentOutOfRangeException("offset and count must be non-negative");
+        if (!_isOpen) throw ObjectDisposedException("Stream is closed");
+
+        let available = _length - _position;
+        var toRead = count < available ? count : available;
+        if (toRead < 0) toRead = 0;
+
+        for (var i = 0; i < toRead; i++)
+            buffer[offset + i] = _buffer[_position + i];
+
+        _position = _position + toRead;
+        return toRead;
+    }
+
+    public override fun write(buffer: bytes, offset: int, count: int): int
+    {
+        if (offset < 0 || count < 0) throw ArgumentOutOfRangeException("offset and count must be non-negative");
+        if (!_isOpen) throw ObjectDisposedException("Stream is closed");
+        if (!_writable) throw InvalidOperationException("Stream is not writable");
+
+        let end = _position + count;
+        if (end > _buffer.length)
+        {
+            if (!_expandable) throw InvalidOperationException("Cannot expand a non-resizable MemoryStream");
+            _buffer.reserve(end);
+            while (_buffer.length < end) _buffer.push(0);
+        }
+
+        for (var i = 0; i < count; i++)
+            _buffer[_position + i] = buffer[offset + i];
+
+        _position = _position + count;
+        if (_position > _length) _length = _position;
+        return count;
+    }
+
+    public override fun readByte(): int
+    {
+        if (!_isOpen) throw ObjectDisposedException("Stream is closed");
+        if (_position >= _length) return -1;
+        return _buffer[_position++];
+    }
+
+    public override fun writeByte(value: int): bool
+    {
+        if (!_isOpen) throw ObjectDisposedException("Stream is closed");
+        if (!_writable) throw InvalidOperationException("Stream is not writable");
+
+        let end = _position + 1;
+        if (end > _buffer.length)
+        {
+            if (!_expandable) throw InvalidOperationException("Cannot expand a non-resizable MemoryStream");
+            _buffer.reserve(end);
+            while (_buffer.length < end) _buffer.push(0);
+        }
+
+        _buffer[_position++] = value;
+        if (_position > _length) _length = _position;
+        return true;
+    }
+
+    public override fun seek(offset: int, origin: SeekOrigin): int
+    {
+        if (!_isOpen) throw ObjectDisposedException("Stream is closed");
+
+        switch (origin)
+        {
+            case SeekOrigin.Begin:
+                _position = offset;
+                break;
+            case SeekOrigin.Current:
+                _position = _position + offset;
+                break;
+            case SeekOrigin.End:
+                _position = _length + offset;
+                break;
+        }
+
+        return _position;
+    }
+
+    public override fun flush(): void
+    {
+        // No-op for memory stream
+    }
+
+    public override fun dispose(): void
+    {
+        _isOpen = false;
+    }
+}

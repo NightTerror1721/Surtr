@@ -441,7 +441,7 @@ namespace Surtr.Runtime.BuiltIns
             builder.Property("isInclusive", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&RangeIsInclusive), isPure: true);
 
             builder.Method("contains", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&RangeContains), builder.Params(("value", integer)), isPure: true);
-            builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&RangeToString), isPure: true);
+            builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&RangeToString), isPure: true, dispatch: SurtrMethodDispatch.Virtual, isOverride: true);
         }
 
         private static int RangeStart(SurtrCallArguments arguments)
@@ -482,14 +482,26 @@ namespace Surtr.Runtime.BuiltIns
             return arguments.Return(SurtrValue.CreateBool(value >= start && (inclusive ? value <= end : value < end)));
         }
 
-        /// <summary>Backs <c>string(aRange)</c> — the same <c>a..b</c>/<c>a..=b</c> spelling range literals use.</summary>
+        /// <summary>
+        /// Backs <c>string(aRange)</c> and <c>range.toString()</c> — the same <c>a..b</c>/<c>a..=b</c>
+        /// spelling range literals use.
+        /// </summary>
+        /// <remarks>
+        /// Declared <see cref="SurtrMethodDispatch.Virtual"/> as an override of <c>object.toString()</c>
+        /// (§6.3), so unlike a Direct range member the receiver here is never the raw three-slot
+        /// block — <c>InvokeVirtual</c> resolves a receiver's class through the entity registry,
+        /// which only a boxed reference is in, so the caller always packs one first
+        /// (<c>SurtrCodeEmitter.RangePack</c>) and this reads it back out as the boxed
+        /// <see cref="SurtrRange"/> it is, the same way any other reference-typed receiver would be.
+        /// </remarks>
         private static int RangeToString(SurtrCallArguments arguments)
         {
-            string start = arguments.GetInt(0).ToString(CultureInfo.InvariantCulture);
-            string end = arguments.GetInt(1).ToString(CultureInfo.InvariantCulture);
+            var range = arguments.Get<SurtrRange>(0);
+            string start = range.Start.ToString(CultureInfo.InvariantCulture);
+            string end = range.End.ToString(CultureInfo.InvariantCulture);
 
             return arguments.Return(arguments.Runtime.NewStringValue(
-                arguments.GetBool(2) ? $"{start}..={end}" : $"{start}..{end}"));
+                range.IsInclusive ? $"{start}..={end}" : $"{start}..{end}"));
         }
         #endregion
 

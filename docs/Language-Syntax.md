@@ -22,9 +22,15 @@ features deliberately deferred. Read it before treating this as a build plan.
   keyword set. Chosen over a straight C#-clone because Surtr's type system already leans on
   postfix-style composition (descriptors nest as `container<param>`), and over Rust-like because
   Surtr does not need expression-oriented blocks or ownership syntax.
-- **Statement terminator: `;` is mandatory.** No ASI. Keeps the grammar unambiguous and the parser
-  simple — worth more than the keystrokes it costs, especially for a language whose front end
-  doesn't exist yet and needs to stay easy to hand-write.
+- **Statement terminator: `;` is optional.** A statement or declaration ends at an explicit `;`,
+  or — when none is written — at a line break, at a `}` closing an enclosing block, or at the end
+  of the file. Two statements on one line still need a `;` between them, and the `;` separating a
+  `for (...; ...; ...)` header's clauses stays mandatory. An expression continues across a line
+  break whenever the next token can extend it — a binary operator, a `.`, a `(` — the same greedy
+  rule TypeScript applies, so a continuation operator is written at the end of the line it belongs
+  to; `return`, `break` and `continue` are the exception and never take an operand or a label from
+  the next line. Nothing is rejected for keeping the `;`: an explicit one always works, and the
+  two styles mix freely.
 - **Declaration order: `name: Type`.** Applies uniformly to locals, fields, parameters and return
   types. Matches the family choice and reads left-to-right with type inference (`let x = 5;` vs
   `let x: int = 5;`).
@@ -51,6 +57,7 @@ surface syntax just gives each descriptor symbol a spelling:
 | `bool` | `B` | literals `true` / `false` |
 | `char` | `C` | |
 | `string` | `S` | |
+| `bytes` | `X` | a mutable array of bytes — the binary buffer. Unparameterised, since a byte is always a byte; a reference type whose storage is a CLR `byte[]`. Values cross the surface as `int` (0–255), since there is no one-byte primitive. `==`/`!=` are identity, like an array; content comparison is explicit through `equals`/`compareTo` (which also satisfy `IEquatable<bytes>`/`IComparable<bytes>`) |
 | `void` | `V` | **return position only** — `void` is deliberately not a type per `CLAUDE.md`, so a field, local or parameter can never be declared `void` |
 | `range` | `R` | a half-open or closed interval of `int`s (§5.4); unparameterised, since both bounds are always `int`. An **inline value** like a tuple (§2.9): three slots - start, end, inclusive - travelling flat through locals, arguments and returns, packing only when it crosses into one-reference storage. Equality is structural: same bounds and same form, same value, whatever identity its packed form would carry |
 | `unknown` | `E` | holds any value; must be cast before use (§5.10) |
@@ -63,8 +70,9 @@ not a distinct type, not a conversion target, just another spelling that happens
 identifier — and exist specifically so a constructor can be called on them (§5.5 has no `new`, so a
 form with no identifier can never be callable). §5.3.1 covers the identifier form and the
 constructors it enables; `closure` stays purely symbolic, since a closure is never directly
-constructed from source — it is always a lambda or a value already holding one. There is no root
-`object` type; `unknown` is *not* one, and §5.10 explains why the distinction matters.
+constructed from source — it is always a lambda or a value already holding one. `object` (§2.2) is
+the root every class, primitive and built-in extends by default; `unknown` is *not* one and stays
+outside the class hierarchy entirely — §5.10 explains why the distinction matters.
 
 A method returning nothing must still write `: void` explicitly; the return-type annotation is
 never omitted, so a declaration's shape doesn't change based on what it returns.
@@ -117,10 +125,12 @@ names a whole-module import (§2.1), and everywhere else it remains an ordinary 
 `moduleof(no.such.module)` path is unaffected.
 
 The list is deliberately short — it holds only what the grammar actually branches on. Notable
-absences, each for a reason already decided above: no `new` (§5.5), no `object` (there is no root
-type, §1.1), no `module`/`namespace` (§2.1 derives it from the path), no `extends`/`implements`
-(§2.2 uses a single `:` list), no `abstract` on interface members (§2.3), and no `until` (§5.4
-uses `..=`).
+absences, each for a reason already decided above: no `new` (§5.5), no `module`/`namespace` (§2.1
+derives it from the path), no `extends`/`implements` (§2.2 uses a single `:` list), no `abstract` on
+interface members (§2.3), and no `until` (§5.4 uses `..=`). `object` is absent from this list too,
+but for a different reason than the others: it names the root class every class extends by default
+(§2.2), and it is an ordinary identifier rather than a keyword, resolved by text the same way
+`int`/`string`/`range`/`unknown` are — there was nothing to reserve.
 
 ### 1.3 Naming conventions
 
@@ -1641,6 +1651,13 @@ into nullability. Three operators work with nullable types:
   throwing if it isn't. An escape hatch for call sites that know more than the type checker does,
   not the default way to consume a nullable.
 
+A check narrows where a check is needed most. Inside `if (x != null) { ... }` — and, with the
+condition negated, in its `else` — `x` reads as `T`, its non-nullable form; a `while` or `for`
+condition, each arm of `?:` and the right side of `&&`/`||` narrow the same way, and `if (x is T)`
+narrows to `T` when `T` fits the declared type. A guard clause (`if (x == null) return;`) keeps the
+negation's narrowing for the rest of its block, until a write to the variable retracts it. `!!` and
+`as` remain for the call sites that know more than any check can prove.
+
 This is a compile-time discipline only — at runtime a reference is still just its 32-bit payload
 either way (`CLAUDE.md` §"The virtual machine"), so `Type?` costs nothing beyond the flow analysis
 that enforces it.
@@ -1733,7 +1750,7 @@ positions. That's a rejection of a generic name as the *idiomatic type-syntax sp
 gives `array`, `dict` and `tuple` a generic name anyway, but only so they can be called as
 constructors; nothing about how a type is written changes.
 
-**A tuple element is read by position, and the position has to be a compile-time constant:**
+**A tuple element is read by position:**
 
 ```
 let point: (int, string) = (3, "origin");
@@ -1743,19 +1760,46 @@ let name = point[1];        // string
 let bad = point[2];         // error: a (int, string) has 2 elements
 ```
 
-The constant requirement is not a restriction on the syntax; it is the type rule showing through.
-A tuple holds a **different type at each position**, so `point[i]` for a running `i` has no type the
-compiler could give the expression — which is also exactly why `tuple` declares no generic
-parameter and no `get(index)` where `array` declares both (§13.4). Anything §7 already calls a
-compile-time constant works, `const` bindings included:
+A constant index is the type rule showing through. A tuple holds a **different type at each
+position**, so a constant index is the one the compiler can give a type — which is also exactly why
+`tuple` declares no generic parameter and no `get(index)` where `array` declares both (§13.4).
+Anything §7 already calls a compile-time constant works, `const` bindings included:
 
 ```
 const Name = 1;
 let name = point[Name];     // string, decided here rather than at run time
 ```
 
-An index past the end is a compile error for the same reason a missing element type would be, so
-there is no runtime bounds check to pay for: the arity is in the type.
+An index past the end is a compile error for the same reason a missing element type would be, so the
+constant form pays no runtime bounds check: the arity is in the type.
+
+A **running** index — one that is not a compile-time constant — still binds, because the element has
+no static type to give the expression: the read lowers to the dynamic `TupGet`, comes back as the
+boxed form an erased slot holds, typed `unknown` (§5.10), and the range check the constant form does
+statically is `TupGet`'s own trap:
+
+```
+let i = pick(0, 1);         // not a constant — nothing here is foldable
+let raw = point[i];         // unknown: the element type varies per position
+let got = raw as string;    // cast at the point of use (§5.10)
+```
+
+**An element may also be named, and the name reads by position.** The name is written the dict's
+colon way, `name: type` — `(x: int, y: string)` — and is pure sugar for the position: it never
+joins the tuple's signature, so a named tuple and its unnamed twin (`(x: int, y: string)` and
+`(int, string)`) are the same tuple type and convert as identity. The compiler erases `point.x` down
+to the same constant read `point[0]` is:
+
+```
+let point: (x: int, y: string) = (3, "origin");
+let x = point.x;                // int — exactly point[0]
+let name = point.y;             // string — exactly point[1]
+let y: (int, string) = point;   // same type: names are not part of the signature
+```
+
+A name that matches none of the positions falls through to the tuple class's own member surface
+(§13.4), so `point.length` still reads the arity. A closure type's parameters cannot be named — the
+arrow form is positional (§5.3).
 
 This is also how a dictionary's `for-in` is read, since §4.2 makes one yield `(K, V)` pairs:
 
@@ -1853,9 +1897,11 @@ the same thing, not a second mechanism. `(T1,T2)(pair: (T1,T2))` — a tuple bui
 of the same tuple type* — is the one constructor in this whole section that folds to nothing at all:
 tuples are immutable and `(T1,T2)` names one interned type, so "the same type on both sides" is
 reference identity, not mere convertibility, and the argument already *is* the value this
-construction would build. Passing a tuple that would need widening (say, `(int,int)` into
-`(float,float)`) is a different, non-identical type, and has no constructor to reach it — write the
-individual elements instead.
+construction would build. A named spelling of the same shape (`(x: int, y: int)`) is that same type
+too (§5.5) — the identity fold is skipped because the two objects differ, but every element converts
+as identity, so the construction is a block copy either way. Passing a tuple that would need widening
+(say, `(int,int)` into `(float,float)`) is a different, non-identical type, and has no constructor to
+reach it — write the individual elements instead.
 
 ### 5.3.2 Constructing a primitive, `string` or `range`
 
@@ -1946,6 +1992,21 @@ language works — nothing new needed there either. `range(start, end, step)` �
 not part of this: `RangeNew` has room for exactly two operands and `SurtrRange` for exactly two
 bounds, so a step needs either a changed or an additional opcode, a VM change, and a
 `SurtrRange` field this section deliberately leaves alone.
+
+**`bytes` is the binary buffer, and its constructors are the four shapes a buffer can start from**
+— each folding onto a native static factory on the class (§13), none needing a VM change:
+
+```
+let empty = bytes();                 // an empty buffer
+let roomy = bytes(1024);             // an empty buffer with capacity reserved
+let raw   = bytes([72, 105]);        // "Hi" as bytes — values checked into [0, 255]
+let win   = bytes(raw, 0, 2);        // a slice of an int[] — offset then length
+let text  = bytes("Hola");           // UTF-8 bytes of the text
+```
+
+There is no one-byte literal and no `byte` primitive — the language deals in `int` at the surface,
+so a read answers 0–255 and every write validates its range rather than silently truncating.
+Constructing from a `string` is UTF-8, the encoding that round-trips through `decodeUTF8()`.
 
 ### 5.3.3 The array/dict shapes a single value can't cover
 
@@ -2200,9 +2261,9 @@ already decided in earlier sections:
 - **`is` tests a type without casting**: `if (x is Dog) { ... }`, evaluating to `bool`. It adds no
   machinery — it is the same walk up `Ancestors` that `catch` clause matching already performs
   (§9), and `CLAUDE.md` notes that walk is one compare plus one load at any depth because
-  `Ancestors[Depth] == this`. `x is Dog` does *not* narrow `x`'s static type inside the branch;
-  narrowing is type-flow analysis, which belongs with pattern matching (§14.3) rather than here, so
-  the body still needs `x as Dog` to use it as one.
+  `Ancestors[Depth] == this`. Inside the branch, `x is Dog` *narrows* `x` to `Dog` — the type test
+  proves it, so the body uses it as one without an `as` (§5.1's flow narrowing applies for as long
+  as the check holds).
 
 From lowest to highest precedence (adjacent rows share a precedence level; unary and assignment
 are right-associative, everything else is left-associative):
@@ -2343,10 +2404,13 @@ Two things make this nearly free rather than a new pillar of the type system:
   generic type parameter. So an `unknown` slot is always a reference, always traced, and
   `IsReferenceType` stays a range compare. Primitives box on the way in and the compiler inserts a
   `Cast` on the way out, exactly the two obligations §6 already places on it for generics.
-- **It is not a supertype.** There is no root class in Surtr (§1.1), so `unknown` cannot sit above
-  anything in `Ancestors`; assignability *to* `unknown` is a rule the compiler applies, not a
-  subtype relation the runtime walks. Nothing in the class hierarchy or the linker changes, which
-  is precisely why a real top type was not the design chosen.
+- **It is not a supertype, even though `object` (§2.2) now is one.** `unknown` never sits in any
+  class's `Ancestors` — assignability *to* `unknown` is a rule the compiler applies, not a subtype
+  relation the runtime walks, and that stays true with a real root class in the hierarchy. `object`
+  answers "what is this class's base"; `unknown` answers a different question — "what does this
+  slot's representation look like" — and the two were kept apart on purpose: unifying them would
+  have meant a value flowing into `unknown` no longer needing the cast on the way out that §6
+  already asks generics to pay, which is precisely the safety `unknown` exists to keep.
 
 The motivating cases are host interop where a native function returns something the signature
 cannot name, and genuinely heterogeneous data. Where the type *is* known, a generic (§6) says so
@@ -3368,6 +3432,28 @@ Two members are worth naming because their shape was a decision rather than a tr
   visible call instead of a type walk hidden inside `format`. An index with no argument behind it
   is an error, not an empty string.
 
+**`bytes`** is the binary buffer — a mutable array of bytes (§1.1) that reads and writes through
+`int`. Its verbs mirror the array's so the two feel alike, and add the buffer's read side:
+
+- **Reading/writing:** `length`/`capacity`/`isEmpty`, `get(index)`, `set(index, value)`,
+  `push(value)`, `pop()`, `insert(index, value)`, `removeAt(index)`, `truncate(length)`,
+  `reserve(capacity)`, `clear()`, `reverse()`, `indexOf(value)`, `lastIndexOf(value)`,
+  `contains(value)`. It also declares `operator[]`, so `buffer[i]` reads and `buffer[i] = v`
+  writes the same way an array's indexer does (§5.6).
+- **The buffer's own:** `slice(start, length)` returns a copy of a window; `concat(other)` returns
+  a new buffer of both; `copy()` an independent snapshot; `copyFrom(source)` (and
+  `copyFrom(source, sourceOffset, count)`) replaces this buffer's contents with another's (or a
+  bounded slice of it), which is how a reusable buffer is reset; `copyTo(target)` (and
+  `copyTo(target, targetOffset)`) writes this buffer's bytes into another at an offset, growing
+  it to fit. `equals(other)`/`compareTo(other)` compare *contents* (the `==`/`!=` operators stay
+  identity, like an array's, because a mutable buffer must not change meaning under you) and
+  satisfy `IEquatable<bytes>`/`IComparable<bytes>`; `toString()` is uppercase hex;
+  `decodeUTF8()` decodes the bytes as UTF-8 text.
+- **Factories:** `empty()`, `withCapacity(n)`, `from(int[])`, `from(int[], offset, length)`,
+  `fromUTF8(text)`, `repeat(value, count)` — and the `bytes(...)` constructor spellings of §5.3.2
+  that fold onto the first five. A host hands a CLR `byte[]` in through the interop layer, which
+  maps it to `bytes` rather than to `int[]`.
+
 ### 13.5 Reflection: `Type`, `Member` and `Module`
 
 Three more built-ins, always in scope like every other name this section documents: `Type` wraps a
@@ -3635,8 +3721,9 @@ pieces that remain.
 Each of these was considered and deliberately left out, and each is **additive** — adding it later
 does not invalidate anything written against this document.
 
-- **Pattern matching** (§4.3) — type patterns in `switch`, destructuring, and the type narrowing
-  that would let `if (x is Dog)` (§5.7) make `x` a `Dog` inside the branch.
+- **Pattern matching** (§4.3) — type patterns in `switch` and destructuring. The narrowing that
+  lets `if (x is Dog)` (§5.7) make `x` a `Dog` inside the branch already exists (§5.1); what
+  remains deferred is the broader pattern surface it was going to arrive with.
 - **Declaration-site generic variance**, `out T` / `in T` (§6).
 - **Per-case enum bodies**, Java's anonymous-constant pattern (§2.4).
 - **Deeply immutable collections** (§5.4) — `let` is shallow, and a frozen collection would need

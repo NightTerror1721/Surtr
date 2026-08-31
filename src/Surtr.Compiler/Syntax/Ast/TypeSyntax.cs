@@ -99,17 +99,30 @@ namespace Surtr.Compiler.Syntax.Ast
     }
 
     /// <summary>A tuple type, reusing the shape of a tuple literal: <c>(int, string)</c>.</summary>
+    /// <remarks>
+    /// An element may carry a name, written <c>(x: int, y: string)</c> (§5.3). The names are pure
+    /// sugar for the positions — they never appear in the type's signature — so this node keeps
+    /// them alongside the element types for the binder to hand to the factory.
+    /// </remarks>
     public sealed class TupleTypeSyntax : TypeSyntax
     {
         /// <summary>The element types, in order.</summary>
         public IReadOnlyList<TypeSyntax> ElementTypes { get; }
 
+        /// <summary>
+        /// The element names, one per element, <see langword="null"/> for a position written without
+        /// a name. <see langword="null"/> as a whole means no position is named.
+        /// </summary>
+        public IReadOnlyList<string?>? ElementNames { get; }
+
         /// <summary>Initializes a tuple type.</summary>
         /// <param name="span">The source the type covers.</param>
         /// <param name="elementTypes">The element types, in order.</param>
-        public TupleTypeSyntax(SourceSpan span, IReadOnlyList<TypeSyntax> elementTypes) : base(span)
+        /// <param name="elementNames">The element names, one per element, or <see langword="null"/> when none are named.</param>
+        public TupleTypeSyntax(SourceSpan span, IReadOnlyList<TypeSyntax> elementTypes, IReadOnlyList<string?>? elementNames = null) : base(span)
         {
             ElementTypes = elementTypes;
+            ElementNames = elementNames;
         }
     }
 

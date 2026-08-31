@@ -206,7 +206,7 @@ if (syntax.Operator is BinaryOperator.In or BinaryOperator.NotIn)
 Detalles de integración:
 
 - `TokenFor` gana `BinaryOperator.In or BinaryOperator.NotIn => TokenType.KeywordIn` (espejo de la línea 1120).
-- Narrowing por `!= null` (`BodyBinder.cs:368-376`) no cambia; `in` no estrecha tipos (igual que `is` hoy, §5.7 de Language-Syntax.md).
+- Narrowing por `!= null` no cambia; `in` no estrecha tipos (a diferencia de `is T` hoy, que sí estrecha a `T` cuando `T` cabe en el tipo declarado, §5.7 de Language-Syntax.md).
 - Plegado constante opcional en `ConstantEvaluator.TryBinary` (`ConstantEvaluator.cs:231`, caso `NotEqual` en 262): plegar `"ell" in "hello"`, `5 in 1..10`, `2 in [1,2,3]` cuando los operandos sean literales; no es requisito de fase 1.
 
 ### 5.4 Emisión (`MethodBodyEmitter.EmitBinary`)

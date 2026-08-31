@@ -248,9 +248,15 @@ namespace Surtr.Runtime.Classes
                     $"Class '{name}' cannot be both abstract and sealed; nothing could ever instantiate it.",
                     nameof(isSealed));
 
-            if (isEnum && baseType is not null)
+            // An enum's base is no longer forbidden here: every enum implicitly extends the
+            // built-in `Enum` class (itself stateless, extending `object`), so a real handle is
+            // legitimate. Source-level rejection of an explicit `enum Foo : Bar` still lives in
+            // Binder.cs, at the syntax layer where it belongs - this constructor only refuses to
+            // silently accept metadata built with no base at all for an enum, since every path
+            // that constructs one is now expected to supply the Enum handle.
+            if (isEnum && baseType is null)
                 throw new ArgumentException(
-                    $"Enum '{name}' cannot declare a base class; the enum class itself occupies that slot.",
+                    $"Enum '{name}' must extend the built-in 'Enum' class; construct it with that handle rather than no base at all.",
                     nameof(baseType));
 
             _typeCode = typeCode;

@@ -405,6 +405,16 @@ namespace Surtr.Bytecode.Image
             for (int i = 0; i < parameterCount; i++)
                 parameters[i] = ReadParameter(state);
 
+            // A collection builder's `each` clause parameters, by type (§5.x), written after the
+            // ordinary parameters; a non-builder carries none.
+            int eachCount = state.Count();
+            var eachParameters = eachCount == 0
+                ? Array.Empty<SurtrTypeHandle>()
+                : new SurtrTypeHandle[eachCount];
+
+            for (int i = 0; i < eachCount; i++)
+                eachParameters[i] = state.Handle(state.Text());
+
             // The method's own generic parameters, names then per-parameter constraint lists -
             // read before the impl kind branches because every kind can carry them.
             int genericCount = state.Count();
@@ -437,6 +447,7 @@ namespace Surtr.Bytecode.Image
                 var contractMethod = new SurtrAbstractMethodInfo(
                     name, returnType, parameters, visibility, declaringType,
                     genericParameters, genericConstraints, isExtension);
+                contractMethod.EachParameters = eachParameters;
                 ReadAttributes(state, contractMethod);
                 return contractMethod;
             }
@@ -449,6 +460,7 @@ namespace Surtr.Bytecode.Image
                     name, dispatch, role, isOverride, returnType, parameters,
                     isStatic, visibility, declaringType, state.Text(), isSealed,
                     genericParameters, genericConstraints, isExtension);
+                nativeMethod.EachParameters = eachParameters;
 
                 ReadAttributes(state, nativeMethod);
                 return nativeMethod;
@@ -469,6 +481,7 @@ namespace Surtr.Bytecode.Image
                 isStatic, visibility, declaringType,
                 chunk, entryIndex, localCount, maxStackSize, isSealed,
                 genericParameters, genericConstraints, isExtension);
+            method.EachParameters = eachParameters;
 
             int handlerCount = state.Count();
             if (handlerCount != 0)
@@ -734,6 +747,10 @@ namespace Surtr.Bytecode.Image
 
                 contract.SetDeclaredExtendedInterfaces(extended);
             }
+
+            // The interface's default builder class, or none when the marker says so (§5.x).
+            if (state.Reader.ReadByte() != 0)
+                contract.DefaultBuilder = state.Handle(state.Text());
 
             int genericCount = state.Count();
             if (genericCount != 0)

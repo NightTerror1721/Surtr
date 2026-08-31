@@ -253,6 +253,7 @@ namespace Surtr.Compiler.Binding
                 case SurtrValueTypeCode.Boolean: return _factory.Bool;
                 case SurtrValueTypeCode.Character: return _factory.Char;
                 case SurtrValueTypeCode.String: return _factory.String;
+                case SurtrValueTypeCode.Bytes: return _factory.Bytes;
                 case SurtrValueTypeCode.Range: return _factory.Range;
                 case SurtrValueTypeCode.Void: return _factory.Void;
 
@@ -448,6 +449,7 @@ namespace Surtr.Compiler.Binding
                     case SurtrClassReference.SymbolBoolean: wellKnown = _factory.Bool; return true;
                     case SurtrClassReference.SymbolCharacter: wellKnown = _factory.Char; return true;
                     case SurtrClassReference.SymbolString: wellKnown = _factory.String; return true;
+                    case SurtrClassReference.SymbolBytes: wellKnown = _factory.Bytes; return true;
                     case SurtrClassReference.SymbolRange: wellKnown = _factory.Range; return true;
                     case SurtrClassReference.SymbolErased: wellKnown = _factory.Unknown; return true;
                     case SurtrClassReference.SymbolVoid: wellKnown = _factory.Void; return true;
@@ -554,6 +556,17 @@ namespace Surtr.Compiler.Binding
                         interfaces.Add(extended);
                 }
 
+                // §5.x: the image carries the default builder by its definition's reference;
+                // construct it with this interface's own type parameters, so a target-typed literal
+                // can substitute the use-site arguments exactly as a source-declared default does.
+                if (contractType.DefaultBuilder is SurtrTypeHandle defaultHandle
+                    && ImportHandle(defaultHandle, symbol) is NamedTypeSymbol defaultType)
+                {
+                    symbol.DefaultBuilder = symbol.TypeParameters.Count == 0
+                        ? defaultType
+                        : (NamedTypeSymbol)defaultType.Construct(symbol.TypeParameters);
+                }
+
                 symbol.Members = ImportInterfaceMembers(contractType, symbol);
             }
 
@@ -620,7 +633,40 @@ namespace Surtr.Compiler.Binding
             members.AddRange(ImportProperties(type.Properties, symbol, symbol));
             members.AddRange(ImportMethods(type.Methods, symbol, symbol));
 
+            // §5.x: a builder constructor's metadata carries its each parameters but not the fill
+            // symbol — the fill is a sibling member named `$fill$<Type>$<ordinal>`, the ordinal the
+            // source binder assigned as the constructor's position among the class's each
+            // constructors. Linked here, so an imported class's builders stay usable.
+            LinkFills(symbol, members);
+
             return members;
+        }
+
+        /// <summary>
+        /// Links every each constructor of an imported class to its synthesized <c>$fill$...</c>
+        /// method, by the same name-and-ordinal the source binder assigned (§5.x).
+        /// </summary>
+        private static void LinkFills(NamedTypeSymbol symbol, List<Symbol> members)
+        {
+            int ordinal = 0;
+            foreach (var member in members)
+            {
+                if (member is not MethodSymbol { Role: MethodRole.Constructor, IsCollectionBuilder: true } constructor)
+                    continue;
+
+                string fillName = SyntheticNames.FillMethod(symbol.Name, ordinal);
+                for (int i = 0; i < members.Count; i++)
+                {
+                    if (members[i] is MethodSymbol { } fill
+                        && string.Equals(fill.Name, fillName, StringComparison.Ordinal))
+                    {
+                        constructor.FillMethod = fill;
+                        break;
+                    }
+                }
+
+                ordinal++;
+            }
         }
 
         private List<Symbol> ImportInterfaceMembers(SurtrInterface type, NamedTypeSymbol symbol)
@@ -767,6 +813,18 @@ namespace Surtr.Compiler.Binding
             }
 
             symbol.Parameters = parameters2;
+
+            // §5.x: a builder constructor's `each` parameters ride on its metadata, so an imported
+            // class still exposes its collection builders to a target-typed literal.
+            var eachParameters = method.EachParameters;
+            if (eachParameters.Length > 0 && symbol.Role == MethodRole.Constructor)
+            {
+                var each = new ParameterSymbol[eachParameters.Length];
+                for (int i = 0; i < each.Length; i++)
+                    each[i] = new ParameterSymbol("$each$" + i, Import(eachParameters[i].Reference, symbol), i, symbol);
+
+                symbol.EachParameters = each;
+            }
 
             // A native built-in declared pure in C# carries the mark like any source-declared
             // @Pure: the runtime recorded it on the method metadata, and here it becomes the same

@@ -1,0 +1,74 @@
+// Fase 8, §6.3/P9. Not `Optional<T>`: the language already has real nullable types (`T?`, §5.1),
+// so a second "maybe a value" wrapper would be pure redundancy the project's own anti-abstraction
+// rule (CLAUDE.md) argues against. `Result<T, E>` is genuinely different - it carries *why* an
+// expected failure happened without paying for an exception, which a plain `T?` cannot express (a
+// `null` says only "absent", never "absent, and here is the reason").
+//
+// Backed by one erased `unknown` slot holding either the success value or the error, tagged by
+// `_isOk`, rather than two fields (`_value: T` and `_error: E`) - a `value class` field needs a
+// real value even on the branch that is not "active", and there is no way to manufacture a default
+// `T`/`E` out of nothing for a still-unconstrained, erased generic parameter. One erased slot
+// sidesteps the problem entirely: whichever of T/E is present converts into it the same way any
+// value converts into an erased slot (§4.8), and `unwrap()`/`unwrapError()` cast it back out.
+//
+// An ordinary `class`, not a `value class`: the compiler rejects a generic *multi-field* value
+// class outright ("cannot have one layout per substitution", SURTR3012) even though neither field
+// here actually varies by substitution (`bool` is concrete, `unknown` is already erased either way)
+// - the restriction is on field count plus generic parameters together, not on whether a layout
+// would truly differ. `Result<T,E>` is meant for an occasional fallible boundary, not a per-
+// instruction hot type the way `Vector2`/`Angle` are, so paying for a real allocation here is the
+// right trade rather than something to route around.
+public class Result<T, E>
+{
+    private let _isOk: bool;
+    private let _payload: unknown;
+
+    private constructor(isOk: bool, payload: unknown)
+    {
+        this._isOk = isOk;
+        this._payload = payload;
+    }
+
+    public static fun ok(value: T): Result<T, E> => Result<T, E>(true, value);
+    public static fun error(err: E): Result<T, E> => Result<T, E>(false, err);
+
+    public inline isOk: bool => _isOk;
+    public inline isError: bool => !_isOk;
+
+    /// The success value. Throws if this is an error result.
+    public fun unwrap(): T
+    {
+        if (!_isOk) throw InvalidOperationException("Called unwrap() on an error Result.");
+        return _payload as T;
+    }
+
+    /// The success value, or `fallback` if this is an error result.
+    public fun unwrapOr(fallback: T): T => _isOk ? (_payload as T) : fallback;
+
+    /// The error. Throws if this is an ok result.
+    public fun unwrapError(): E
+    {
+        if (_isOk) throw InvalidOperationException("Called unwrapError() on an ok Result.");
+        return _payload as E;
+    }
+
+    // B11 (docs/Plan-Revision-Stdlib.md §6.3c) is fixed: match<U>/map<U>/mapError<F> were pulled for
+    // a session because a lambda passed to a generic method's own closure parameter (invoked
+    // synchronously, in the same method) could be called with a corrupted argument - confirmed root
+    // cause was in MethodBodyEmitter.EmitLambda, not the "synchronous vs deferred" boundary first
+    // guessed here (see the doc for what was actually confirmed). Re-added with a real regression
+    // test (ResultMapMapErrorAndMatchInvokeTheirClosureWithTheRightValue,
+    // src/Surtr.Tests/Stdlib/SurtrStdlibBehaviorTests.cs).
+
+    /// Transforms the success value with `mapper`; an error result passes through untouched.
+    public fun map<U>(mapper: (T) -> U): Result<U, E> =>
+        _isOk ? Result<U, E>.ok(mapper(_payload as T)) : Result<U, E>.error(_payload as E);
+
+    /// Transforms the error with `mapper`; an ok result passes through untouched.
+    public fun mapError<F>(mapper: (E) -> F): Result<T, F> =>
+        _isOk ? Result<T, F>.ok(_payload as T) : Result<T, F>.error(mapper(_payload as E));
+
+    /// Runs `onOk` or `onError`, whichever this result is, and returns what it produced.
+    public fun match<U>(onOk: (T) -> U, onError: (E) -> U): U =>
+        _isOk ? onOk(_payload as T) : onError(_payload as E);
+}

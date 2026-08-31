@@ -387,6 +387,32 @@ namespace Surtr.Compiler.Syntax.Ast
         }
     }
 
+    /// <summary>
+    /// <c>defined(Path)</c> - a compile-time-only existence test for a build constant (§7.4). Folds to
+    /// <c>true</c> when a build constant of that name exists and <c>false</c> otherwise, without the
+    /// "undefined name" error that naming the constant directly would raise. The path is the dotted
+    /// name exactly as written, one entry per segment, so <c>defined(Logging.Debug)</c> carries
+    /// <c>["Logging", "Debug"]</c>.
+    /// </summary>
+    /// <remarks>
+    /// A keyword operator rather than a call, because it must resolve against the build's constants
+    /// and never bind to a value the way <c>moduleof</c> resolves a module - the path is the payload,
+    /// not an expression to evaluate. The binder folds it through <see cref="ConstantEvaluator"/>.
+    /// </remarks>
+    public sealed class DefinedExpressionSyntax : ExpressionSyntax
+    {
+        /// <summary>The dotted constant name as written, one entry per segment.</summary>
+        public IReadOnlyList<string> Path { get; }
+
+        /// <summary>Initializes a <c>defined</c> expression.</summary>
+        /// <param name="span">The source the expression covers.</param>
+        /// <param name="path">The dotted constant name, one entry per segment.</param>
+        public DefinedExpressionSyntax(SourceSpan span, IReadOnlyList<string> path) : base(span)
+        {
+            Path = path;
+        }
+    }
+
     /// <summary>A lambda, <c>(x) =&gt; expr</c> or <c>(x) =&gt; { ... }</c>.</summary>
     public sealed class LambdaExpressionSyntax : ExpressionSyntax
     {
@@ -483,6 +509,38 @@ namespace Surtr.Compiler.Syntax.Ast
         public TupleLiteralExpressionSyntax(SourceSpan span, IReadOnlyList<ExpressionSyntax> elements) : base(span)
         {
             Elements = elements;
+        }
+    }
+
+    /// <summary>
+    /// A collection instantiation written as a literal over a named type — <c>List&lt;int&gt;[1, 2, 3]</c>,
+    /// <c>List&lt;int&gt;(32)[1, 2, 3]</c> or <c>Map&lt;string, int&gt;{ "x": 10 }</c> — or the ambiguous
+    /// shape an index shares with it (<c>arr[0]</c>), which the binder resolves to a builder or an index
+    /// by what the <see cref="Construction"/> resolves to.
+    /// </summary>
+    /// <remarks>
+    /// The parser produces this node for every <c>[ ... ]</c>/<c>{ ... }</c> that follows an identifier, a
+    /// generic name or a call. The binder decides: a construction whose callee resolves to a type with an
+    /// <c>each</c> constructor is a collection literal (built via <c>$fill$...</c>), a callee that resolves
+    /// to a value is an index (<c>(Type(args))[i]</c> re-encodes the explicit-index form), and a type without
+    /// an <c>each</c> constructor is an error pointing back at the parentheses form.
+    /// </remarks>
+    public sealed class CollectionInstantiationExpressionSyntax : ExpressionSyntax
+    {
+        /// <summary>The identifier, generic name or call the literal is written over.</summary>
+        public ExpressionSyntax Construction { get; }
+
+        /// <summary>The literal body — an <see cref="ArrayLiteralExpressionSyntax"/> or a <see cref="DictLiteralExpressionSyntax"/>.</summary>
+        public ExpressionSyntax Body { get; }
+
+        /// <summary>Initializes a collection instantiation.</summary>
+        /// <param name="span">The source the whole expression covers.</param>
+        /// <param name="construction">The identifier, generic name or call.</param>
+        /// <param name="body">The literal body.</param>
+        public CollectionInstantiationExpressionSyntax(SourceSpan span, ExpressionSyntax construction, ExpressionSyntax body) : base(span)
+        {
+            Construction = construction;
+            Body = body;
         }
     }
 

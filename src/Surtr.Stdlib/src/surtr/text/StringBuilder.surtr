@@ -2,54 +2,158 @@ public class StringBuilder
 {
     public const DefaultCapacity: int = 16;
 
+    // `_buffer` is over-allocated to `_capacity` slots (via array<char>, which always allocates by
+    // length, not by reserve) - `_length` is the real content length, tracked separately, the same
+    // split `List<T>` uses. Writing through `_buffer.push(...)` instead of by index was the bug: it
+    // appended past the initialCapacity zero-chars already sitting in the array rather than filling
+    // them, so a fresh StringBuilder reported `length == initialCapacity` and carried that many NUL
+    // characters ahead of any real content.
     private var _buffer: char[];
+    private var _length: int;
+    private var _capacity: int;
 
     public constructor(initialCapacity: int = DefaultCapacity)
     {
         if (initialCapacity < 1) throw ArgumentException("Initial capacity must be greater than 0");
-        this._buffer = array<char>(initialCapacity);
+        this._capacity = initialCapacity;
+        this._buffer = array<char>(_capacity);
+        this._length = 0;
     }
 
-    public inline length: int { get { return _buffer.length; } }
+    public inline length: int { get { return _length; } }
 
-    public inline isEmpty: bool { get { return _buffer.length == 0; } }
+    public inline capacity: int { get { return _capacity; } }
+
+    public inline isEmpty: bool { get { return _length == 0; } }
 
     public fun get(index: int): char
     {
-        if (index < 0 || index >= _buffer.length) throw IndexOutOfRangeException("Index out of range");
+        if (index < 0 || index >= _length) throw IndexOutOfRangeException("Index out of range");
         return _buffer[index];
+    }
+
+    public fun set(index: int, value: char): void
+    {
+        if (index < 0 || index >= _length) throw IndexOutOfRangeException("Index out of range");
+        _buffer[index] = value;
     }
 
     public fun append(value: string): StringBuilder
     {
+        ensureCapacity(_length + value.length);
         for (var i = 0; i < value.length; i++)
-            _buffer.push(value[i]);
+        {
+            _buffer[_length] = value[i];
+            _length++;
+        }
         return this;
     }
 
     public fun appendChar(value: char): StringBuilder
     {
-        _buffer.push(value);
+        ensureCapacity(_length + 1);
+        _buffer[_length] = value;
+        _length++;
         return this;
     }
 
     public fun appendLine(value: string): StringBuilder
     {
         append(value);
-        _buffer.push('\n');
+        appendChar('\n');
         return this;
     }
 
     public fun clear(): StringBuilder
     {
-        _buffer.clear();
+        _length = 0;
         return this;
     }
 
-    public inline fun toString(): string
+    public fun insert(index: int, value: string): StringBuilder
     {
-        return string(_buffer);
+        if (index < 0 || index > _length) throw IndexOutOfRangeException("Index out of range");
+        let insertLength = value.length;
+        if (insertLength == 0) return this;
+
+        ensureCapacity(_length + insertLength);
+        for (var i = _length - 1; i >= index; i--)
+            _buffer[i + insertLength] = _buffer[i];
+        for (var i = 0; i < insertLength; i++)
+            _buffer[index + i] = value[i];
+        _length += insertLength;
+        return this;
+    }
+
+    public fun remove(start: int, length: int): StringBuilder
+    {
+        if (start < 0 || length < 0 || start + length > _length) throw IndexOutOfRangeException("Index out of range");
+        for (var i = start + length; i < _length; i++)
+            _buffer[i - length] = _buffer[i];
+        _length -= length;
+        return this;
+    }
+
+    public fun replace(start: int, length: int, value: string): StringBuilder
+    {
+        remove(start, length);
+        insert(start, value);
+        return this;
+    }
+
+    public fun indexOf(value: char): int
+    {
+        for (var i = 0; i < _length; i++)
+        {
+            if (_buffer[i] == value) return i;
+        }
+        return -1;
+    }
+
+    public fun indexOf(value: string): int
+    {
+        if (value.length == 0) return 0;
+        for (var start = 0; start <= _length - value.length; start++)
+        {
+            var matched = true;
+            for (var j = 0; j < value.length; j++)
+            {
+                if (_buffer[start + j] != value[j])
+                {
+                    matched = false;
+                    break;
+                }
+            }
+            if (matched) return start;
+        }
+        return -1;
+    }
+
+    public fun substring(start: int, length: int): string
+    {
+        if (start < 0 || length < 0 || start + length > _length) throw IndexOutOfRangeException("Index out of range");
+        return string.fromCharArraySlice(_buffer, start, length);
+    }
+
+    public override fun toString(): string
+    {
+        return string.fromCharArraySlice(_buffer, 0, _length);
+    }
+
+    private fun ensureCapacity(min: int): void
+    {
+        if (_capacity < min)
+        {
+            var newCapacity = _capacity == 0 ? DefaultCapacity : _capacity * 2;
+            if (newCapacity < min) newCapacity = min;
+            var newBuffer = array<char>(newCapacity);
+            for (var i = 0; i < _length; i++)
+                newBuffer[i] = _buffer[i];
+            _buffer = newBuffer;
+            _capacity = newCapacity;
+        }
     }
 
     inline operator [](self: StringBuilder, index: int): char { return self.get(index); }
+    inline operator [](self: StringBuilder, index: int, value: char): void { self.set(index, value); }
 }

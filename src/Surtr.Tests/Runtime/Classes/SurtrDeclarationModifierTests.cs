@@ -1,5 +1,6 @@
 ﻿#nullable enable
 
+using Surtr.Runtime.BuiltIns;
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
 using System;
@@ -36,11 +37,16 @@ namespace Surtr.Tests.Runtime.Classes
             bool isSealed = false,
             bool isEnum = false)
         {
+            // An enum always extends the built-in `Enum` class now - the constructor rejects a
+            // null base for one - so a test asking for isEnum defaults to it exactly like the real
+            // compiler does when a source enum writes no base of its own.
+            var effectiveBase = baseClass ?? (isEnum ? SurtrBuiltIns.Enum : null);
+
             var type = new SurtrClass(
                 name,
                 SurtrValueTypeCode.Object,
                 SurtrClassReference.Object($"test:{name}"),
-                baseClass is null ? null : HandleFor(module, baseClass),
+                effectiveBase is null ? null : HandleFor(module, effectiveBase),
                 isAbstract,
                 SurtrVisibility.Public,
                 declaringType: null,
@@ -177,16 +183,17 @@ namespace Surtr.Tests.Runtime.Classes
         }
 
         [Fact]
-        public void AnEnum_CannotDeclareABaseClass()
+        public void AnEnum_MustExtendTheBuiltInEnumClass()
         {
-            var module = NewModule();
-            var animal = DefineClass(module, "Animal");
-
+            // Every enum now implicitly extends the built-in `Enum` class - the constructor takes
+            // that as given rather than re-checking which class it is (Binder.cs already refuses a
+            // written `enum Foo : Bar` at the syntax level) - so the one thing left to enforce here
+            // is that some base is always supplied, never none at all.
             Assert.Throws<ArgumentException>(() => new SurtrClass(
                 "Bad",
                 SurtrValueTypeCode.Object,
                 SurtrClassReference.Object("test:Bad"),
-                HandleFor(module, animal),
+                null,
                 false,
                 SurtrVisibility.Public,
                 null,

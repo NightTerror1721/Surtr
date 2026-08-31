@@ -1,0 +1,230 @@
+native fun stopwatchTimestamp(): float;
+
+
+// A running Stopwatch tracks two things: `_elapsed`, the time banked from every completed
+// start/stop span, and `_startedAt`, the timestamp the current span began at. `elapsed` while
+// running has to add the live span (`stopwatchTimestamp() - _startedAt`) on top of `_elapsed`
+// rather than waiting for `stop()` to fold it in - otherwise reading `elapsed` mid-run (the whole
+// point of a profiler scope still open) always answered zero.
+public class Stopwatch
+{
+    private var _elapsed: float;
+    private var _startedAt: float;
+    private var _running: bool;
+
+    public constructor()
+    {
+        this._elapsed = 0.0;
+        this._startedAt = 0.0;
+        this._running = false;
+    }
+
+    public elapsed: float
+    {
+        get { return _running ? _elapsed + (stopwatchTimestamp() - _startedAt) : _elapsed; }
+    }
+
+    public inline isRunning: bool
+    {
+        get { return _running; }
+    }
+
+    public fun start(): void
+    {
+        if (_running) return;
+        _startedAt = stopwatchTimestamp();
+        _running = true;
+    }
+
+    public fun stop(): void
+    {
+        if (!_running) return;
+        _elapsed = _elapsed + (stopwatchTimestamp() - _startedAt);
+        _running = false;
+    }
+
+    public fun reset(): void
+    {
+        _elapsed = 0.0;
+        _startedAt = 0.0;
+        _running = false;
+    }
+
+    public fun restart(): void
+    {
+        _elapsed = 0.0;
+        _startedAt = stopwatchTimestamp();
+        _running = true;
+    }
+
+    public fun addElapsed(delta: float): void
+    {
+        _elapsed = _elapsed + delta;
+    }
+
+    public inline fun isFasterThan(other: Stopwatch): bool => elapsed < other.elapsed;
+
+    public inline fun isSlowerThan(other: Stopwatch): bool => elapsed > other.elapsed;
+
+    public inline fun getElapsedMilliseconds(): float => elapsed;
+
+    public inline fun getElapsedSeconds(): float => elapsed / 1000.0;
+}
+
+
+public class ProfilerScope
+{
+    private let _stopwatch: Stopwatch;
+    private let _entry: ProfilerEntry;
+
+    public constructor(stopwatch: Stopwatch, entry: ProfilerEntry)
+    {
+        this._stopwatch = stopwatch;
+        this._entry = entry;
+        _stopwatch.restart();
+    }
+
+    public inline label: string { get { return _entry.label; } }
+
+    // Fase 8: folds the span into the entry's running stats (count/total/min/max) instead of the
+    // span being the whole entry - a scripting language embedded in a game engine profiles a loop
+    // called every frame, and "one entry per call" made getTotalElapsed()/entryCount() answer a
+    // different, growing number every frame instead of the aggregate a profiler view actually wants.
+    public fun dispose(): void
+    {
+        _stopwatch.stop();
+        _entry.recordSample(_stopwatch.elapsed);
+    }
+}
+
+
+// Fase 8, §6: one entry per **label**, aggregating every sample recorded under it - count, total,
+// min, max, average - rather than one entry per `beginScope()` call. `docs/Plan-Revision-Stdlib.md`
+// B2 already fixed "the number is always zero"; this fixes "the number resets to a single sample
+// the moment a hot loop calls beginScope(label) a second time", which a scripting language embedded
+// in a real-time loop (an `update()` called every frame) hits immediately.
+public class ProfilerEntry
+{
+    public let label: string;
+    private var _count: int;
+    private var _total: float;
+    private var _min: float;
+    private var _max: float;
+
+    public constructor(label: string)
+    {
+        this.label = label;
+        this._count = 0;
+        this._total = 0.0;
+        this._min = 0.0;
+        this._max = 0.0;
+    }
+
+    public fun recordSample(elapsed: float): void
+    {
+        if (_count == 0 || elapsed < _min) _min = elapsed;
+        if (_count == 0 || elapsed > _max) _max = elapsed;
+        _total = _total + elapsed;
+        _count = _count + 1;
+    }
+
+    public inline count: int => _count;
+    public inline totalElapsed: float => _total;
+    public inline minElapsed: float => _min;
+    public inline maxElapsed: float => _max;
+    public inline averageElapsed: float => _count == 0 ? 0.0 : _total / _count.toFloat();
+
+    /// Backward-compatible alias for the total elapsed time under this label.
+    public inline elapsed: float => _total;
+}
+
+
+// A linear scan over a handful of entries, not a Map<string, ProfilerEntry>: `diagnostics/` and
+// `collections/` are deliberately independent categories (SurtrStdlib.StdlibModules lets a host load
+// one without the other), and a profiler realistically holds a handful of distinct labels - a few
+// per frame, not thousands - so O(n) lookup by label costs nothing a hash lookup would meaningfully
+// save, and it keeps this file loadable under `StdlibModules.Diagnostics` alone.
+public class Profiler
+{
+    private var _name: string;
+    private var _labels: string[];
+    private var _entries: ProfilerEntry[];
+    private var _count: int;
+
+    public constructor(name: string = "Profiler")
+    {
+        this._name = name;
+        this._labels = array<string>(0);
+        this._entries = array<ProfilerEntry>(0);
+        this._count = 0;
+    }
+
+    public inline name: string { get { return _name; } }
+    public inline entryCount: int { get { return _count; } }
+
+    private fun findOrCreate(label: string): ProfilerEntry
+    {
+        for (var i = 0; i < _count; i++)
+        {
+            if (_labels[i] == label) return _entries[i];
+        }
+        let entry = ProfilerEntry(label);
+        _labels.push(label);
+        _entries.push(entry);
+        _count = _count + 1;
+        return entry;
+    }
+
+    /// Starts (or resumes accumulating into) the entry for `label`. Disposing the returned scope
+    /// records one sample; calling this again with the same label accumulates a second sample into
+    /// the same entry rather than creating a new one - the common case for a loop called every frame.
+    public fun beginScope(label: string): ProfilerScope
+    {
+        return ProfilerScope(Stopwatch(), findOrCreate(label));
+    }
+
+    /// Records one sample directly, without a scope - for a caller that already measured elapsed
+    /// time itself.
+    public fun record(label: string, elapsed: float): void
+    {
+        findOrCreate(label).recordSample(elapsed);
+    }
+
+    public fun getEntry(label: string): ProfilerEntry
+    {
+        for (var i = 0; i < _count; i++)
+        {
+            if (_labels[i] == label) return _entries[i];
+        }
+        throw KeyNotFoundException("No profiler entry for label: " + label);
+    }
+
+    /// The label recorded at position `index` (insertion order) - use with `entryCount` to walk
+    /// every label without knowing its name in advance.
+    public fun getLabelAt(index: int): string
+    {
+        if (index < 0 || index >= _count) throw IndexOutOfRangeException("Index out of range");
+        return _labels[index];
+    }
+
+    public fun clear(): void
+    {
+        _labels.clear();
+        _entries.clear();
+        _count = 0;
+    }
+
+    public fun getTotalElapsed(): float
+    {
+        var total = 0.0;
+        for (var i = 0; i < _count; i++)
+            total = total + _entries[i].totalElapsed;
+        return total;
+    }
+}
+
+
+public fun timestamp(): float
+{
+    return stopwatchTimestamp();
+}

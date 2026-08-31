@@ -233,6 +233,16 @@ namespace Surtr.Compiler.Binding
                         }
                         return;
 
+                    case BoundCollectionBuildExpression build:
+                        foreach (var argument in build.ConstructorArguments)
+                            Expression(argument);
+                        foreach (var fillArgs in build.FillArguments)
+                        {
+                            foreach (var argument in fillArgs)
+                                Expression(argument);
+                        }
+                        return;
+
                     case BoundInterpolatedStringExpression interpolated:
                         foreach (var part in interpolated.Parts)
                             Expression(part);

@@ -438,6 +438,20 @@ namespace Surtr.Compiler.Binding
                     return;
                 }
 
+                case BoundCollectionBuildExpression build:
+                {
+                    foreach (var argument in build.ConstructorArguments)
+                        Walk(argument);
+
+                    foreach (var fillArgs in build.FillArguments)
+                    {
+                        foreach (var argument in fillArgs)
+                            Walk(argument);
+                    }
+
+                    return;
+                }
+
                 case BoundInterpolatedStringExpression interpolated:
                 {
                     foreach (var part in interpolated.Parts)

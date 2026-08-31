@@ -1,0 +1,88 @@
+import surtr.math.Math;
+import surtr.math.Angle;
+import surtr.math.Vector;
+
+// A unit quaternion representing a 3D rotation. Four fields flatten to a run of four contiguous
+// slots (§2.9), the same way Vector2/Vector3's fields do. Lives in its own module now that B6
+// (docs/Plan-Revision-Stdlib.md §2.6 - a cross-module call returning a multi-field value class
+// underflowed the emitter's stack accounting unless inlined) is fixed: rotate()/fromAxisAngle()
+// call into Vector3.cross/+/*/normalized() across the module boundary the same way any other
+// caller of Vector.surtr would.
+public value class Quaternion
+{
+    public let x: float;
+    public let y: float;
+    public let z: float;
+    public let w: float;
+
+    public constructor(x: float, y: float, z: float, w: float)
+    {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+        this.w = w;
+    }
+
+    public static identity: Quaternion => Quaternion(0.0, 0.0, 0.0, 1.0);
+
+    /// Builds the rotation of `angle` around `axis`. `axis` need not be normalized.
+    public static fun fromAxisAngle(axis: Vector3, angle: Angle): Quaternion
+    {
+        let normalizedAxis = axis.normalized();
+        let half = angle.radians * 0.5;
+        let s = sin(half);
+        return Quaternion(normalizedAxis.x * s, normalizedAxis.y * s, normalizedAxis.z * s, cos(half));
+    }
+
+    @Pure
+    public inline fun lengthSquared(): float => x * x + y * y + z * z + w * w;
+
+    @Pure
+    public inline fun length(): float => sqrt(lengthSquared());
+
+    /// The identity quaternion normalizes to itself rather than dividing by zero.
+    public fun normalized(): Quaternion
+    {
+        let len = length();
+        if (len < Epsilon) return Quaternion.identity;
+        return Quaternion(x / len, y / len, z / len, w / len);
+    }
+
+    /// The inverse rotation for a unit quaternion: negate the vector part, keep `w`.
+    @Pure
+    public inline fun conjugate(): Quaternion => Quaternion(-x, -y, -z, w);
+
+    @Pure
+    public override fun toString(): string => "($x, $y, $z, $w)";
+
+    /// Hamilton product: composes two rotations, `a` applied first, then `b`.
+    @Pure
+    operator*(a: Quaternion, b: Quaternion): Quaternion
+    {
+        return Quaternion(
+            a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+            a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+            a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+            a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z);
+    }
+
+    // Named rather than a second `operator*(Quaternion, Vector3)`: two operator overloads that
+    // differ only in which multi-field value class they take as the second parameter currently
+    // collide as a duplicate signature - a compiler bug, tracked separately, not a stdlib one.
+    /// Rotates `v` by this quaternion, which should be a unit quaternion (as `fromAxisAngle`/
+    /// `normalized` produce).
+    @Pure
+    public fun rotate(v: Vector3): Vector3
+    {
+        let qv = Vector3(x, y, z);
+        let uv = qv.cross(v);
+        let uuv = qv.cross(uv);
+        return v + (uv * (2.0 * w)) + (uuv * 2.0);
+    }
+
+    @Pure
+    inline operator==(a: Quaternion, b: Quaternion): bool
+    {
+        return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w;
+    }
+}

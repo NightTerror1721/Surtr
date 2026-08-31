@@ -86,13 +86,17 @@ namespace Surtr.Compiler.Syntax
                 case TokenType.KeywordThrow:
                     reader.Advance();
                     ExpressionSyntax thrown = ParseExpression();
-                    reader.Expect(TokenType.Semicolon, "';' after the thrown value");
+                    ExpectStatementTerminator("';' or a line break after the thrown value");
                     return new ThrowStatementSyntax(SpanFrom(start), thrown);
 
                 case TokenType.KeywordReturn:
                     reader.Advance();
-                    ExpressionSyntax? returned = reader.Check(TokenType.Semicolon) ? null : ParseExpression();
-                    reader.Expect(TokenType.Semicolon, "';' after the return");
+                    // A bare `return` never reaches for an operand on the next line: like `break`
+                    // and `continue`, it only takes one written on its own line (§1).
+                    ExpressionSyntax? returned = reader.Check(TokenType.Semicolon) || reader.IsAfterLineBreak
+                        ? null
+                        : ParseExpression();
+                    ExpectStatementTerminator("';' or a line break after the return");
                     return new ReturnStatementSyntax(SpanFrom(start), returned);
 
                 case TokenType.KeywordBreak:
@@ -112,7 +116,7 @@ namespace Surtr.Compiler.Syntax
                     }
 
                     ExpressionSyntax expression = ParseExpression();
-                    reader.Expect(TokenType.Semicolon, "';' after the expression");
+                    ExpectStatementTerminator("';' or a line break after the expression");
                     return new ExpressionStatementSyntax(SpanFrom(start), expression);
             }
         }
@@ -141,7 +145,7 @@ namespace Surtr.Compiler.Syntax
             TypeSyntax? type = reader.Match(TokenType.Colon) ? ParseType() : null;
             ExpressionSyntax? initializer = reader.Match(TokenType.Assign) ? ParseExpression() : null;
 
-            reader.Expect(TokenType.Semicolon, "';' after the declaration");
+            ExpectStatementTerminator("';' or a line break after the declaration");
             return new LocalDeclarationStatementSyntax(SpanFrom(start), name, type, initializer, isMutable, isConst);
         }
 
@@ -161,7 +165,7 @@ namespace Surtr.Compiler.Syntax
             reader.Expect(TokenType.RightParen, "')' after the names");
             reader.Expect(TokenType.Assign, "'=' - a destructuring declaration has nothing to declare without one");
             ExpressionSyntax initializer = ParseExpression();
-            reader.Expect(TokenType.Semicolon, "';' after the declaration");
+            ExpectStatementTerminator("';' or a line break after the declaration");
 
             return new TupleDeclarationStatementSyntax(SpanFrom(start), names, initializer, isMutable);
         }
@@ -303,12 +307,12 @@ namespace Surtr.Compiler.Syntax
             return reader.CheckAt(offset, TokenType.KeywordIn);
         }
 
-        /// <summary>Parses an expression followed by its <c>;</c>, for a <c>for</c> initializer.</summary>
+        /// <summary>Parses an expression followed by its terminator, for a <c>for</c> initializer.</summary>
         private StatementSyntax ParseExpressionStatement()
         {
             SourceLocation start = reader.CurrentLocation;
             ExpressionSyntax expression = ParseExpression();
-            reader.Expect(TokenType.Semicolon, "';' after the expression");
+            ExpectStatementTerminator("';' or a line break after the expression");
             return new ExpressionStatementSyntax(SpanFrom(start), expression);
         }
 
@@ -445,8 +449,12 @@ namespace Surtr.Compiler.Syntax
             bool isContinue = reader.CurrentType == TokenType.KeywordContinue;
             reader.Advance();
 
-            string? label = reader.Check(TokenType.Identifier) ? reader.Advance().ToString() : null;
-            reader.Expect(TokenType.Semicolon, isContinue ? "';' after 'continue'" : "';' after 'break'");
+            // A label must be written on the same line: a `break` ending its statement at a line
+            // break must not silently swallow the next line as a label (§1).
+            string? label = reader.Check(TokenType.Identifier) && !reader.IsAfterLineBreak
+                ? reader.Advance().ToString()
+                : null;
+            ExpectStatementTerminator(isContinue ? "';' or a line break after 'continue'" : "';' or a line break after 'break'");
 
             return new BreakStatementSyntax(SpanFrom(start), isContinue, label);
         }

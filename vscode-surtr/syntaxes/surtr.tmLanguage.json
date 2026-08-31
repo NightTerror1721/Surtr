@@ -137,7 +137,8 @@
       "name": "storage.modifier.surtr"
     },
     "import-declaration": {
-      "match": "(\\bimport\\b)(\\s+)([A-Za-z_][A-Za-z0-9_.]*\\*?)(;)",
+      "comment": "The terminator is optional (§1): an import ends at a ';', at a line break, or at the end of the file. An explicit ';' still matches (and is captured) so both styles highlight the same.",
+      "match": "(\\bimport\\b)(\\s+)([A-Za-z_][A-Za-z0-9_.]*\\*?)(;)?",
       "captures": {
         "1": { "name": "keyword.control.import.surtr" },
         "3": { "name": "support.module.surtr" },
@@ -227,7 +228,7 @@
       ]
     },
     "variable-declaration": {
-      "match": "(\\b(?:let|var)\\b)(\\s+)([A-Za-z_][A-Za-z0-9_]*)(\\s*:\\s*)?((?!(?:int|float|bool|char|string|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?)?",
+      "match": "(\\b(?:let|var)\\b)(\\s+)([A-Za-z_][A-Za-z0-9_]*)(\\s*:\\s*)?((?!(?:int|float|bool|char|string|bytes|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?)?",
       "captures": {
         "1": { "name": "storage.type.variable.surtr" },
         "3": { "name": "variable.other.readwrite.surtr" },
@@ -236,7 +237,7 @@
       }
     },
     "const-declaration": {
-      "match": "(\\bconst\\b)(\\s+)(?!fun\\b|if\\b|class\\b|interface\\b|enum\\b|singleton\\b|operator\\b)([A-Za-z_][A-Za-z0-9_]*)(\\s*:\\s*)?((?!(?:int|float|bool|char|string|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?)?",
+      "match": "(\\bconst\\b)(\\s+)(?!fun\\b|if\\b|class\\b|interface\\b|enum\\b|singleton\\b|operator\\b)([A-Za-z_][A-Za-z0-9_]*)(\\s*:\\s*)?((?!(?:int|float|bool|char|string|bytes|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?)?",
       "captures": {
         "1": { "name": "keyword.declaration.constant.surtr" },
         "3": { "name": "variable.other.constant.surtr" },
@@ -272,7 +273,7 @@
       "name": "entity.name.variable.property.surtr"
     },
     "catch-param": {
-      "match": "(\\bcatch\\b)(\\s*)(\\()([A-Za-z_][A-Za-z0-9_]*)(\\s*:\\s*)((?!(?:int|float|bool|char|string|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?)(\\))",
+      "match": "(\\bcatch\\b)(\\s*)(\\()([A-Za-z_][A-Za-z0-9_]*)(\\s*:\\s*)((?!(?:int|float|bool|char|string|bytes|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?)(\\))",
       "captures": {
         "1": { "name": "keyword.control.exception.surtr" },
         "3": { "name": "punctuation.section.group.surtr" },
@@ -282,11 +283,11 @@
       }
     },
     "type-reference": {
-      "match": "(?!(?:int|float|bool|char|string|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?",
+      "match": "(?!(?:int|float|bool|char|string|bytes|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?",
       "name": "support.type.surtr"
     },
     "type-annotation": {
-      "match": "([A-Za-z_][A-Za-z0-9_]*)(\\s*:\\s*)((?!(?:int|float|bool|char|string|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?)((\\s*)(&)(\\s*)((?!(?:int|float|bool|char|string|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?))?",
+      "match": "([A-Za-z_][A-Za-z0-9_]*)(\\s*:\\s*)((?!(?:int|float|bool|char|string|bytes|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?)((\\s*)(&)(\\s*)((?!(?:int|float|bool|char|string|bytes|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?))?",
       "captures": {
         "1": { "name": "variable.parameter.surtr" },
         "3": { "name": "support.type.surtr" },
@@ -295,38 +296,38 @@
       }
     },
     "return-type": {
-      "match": "(\\s*)(:)(\\s*)((?!(?:int|float|bool|char|string|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?)(?=\\s*[{;=]|$)",
+      "match": "(\\s*)(:)(\\s*)((?!(?:int|float|bool|char|string|bytes|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?)(?=\\s*[{;=]|$)",
       "captures": {
         "2": { "name": "punctuation.separator.colon.surtr" },
         "4": { "name": "support.type.surtr" }
       }
     },
     "type-before-paren": {
-      "match": "(?!(?:int|float|bool|char|string|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?=\\s*\\()",
+      "match": "(?!(?:int|float|bool|char|string|bytes|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?=\\s*\\()",
       "name": "support.type.surtr"
     },
     "property-type": {
-      "match": "(?!(?:int|float|bool|char|string|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?(?=\\s*\\{)",
+      "match": "(?!(?:int|float|bool|char|string|bytes|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?(?=\\s*\\{)",
       "name": "support.type.surtr"
     },
     "type-use": {
       "patterns": [
         {
-          "match": "(\\bas\\?(?!\\w))(\\s*)((?!(?:int|float|bool|char|string|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?)",
+          "match": "(\\bas\\?(?!\\w))(\\s*)((?!(?:int|float|bool|char|string|bytes|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?)",
           "captures": {
             "1": { "name": "keyword.operator.cast.safe.surtr" },
             "3": { "name": "support.type.surtr" }
           }
         },
         {
-          "match": "(\\bas\\b)(\\s*)((?!(?:int|float|bool|char|string|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?)",
+          "match": "(\\bas\\b)(\\s*)((?!(?:int|float|bool|char|string|bytes|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?)",
           "captures": {
             "1": { "name": "keyword.operator.cast.surtr" },
             "3": { "name": "support.type.surtr" }
           }
         },
         {
-          "match": "(\\bis\\b)(\\s*)((?!(?:int|float|bool|char|string|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?)",
+          "match": "(\\bis\\b)(\\s*)((?!(?:int|float|bool|char|string|bytes|void|range|unknown)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\\s*\\[\\s*\\])?(?:\\s*\\?)?)",
           "captures": {
             "1": { "name": "keyword.operator.expression.surtr" },
             "3": { "name": "support.type.surtr" }
@@ -353,8 +354,15 @@
         { "match": "\\bas\\?(?!\\w)", "name": "keyword.operator.cast.safe.surtr" },
         { "match": "\\bas\\b", "name": "keyword.operator.cast.surtr" },
         { "match": "\\bis\\b", "name": "keyword.operator.expression.surtr" },
-        { "match": "\\b(?:typeof|moduleof)\\b", "name": "keyword.operator.expression.surtr" },
+        { "match": "\\b(?:typeof|moduleof|defined)\\b", "name": "keyword.operator.expression.surtr" },
         { "match": "\\b(?:if|else|for|while|switch|case|default|break|continue|return|in|using)\\b", "name": "keyword.control.surtr" },
+        {
+          "comment": "each is contextual (§5.x), recognized only as the collection-builder clause of a constructor: 'each (' followed by a parameter list ('name: type'). Demanding the 'name:' shape keeps a call to something literally named each (each(x)) from matching. semanticTokens is the robust fix for full position-accuracy; this is the regex-only approximation.",
+          "match": "\\b(each)\\s*\\(\\s*[A-Za-z_][A-Za-z0-9_]*\\s*:",
+          "captures": {
+            "1": { "name": "keyword.declaration.function.surtr" }
+          }
+        },
         {
           "comment": "yield opens an expression at the lowest precedence there is (§3.7), and 'from' is contextual: recognized only directly after 'yield', an ordinary identifier everywhere else — the spec's own example writes countdown(from: int). Matching 'yield from' as one unit delivers that position rule without lookbehind; 'yield (from)', parens included, leaves 'from' to the variable rule like any identifier.",
           "match": "\\b(yield)(?:\\s+(from)\\b)?",
@@ -401,7 +409,7 @@
       ]
     },
     "builtin-types": {
-      "match": "\\b(?:int|float|bool|char|string|void|range|unknown)\\b",
+      "match": "\\b(?:int|float|bool|char|string|bytes|void|range|unknown)\\b",
       "name": "storage.type.primitive.surtr"
     },
     "nameable-composite-types": {
@@ -411,7 +419,7 @@
     },
     "language-variables": {
       "match": "\\b(?:this|super)\\b",
-      "name": "variable.language.surtr"
+      "name": "keyword.language.surtr"
     },
     "operators": {
       "patterns": [

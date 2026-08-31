@@ -174,8 +174,25 @@ namespace Surtr.Bytecode.Image
         /// directions are silent misreads, which is exactly what a refusal at the boundary is for.
         /// The framing itself is unchanged, as it was at 13.
         /// </para>
+        /// <para>
+        /// Version 15 changes no layout at all, and is a bump for the same reason version 9 was:
+        /// <c>SurtrValueTypeCode</c> gained <c>Bytes</c> inside the built-in run, so every code
+        /// from <c>Object</c> up shifted by one. A version 14 reader would read a class's family
+        /// byte and get the wrong family silently - an <c>Object</c> as a <c>Native</c>, and worse
+        /// in the other direction - which is exactly the failure a refused version exists to
+        /// prevent. Nothing was added for bytes themselves: a <c>bytes</c> is a plain reference
+        /// type whose members are native methods, so no flag or opcode was needed.
+        /// </para>
+        /// <para>
+        /// Version 16 adds the collection-builder metadata (§5.x): every <c>Method</c> entry now
+        /// carries an <c>each</c> parameter count and types (zero for a non-builder), written after
+        /// the ordinary parameters, and every <c>Interface</c> entry carries a default-builder
+        /// marker and class handle, written after the extended interfaces. A version 15 reader
+        /// would read the each count as the generic-parameter count and the builder marker as the
+        /// first generic-parameter name, so it is refused.
+        /// </para>
         /// </remarks>
-        internal const ushort FormatVersion = 14;
+        internal const ushort FormatVersion = 16;
 
         private readonly byte[] _bytes;
         private readonly string _path;

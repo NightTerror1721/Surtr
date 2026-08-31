@@ -876,6 +876,7 @@ namespace Surtr.Compiler.Syntax
 
                 case 7:
                     if (Is(text, "default")) return TokenType.KeywordDefault;
+                    if (Is(text, "defined")) return TokenType.KeywordDefined;
                     if (Is(text, "finally")) return TokenType.KeywordFinally;
                     if (Is(text, "private")) return TokenType.KeywordPrivate;
                     if (Is(text, "virtual")) return TokenType.KeywordVirtual;

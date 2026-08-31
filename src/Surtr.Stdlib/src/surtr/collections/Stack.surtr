@@ -1,6 +1,6 @@
 import surtr.collections.Collection;
 
-public interface IStack<T> : ICollection<T>
+public interface IStack<T> default Stack<T> : ICollection<T>
 {
     isEmpty: bool { get; }
 
@@ -16,6 +16,15 @@ public class Stack<T> : IStack<T>
     public constructor()
     {
         this._items = [];
+    }
+
+    // §5.x: the collection-builder form — `Stack<int>[1, 2, 3]` fills through this $fill$ method.
+    public constructor() : this()
+    {
+    }
+    each (item: T)
+    {
+        push(item);
     }
 
     public inline length: int => _items.length;
@@ -55,17 +64,21 @@ public class Stack<T> : IStack<T>
 
     public inline fun iterate(): IIterator<T> => Iterator<T>(_items, _items.length);
 
+    // Iterates top-to-bottom, i.e. in pop() order: `_index` starts one past the top and counts
+    // down to 0. Walking bottom-to-top (insertion order) here used to make `for (x in stack)`
+    // silently disagree with what pop() would hand back, surprising anyone iterating a stack for
+    // its stack semantics (Plan-Revision-Stdlib.md D3).
     private sealed class Iterator<T> : IIterator<T>
     {
         private let _items: T[];
         private let _length: int;
         private var _index: int;
 
-        public constructor(items: T[], length: int, index: int = -1)
+        public constructor(items: T[], length: int)
         {
             _items = items;
             _length = length;
-            _index = index;
+            _index = length;
         }
 
         public current: T
@@ -82,12 +95,26 @@ public class Stack<T> : IStack<T>
 
         public fun moveNext(): bool
         {
-            if (_index + 1 < _length)
-            {
-                _index++;
-                return true;
-            }
-            return false;
+            if (_index <= 0) return false;
+            _index--;
+            return true;
         }
+    }
+}
+
+// Fase 8, §6.2/O3 + §6.3/P7: same reasoning as List<T>.toDisplayString(). Order matches iterate()'s
+// own pop order (top-to-bottom, D3), not insertion order.
+public extension<T: object> Stack<T>
+{
+    fun toDisplayString(self: Stack<T>): string
+    {
+        var parts: string[] = array<string>(self.length);
+        var i = 0;
+        for (item in self)
+        {
+            parts[i] = item.toString();
+            i += 1;
+        }
+        return "[" + string.join(", ", parts) + "]";
     }
 }

@@ -1,0 +1,229 @@
+// A type-safe wrapper over a single 8-bit value (0..255). Surtr has no one-byte primitive - the
+// built-in `bytes` is a mutable buffer - so `byte` gives individual bytes a name, an invariant
+// (always in range) and the arithmetic/bitwise vocabulary a raw `int` cannot offer without
+// losing the "this is exactly one byte" guarantee.
+public sealed value class byte : IComparable<byte>, IEquatable<byte>
+{
+    public const MinValue: int = 0;
+    public const MaxValue: int = 255;
+    public const SizeInBits: int = 8;
+
+    private let _value: int;
+
+    public constructor(value: int)
+    {
+        _value = value & 0xFF;
+    }
+
+    // Conversions //
+
+    /// The underlying 8-bit value, always in [0, 255].
+    public inline raw: int => _value;
+
+    public inline fun toInt(): int => _value;
+
+    /// The byte interpreted as a Unicode code point.
+    public inline fun toChar(): char => char(_value);
+
+    public inline fun toFloat(): float => _value.toFloat();
+
+    /// Decimal string form.
+    public override fun toString(): string => _value.toString();
+
+    /// Two-digit upper-case hexadecimal form (e.g. 255 -> "FF").
+    public fun toHex(): string
+    {
+        let hi = (_value >> 4) & 0xF;
+        let lo = _value & 0xF;
+        let hiChar = hi < 10 ? char(48 + hi) : char(55 + hi);
+        let loChar = lo < 10 ? char(48 + lo) : char(55 + lo);
+        return string.fromChar(hiChar).concat(string.fromChar(loChar));
+    }
+
+    // Static factories //
+
+    public static inline fun fromInt(value: int): byte => byte(value);
+    public static inline fun fromChar(ch: char): byte => byte(ch.toInt());
+
+    /// Parses decimal text; out-of-range/non-numeric text yields the wrapped low 8 bits.
+    public static inline fun parse(text: string): byte => byte(int.parse(text));
+
+    /// Parses hexadecimal text (e.g. "FF", "1a").
+    public static inline fun parseHex(text: string): byte => byte(int.parseStrict(text, 16));
+
+    public static inline fun min(a: byte, b: byte): byte => a._value < b._value ? a : b;
+    public static inline fun max(a: byte, b: byte): byte => a._value > b._value ? a : b;
+
+    // Equality & ordering //
+
+    public inline fun equals(other: byte): bool => _value == other._value;
+    public fun compareTo(other: byte): int
+    {
+        if (_value < other._value) return -1;
+        if (_value > other._value) return 1;
+        return 0;
+    }
+
+    // Operators //
+
+    operator+(a: byte, b: byte): byte
+    {
+        return byte(a._value + b._value);
+    }
+
+    operator-(a: byte, b: byte): byte
+    {
+        return byte(a._value - b._value);
+    }
+
+    operator*(a: byte, b: byte): byte
+    {
+        return byte(a._value * b._value);
+    }
+
+    operator/(a: byte, b: byte): byte
+    {
+        return byte(a._value / b._value);
+    }
+
+    operator%(a: byte, b: byte): byte
+    {
+        return byte(a._value % b._value);
+    }
+
+    operator<<(a: byte, bits: int): byte
+    {
+        return byte((a._value << bits) & 0xFF);
+    }
+
+    operator>>(a: byte, bits: int): byte
+    {
+        return byte(a._value >> bits);
+    }
+
+    operator&(a: byte, b: byte): byte
+    {
+        return byte(a._value & b._value);
+    }
+
+    operator|(a: byte, b: byte): byte
+    {
+        return byte(a._value | b._value);
+    }
+
+    operator^(a: byte, b: byte): byte
+    {
+        return byte(a._value ^ b._value);
+    }
+
+    operator==(a: byte, b: byte): bool
+    {
+        return a._value == b._value;
+    }
+
+    operator<=>(a: byte, b: byte): int
+    {
+        return a._value - b._value;
+    }
+
+    operator-(a: byte): byte
+    {
+        return byte(-a._value);
+    }
+
+    operator~(a: byte): byte
+    {
+        return byte((~a._value) & 0xFF);
+    }
+
+    // Arithmetic helpers //
+
+    /// Addition clamped to [0, 255] instead of wrapping.
+    public fun addSaturating(other: byte): byte
+    {
+        let sum = _value + other._value;
+        if (sum > 255) return byte(255);
+        return byte(sum);
+    }
+
+    /// Subtraction clamped to [0, 255] instead of wrapping.
+    public fun subtractSaturating(other: byte): byte
+    {
+        let diff = _value - other._value;
+        if (diff < 0) return byte(0);
+        return byte(diff);
+    }
+
+    /// Bitwise complement (same as the ~ operator).
+    public inline fun invert(): byte => byte((~_value) & 0xFF);
+
+    public fun rotateLeft(bits: int): byte
+    {
+        let s = bits & 7;
+        let shifted = (_value << s) | (_value >> (8 - s));
+        return byte(shifted & 0xFF);
+    }
+
+    public fun rotateRight(bits: int): byte
+    {
+        let s = bits & 7;
+        let shifted = (_value >> s) | (_value << (8 - s));
+        return byte(shifted & 0xFF);
+    }
+
+    // Bit access //
+
+    /// Returns bit `index` (0 = least significant) as 0 or 1.
+    public inline fun getBit(index: int): int => (_value >> index) & 1;
+
+    public inline fun isBitSet(index: int): bool => ((_value >> index) & 1) == 1;
+
+    public inline fun setBit(index: int): byte => byte(_value | (1 << index));
+    public inline fun clearBit(index: int): byte => byte(_value & (255 - (1 << index)));
+    public inline fun toggleBit(index: int): byte => byte(_value ^ (1 << index));
+
+    public fun withBit(index: int, on: bool): byte
+    {
+        if (on) return setBit(index);
+        return clearBit(index);
+    }
+
+    public fun bitCount(): int
+    {
+        var count = 0;
+        var v = _value;
+        for (var i = 0; i < 8; i++)
+        {
+            if ((v & 1) == 1) count = count + 1;
+            v = v >> 1;
+        }
+        return count;
+    }
+
+    /// Index of the most significant set bit, or -1 if the byte is zero.
+    public fun highestSetBit(): int
+    {
+        for (var i = 7; i >= 0; i--)
+        {
+            if (((_value >> i) & 1) == 1) return i;
+        }
+        return -1;
+    }
+
+    /// Index of the least significant set bit, or -1 if the byte is zero.
+    public fun lowestSetBit(): int
+    {
+        for (var i = 0; i < 8; i++)
+        {
+            if (((_value >> i) & 1) == 1) return i;
+        }
+        return -1;
+    }
+
+    // Predicates //
+
+    public inline fun isEven(): bool => (_value & 1) == 0;
+    public inline fun isOdd(): bool => (_value & 1) == 1;
+    public inline fun isZero(): bool => _value == 0;
+    public inline fun isPowerOfTwo(): bool => _value != 0 && (_value & (_value - 1)) == 0;
+}

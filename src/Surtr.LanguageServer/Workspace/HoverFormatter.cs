@@ -122,6 +122,9 @@ namespace Surtr.LanguageServer.Workspace
                 case "string":
                     kind = "built-in string";
                     break;
+                case "bytes":
+                    kind = "built-in bytes: a mutable binary buffer";
+                    break;
                 case "range":
                     kind = "built-in range";
                     break;
@@ -352,19 +355,37 @@ namespace Surtr.LanguageServer.Workspace
         private static string FormatField(FieldSymbol field)
         {
             var builder = new StringBuilder();
-            builder.Append(Fence(BindingKeyword(field.IsReadOnly) + field.Name + ": " + field.Type.ToDisplayString()));
+            string keyword = field.IsConst ? "const " : BindingKeyword(field.IsReadOnly);
+            builder.Append(Fence(keyword + field.Name + ": " + field.Type.ToDisplayString()));
 
             var modifiers = new List<string>();
             if (field.IsStatic)
                 modifiers.Add("static");
-            if (field.IsReadOnly)
+            if (field.IsConst)
+                modifiers.Add("const");
+            else if (field.IsReadOnly)
                 modifiers.Add("readonly");
             if (field.IsNative)
                 modifiers.Add("native");
             if (modifiers.Count > 0)
                 builder.Append(Break).Append(string.Join(" ", modifiers));
 
-            builder.Append(Break).Append(ContainingLabel(field.ContainingSymbol, "field", "variable"));
+            // An enum case (§2.4) is a synthesized static field; its card names it as the case it
+            // is, with the value the case holds, rather than as an ordinary member.
+            if (field.EnumValue is int enumValue)
+            {
+                builder.Append(Break).Append("enum case = " + enumValue);
+                builder.Append(Break).Append("case of `" + (field.ContainingSymbol?.Name ?? "enum") + "`");
+            }
+            else if (field.IsConst)
+            {
+                builder.Append(Break).Append(ContainingLabel(field.ContainingSymbol, "constant", "constant"));
+            }
+            else
+            {
+                builder.Append(Break).Append(ContainingLabel(field.ContainingSymbol, "field", "variable"));
+            }
+
             return builder.ToString();
         }
 
@@ -395,7 +416,7 @@ namespace Surtr.LanguageServer.Workspace
             string kind = TypeKindLabel(type.TypeKind);
 
             var builder = new StringBuilder();
-            builder.Append(Fence(kind + " " + DisplayWithName(type)));
+            builder.Append(Fence((type.IsFlagsEnum ? "@Flags " : string.Empty) + kind + " " + DisplayWithName(type)));
 
             var relations = new List<string>();
             if (type.BaseType is not null)

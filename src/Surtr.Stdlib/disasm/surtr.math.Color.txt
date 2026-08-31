@@ -1,0 +1,791 @@
+module surtr.math.Color
+  constants: 6   types: 0   fields: 0   methods: 37   modules: 1
+  string #2 = "("
+  string #3 = ", "
+  string #4 = ")"
+
+  method table:
+    #0  surtr.math.Color:Color.ctor(float, float, float, float) -> void
+    #1  surtr.math.Color:Color.get_black() -> surtr.math.Color:Color
+    #2  surtr.math.Color:Color.get_white() -> surtr.math.Color:Color
+    #3  surtr.math.Color:Color.get_red() -> surtr.math.Color:Color
+    #4  surtr.math.Color:Color.get_green() -> surtr.math.Color:Color
+    #5  surtr.math.Color:Color.get_blue() -> surtr.math.Color:Color
+    #6  surtr.math.Color:Color.get_yellow() -> surtr.math.Color:Color
+    #7  surtr.math.Color:Color.get_cyan() -> surtr.math.Color:Color
+    #8  surtr.math.Color:Color.get_magenta() -> surtr.math.Color:Color
+    #9  surtr.math.Color:Color.get_clear() -> surtr.math.Color:Color
+    #10  surtr.math.Color:Color.withAlpha(float) -> surtr.math.Color:Color
+    #11  surtr.math.Color:Color.lerp(surtr.math.Color:Color, surtr.math.Color:Color, float) -> surtr.math.Color:Color
+    #12  surtr.math.Color:Color.toColor32() -> int
+    #13  surtr.math.Color:Color.toString() -> string
+    #14  surtr.math.Color:Color.op_+(surtr.math.Color:Color, surtr.math.Color:Color) -> surtr.math.Color:Color
+    #15  surtr.math.Color:Color.op_*(surtr.math.Color:Color, float) -> surtr.math.Color:Color
+    #16  surtr.math.Color:Color.op_==(surtr.math.Color:Color, surtr.math.Color:Color) -> bool
+    #17  surtr.math.Color:Color.equals(surtr.math.Color:Color) -> bool
+    #18  surtr.math.Color:Color32.ctor(int) -> void
+    #19  surtr.math.Color:Color32.fromChannels(int, int, int, int) -> int
+    #20  surtr.math.Color:Color32.get_black() -> int
+    #21  surtr.math.Color:Color32.get_white() -> int
+    #22  surtr.math.Color:Color32.get_clear() -> int
+    #23  surtr.math.Color:Color32.get_r() -> int
+    #24  surtr.math.Color:Color32.get_g() -> int
+    #25  surtr.math.Color:Color32.get_b() -> int
+    #26  surtr.math.Color:Color32.get_a() -> int
+    #27  surtr.math.Color:Color32.get_raw() -> int
+    #28  surtr.math.Color:Color32.toColor() -> surtr.math.Color:Color
+    #29  surtr.math.Color:Color32.toString() -> string
+    #30  surtr.math.Color:Color32.op_==(int, int) -> bool
+    #31  surtr.math.Color:Color32.equals(int) -> bool
+    #32  channelToByte(float) -> int
+    #33  float.toString() -> string
+    #34  int.toFloat() -> float
+    #35  int.toString() -> string
+    #36  float.toInt() -> int
+
+  module table:
+    #0  surtr.math.Math
+
+[private] static channelToByte(channel: float): int
+  ; entry 0, locals 4, stack 2, code 0000..002D
+    0000  Ldl0
+    0001  Stl2
+    0002  Ldl2
+    0003  Ldc0
+    0004  JPFGE +5 -> L0 (000C)
+    0007  Ldc0
+    0008  Stl3
+    0009  JP +15 -> L2 (001B)
+  L0:
+    000C  Ldl2
+    000D  Ldc1
+    000E  JPFLE +5 -> L1 (0016)
+    0011  Ldc1
+    0012  Stl3
+    0013  JP +5 -> L2 (001B)
+  L1:
+    0016  Ldl2
+    0017  Stl3
+    0018  JP +0 -> L2 (001B)
+  L2:
+    001B  Ldl3
+    001C  Stl1
+    001D  Ldl1
+    001E  Ldc5
+    001F  FMul
+    0020  CallModule 0:14 (surtr.math.Math.round) args=1 ret=1
+    0027  InvokeSpecial 36 (toInt) args=1 ret=1
+    002C  ReturnValue
+
+sealed class Color : surtr:ValueType  [public]
+  [public] readonly field a: float
+  [public] readonly field b: float
+  [public] readonly field g: float
+  [public] readonly field r: float
+
+  [public] static property black: surtr.math.Color:Color { get; }
+    get:
+      ; entry 2, locals 4, stack 4, code 002E..003C
+        002E  Ldc0
+        002F  Stl0
+        0030  Ldc0
+        0031  Stl1
+        0032  Ldc0
+        0033  Stl2
+        0034  Ldc1
+        0035  Stl3
+        0036  Ldl0
+        0037  Ldl1
+        0038  Ldl2
+        0039  Ldl3
+        003A  ReturnValues 4
+
+  [public] static property blue: surtr.math.Color:Color { get; }
+    get:
+      ; entry 6, locals 4, stack 4, code 0066..0074
+        0066  Ldc0
+        0067  Stl0
+        0068  Ldc0
+        0069  Stl1
+        006A  Ldc1
+        006B  Stl2
+        006C  Ldc1
+        006D  Stl3
+        006E  Ldl0
+        006F  Ldl1
+        0070  Ldl2
+        0071  Ldl3
+        0072  ReturnValues 4
+
+  [public] static property clear: surtr.math.Color:Color { get; }
+    get:
+      ; entry 10, locals 4, stack 4, code 009E..00AC
+        009E  Ldc0
+        009F  Stl0
+        00A0  Ldc0
+        00A1  Stl1
+        00A2  Ldc0
+        00A3  Stl2
+        00A4  Ldc0
+        00A5  Stl3
+        00A6  Ldl0
+        00A7  Ldl1
+        00A8  Ldl2
+        00A9  Ldl3
+        00AA  ReturnValues 4
+
+  [public] static property cyan: surtr.math.Color:Color { get; }
+    get:
+      ; entry 8, locals 4, stack 4, code 0082..0090
+        0082  Ldc0
+        0083  Stl0
+        0084  Ldc1
+        0085  Stl1
+        0086  Ldc1
+        0087  Stl2
+        0088  Ldc1
+        0089  Stl3
+        008A  Ldl0
+        008B  Ldl1
+        008C  Ldl2
+        008D  Ldl3
+        008E  ReturnValues 4
+
+  [public] static property green: surtr.math.Color:Color { get; }
+    get:
+      ; entry 5, locals 4, stack 4, code 0058..0066
+        0058  Ldc0
+        0059  Stl0
+        005A  Ldc1
+        005B  Stl1
+        005C  Ldc0
+        005D  Stl2
+        005E  Ldc1
+        005F  Stl3
+        0060  Ldl0
+        0061  Ldl1
+        0062  Ldl2
+        0063  Ldl3
+        0064  ReturnValues 4
+
+  [public] static property magenta: surtr.math.Color:Color { get; }
+    get:
+      ; entry 9, locals 4, stack 4, code 0090..009E
+        0090  Ldc1
+        0091  Stl0
+        0092  Ldc0
+        0093  Stl1
+        0094  Ldc1
+        0095  Stl2
+        0096  Ldc1
+        0097  Stl3
+        0098  Ldl0
+        0099  Ldl1
+        009A  Ldl2
+        009B  Ldl3
+        009C  ReturnValues 4
+
+  [public] static property red: surtr.math.Color:Color { get; }
+    get:
+      ; entry 4, locals 4, stack 4, code 004A..0058
+        004A  Ldc1
+        004B  Stl0
+        004C  Ldc0
+        004D  Stl1
+        004E  Ldc0
+        004F  Stl2
+        0050  Ldc1
+        0051  Stl3
+        0052  Ldl0
+        0053  Ldl1
+        0054  Ldl2
+        0055  Ldl3
+        0056  ReturnValues 4
+
+  [public] static property white: surtr.math.Color:Color { get; }
+    get:
+      ; entry 3, locals 4, stack 4, code 003C..004A
+        003C  Ldc1
+        003D  Stl0
+        003E  Ldc1
+        003F  Stl1
+        0040  Ldc1
+        0041  Stl2
+        0042  Ldc1
+        0043  Stl3
+        0044  Ldl0
+        0045  Ldl1
+        0046  Ldl2
+        0047  Ldl3
+        0048  ReturnValues 4
+
+  [public] static property yellow: surtr.math.Color:Color { get; }
+    get:
+      ; entry 7, locals 4, stack 4, code 0074..0082
+        0074  Ldc1
+        0075  Stl0
+        0076  Ldc1
+        0077  Stl1
+        0078  Ldc0
+        0079  Stl2
+        007A  Ldc1
+        007B  Stl3
+        007C  Ldl0
+        007D  Ldl1
+        007E  Ldl2
+        007F  Ldl3
+        0080  ReturnValues 4
+
+  [public] ctor (r: float, g: float, b: float, a: float = 1): void
+    ; entry 1, locals 8, stack 0, code 002D..002E
+      002D  ReturnVoid
+
+  [public] equals(other: surtr.math.Color:Color): bool
+    ; entry 18, locals 8, stack 8, code 02EA..02F8
+      02EA  LoadValueLocal 0 x4
+      02EE  LoadValueLocal 4 x4
+      02F2  InvokeStatic 16 (op_==) args=8 ret=1
+      02F7  ReturnValue
+
+  [public] static lerp(a: surtr.math.Color:Color, b: surtr.math.Color:Color, t: float): surtr.math.Color:Color
+    ; entry 12, locals 16, stack 4, code 00E4..016D
+      00E4  LdlS 8
+      00E6  StlS 10
+      00E8  LdlS 10
+      00EA  Ldc0
+      00EB  JPFGE +6 -> L0 (00F4)
+      00EE  Ldc0
+      00EF  StlS 11
+      00F1  JP +19 -> L2 (0107)
+    L0:
+      00F4  LdlS 10
+      00F6  Ldc1
+      00F7  JPFLE +6 -> L1 (0100)
+      00FA  Ldc1
+      00FB  StlS 11
+      00FD  JP +7 -> L2 (0107)
+    L1:
+      0100  LdlS 10
+      0102  StlS 11
+      0104  JP +0 -> L2 (0107)
+    L2:
+      0107  LdlS 11
+      0109  StlS 9
+      010B  LoadLocalField 0+0
+      0110  LoadLocalField 4+0
+      0115  LoadLocalField 0+0
+      011A  FSub
+      011B  LdlS 9
+      011D  FMul
+      011E  FAdd
+      011F  StlS 12
+      0121  LoadLocalField 0+1
+      0126  LoadLocalField 4+1
+      012B  LoadLocalField 0+1
+      0130  FSub
+      0131  LdlS 9
+      0133  FMul
+      0134  FAdd
+      0135  StlS 13
+      0137  LoadLocalField 0+2
+      013C  LoadLocalField 4+2
+      0141  LoadLocalField 0+2
+      0146  FSub
+      0147  LdlS 9
+      0149  FMul
+      014A  FAdd
+      014B  StlS 14
+      014D  LoadLocalField 0+3
+      0152  LoadLocalField 4+3
+      0157  LoadLocalField 0+3
+      015C  FSub
+      015D  LdlS 9
+      015F  FMul
+      0160  FAdd
+      0161  StlS 15
+      0163  LdlS 12
+      0165  LdlS 13
+      0167  LdlS 14
+      0169  LdlS 15
+      016B  ReturnValues 4
+
+  @surtr:Pure
+  [public] static op_*(a: surtr.math.Color:Color, scalar: float): surtr.math.Color:Color
+    ; entry 16, locals 9, stack 4, code 0279..02A5
+      0279  LoadLocalField 0+0
+      027E  Ldl4
+      027F  FMul
+      0280  Stl5
+      0281  LoadLocalField 0+1
+      0286  Ldl4
+      0287  FMul
+      0288  StlS 6
+      028A  LoadLocalField 0+2
+      028F  Ldl4
+      0290  FMul
+      0291  StlS 7
+      0293  LoadLocalField 0+3
+      0298  Ldl4
+      0299  FMul
+      029A  StlS 8
+      029C  Ldl5
+      029D  LdlS 6
+      029F  LdlS 7
+      02A1  LdlS 8
+      02A3  ReturnValues 4
+
+  @surtr:Pure
+  [public] static op_+(a: surtr.math.Color:Color, b: surtr.math.Color:Color): surtr.math.Color:Color
+    ; entry 15, locals 12, stack 4, code 023B..0279
+      023B  LoadLocalField 0+0
+      0240  LoadLocalField 4+0
+      0245  FAdd
+      0246  StlS 8
+      0248  LoadLocalField 0+1
+      024D  LoadLocalField 4+1
+      0252  FAdd
+      0253  StlS 9
+      0255  LoadLocalField 0+2
+      025A  LoadLocalField 4+2
+      025F  FAdd
+      0260  StlS 10
+      0262  LoadLocalField 0+3
+      0267  LoadLocalField 4+3
+      026C  FAdd
+      026D  StlS 11
+      026F  LdlS 8
+      0271  LdlS 9
+      0273  LdlS 10
+      0275  LdlS 11
+      0277  ReturnValues 4
+
+  @surtr:Pure
+  [public] static op_==(a: surtr.math.Color:Color, b: surtr.math.Color:Color): bool
+    ; entry 17, locals 8, stack 2, code 02A5..02EA
+      02A5  LoadLocalField 0+0
+      02AA  LoadLocalField 4+0
+      02AF  FEQ
+      02B0  Dup
+      02B1  JPZ +15 -> L0 (02C3)
+      02B4  Pop
+      02B5  LoadLocalField 0+1
+      02BA  LoadLocalField 4+1
+      02BF  FEQ
+      02C0  JP +0 -> L0 (02C3)
+    L0:
+      02C3  Dup
+      02C4  JPZ +15 -> L1 (02D6)
+      02C7  Pop
+      02C8  LoadLocalField 0+2
+      02CD  LoadLocalField 4+2
+      02D2  FEQ
+      02D3  JP +0 -> L1 (02D6)
+    L1:
+      02D6  Dup
+      02D7  JPZ +15 -> L2 (02E9)
+      02DA  Pop
+      02DB  LoadLocalField 0+3
+      02E0  LoadLocalField 4+3
+      02E5  FEQ
+      02E6  JP +0 -> L2 (02E9)
+    L2:
+      02E9  ReturnValue
+
+  [public] toColor32(): int
+    ; entry 13, locals 24, stack 4, code 016D..01E0
+      016D  LoadValueLocal 0 x4
+      0171  StoreValueLocal 5 x4
+      0175  LoadLocalField 5+0
+      017A  CallLocalModule 32 (channelToByte) args=1 ret=1
+      017F  Stl4
+      0180  LoadValueLocal 0 x4
+      0184  StoreValueLocal 10 x4
+      0188  LoadLocalField 10+1
+      018D  CallLocalModule 32 (channelToByte) args=1 ret=1
+      0192  StlS 9
+      0194  LoadValueLocal 0 x4
+      0198  StoreValueLocal 15 x4
+      019C  LoadLocalField 15+2
+      01A1  CallLocalModule 32 (channelToByte) args=1 ret=1
+      01A6  StlS 14
+      01A8  LoadValueLocal 0 x4
+      01AC  StoreValueLocal 20 x4
+      01B0  LoadLocalField 20+3
+      01B5  CallLocalModule 32 (channelToByte) args=1 ret=1
+      01BA  StlS 19
+      01BC  LdlS 19
+      01BE  PushI16 255
+      01C1  And
+      01C2  PushI8 24
+      01C4  Shl
+      01C5  Ldl4
+      01C6  PushI16 255
+      01C9  And
+      01CA  PushI8 16
+      01CC  Shl
+      01CD  Or
+      01CE  LdlS 9
+      01D0  PushI16 255
+      01D3  And
+      01D4  PushI8 8
+      01D6  Shl
+      01D7  Or
+      01D8  LdlS 14
+      01DA  PushI16 255
+      01DD  And
+      01DE  Or
+      01DF  ReturnValue
+
+  @surtr:Pure
+  [public] virtual override toString(): string
+    ; entry 14, locals 20, stack 11, code 01E0..023B
+      01E0  Ldl0
+      01E1  UnboxValue 4
+      01E3  StoreValueLocal 0 x4
+      01E7  Ldc2
+      01E8  LoadValueLocal 0 x4
+      01EC  StoreValueLocal 4 x4
+      01F0  LoadLocalField 4+0
+      01F5  BoxFloat
+      01F6  InvokeVirtual 33 (toString) args=1 ret=1
+      01FB  Ldc3
+      01FC  LoadValueLocal 0 x4
+      0200  StoreValueLocal 8 x4
+      0204  LoadLocalField 8+1
+      0209  BoxFloat
+      020A  InvokeVirtual 33 (toString) args=1 ret=1
+      020F  Ldc3
+      0210  LoadValueLocal 0 x4
+      0214  StoreValueLocal 12 x4
+      0218  LoadLocalField 12+2
+      021D  BoxFloat
+      021E  InvokeVirtual 33 (toString) args=1 ret=1
+      0223  Ldc3
+      0224  LoadValueLocal 0 x4
+      0228  StoreValueLocal 16 x4
+      022C  LoadLocalField 16+3
+      0231  BoxFloat
+      0232  InvokeVirtual 33 (toString) args=1 ret=1
+      0237  Ldc4
+      0238  StrCat 9
+      023A  ReturnValue
+
+  @surtr:Pure
+  [public] withAlpha(newAlpha: float): surtr.math.Color:Color
+    ; entry 11, locals 21, stack 4, code 00AC..00E4
+      00AC  LoadValueLocal 0 x4
+      00B0  StoreValueLocal 6 x4
+      00B4  LoadLocalField 6+0
+      00B9  Stl5
+      00BA  LoadValueLocal 0 x4
+      00BE  StoreValueLocal 11 x4
+      00C2  LoadLocalField 11+1
+      00C7  StlS 10
+      00C9  LoadValueLocal 0 x4
+      00CD  StoreValueLocal 16 x4
+      00D1  LoadLocalField 16+2
+      00D6  StlS 15
+      00D8  Ldl4
+      00D9  StlS 20
+      00DB  Ldl5
+      00DC  LdlS 10
+      00DE  LdlS 15
+      00E0  LdlS 20
+      00E2  ReturnValues 4
+
+sealed class Color32 : surtr:ValueType  [public]
+  [private] readonly field _packed: int
+
+  @surtr:Pure
+  [public] property a: int { get; }
+    get:
+      ; entry 27, locals 1, stack 2, code 03BE..03C7
+        03BE  Ldl0
+        03BF  PushI8 24
+        03C1  Sar
+        03C2  PushI16 255
+        03C5  And
+        03C6  ReturnValue
+
+  @surtr:Pure
+  [public] property b: int { get; }
+    get:
+      ; entry 26, locals 1, stack 2, code 03B8..03BE
+        03B8  Ldl0
+        03B9  PushI16 255
+        03BC  And
+        03BD  ReturnValue
+
+  [public] static property black: int { get; }
+    get:
+      ; entry 21, locals 4, stack 3, code 031A..0348
+        031A  PushI8 0
+        031C  Stl0
+        031D  PushI8 0
+        031F  Stl1
+        0320  PushI8 0
+        0322  Stl2
+        0323  PushI16 255
+        0326  Stl3
+        0327  Ldl3
+        0328  PushI16 255
+        032B  And
+        032C  PushI8 24
+        032E  Shl
+        032F  Ldl0
+        0330  PushI16 255
+        0333  And
+        0334  PushI8 16
+        0336  Shl
+        0337  Or
+        0338  Ldl1
+        0339  PushI16 255
+        033C  And
+        033D  PushI8 8
+        033F  Shl
+        0340  Or
+        0341  Ldl2
+        0342  PushI16 255
+        0345  And
+        0346  Or
+        0347  ReturnValue
+
+  [public] static property clear: int { get; }
+    get:
+      ; entry 23, locals 4, stack 3, code 0379..03A6
+        0379  PushI8 0
+        037B  Stl0
+        037C  PushI8 0
+        037E  Stl1
+        037F  PushI8 0
+        0381  Stl2
+        0382  PushI8 0
+        0384  Stl3
+        0385  Ldl3
+        0386  PushI16 255
+        0389  And
+        038A  PushI8 24
+        038C  Shl
+        038D  Ldl0
+        038E  PushI16 255
+        0391  And
+        0392  PushI8 16
+        0394  Shl
+        0395  Or
+        0396  Ldl1
+        0397  PushI16 255
+        039A  And
+        039B  PushI8 8
+        039D  Shl
+        039E  Or
+        039F  Ldl2
+        03A0  PushI16 255
+        03A3  And
+        03A4  Or
+        03A5  ReturnValue
+
+  @surtr:Pure
+  [public] property g: int { get; }
+    get:
+      ; entry 25, locals 1, stack 2, code 03AF..03B8
+        03AF  Ldl0
+        03B0  PushI8 8
+        03B2  Sar
+        03B3  PushI16 255
+        03B6  And
+        03B7  ReturnValue
+
+  @surtr:Pure
+  [public] property r: int { get; }
+    get:
+      ; entry 24, locals 1, stack 2, code 03A6..03AF
+        03A6  Ldl0
+        03A7  PushI8 16
+        03A9  Sar
+        03AA  PushI16 255
+        03AD  And
+        03AE  ReturnValue
+
+  [public] property raw: int { get; }
+    get:
+      ; entry 28, locals 1, stack 1, code 03C7..03C9
+        03C7  Ldl0
+        03C8  ReturnValue
+
+  [public] static property white: int { get; }
+    get:
+      ; entry 22, locals 4, stack 3, code 0348..0379
+        0348  PushI16 255
+        034B  Stl0
+        034C  PushI16 255
+        034F  Stl1
+        0350  PushI16 255
+        0353  Stl2
+        0354  PushI16 255
+        0357  Stl3
+        0358  Ldl3
+        0359  PushI16 255
+        035C  And
+        035D  PushI8 24
+        035F  Shl
+        0360  Ldl0
+        0361  PushI16 255
+        0364  And
+        0365  PushI8 16
+        0367  Shl
+        0368  Or
+        0369  Ldl1
+        036A  PushI16 255
+        036D  And
+        036E  PushI8 8
+        0370  Shl
+        0371  Or
+        0372  Ldl2
+        0373  PushI16 255
+        0376  And
+        0377  Or
+        0378  ReturnValue
+
+  [public] ctor (packed: int): void
+    ; entry 19, locals 2, stack 0, code 02F8..02F9
+      02F8  ReturnVoid
+
+  [public] equals(other: int): bool
+    ; entry 32, locals 2, stack 2, code 0467..046B
+      0467  Ldl0
+      0468  Ldl1
+      0469  EQ
+      046A  ReturnValue
+
+  [public] static fromChannels(r: int, g: int, b: int, a: int = 255): int
+    ; entry 20, locals 4, stack 3, code 02F9..031A
+      02F9  Ldl3
+      02FA  PushI16 255
+      02FD  And
+      02FE  PushI8 24
+      0300  Shl
+      0301  Ldl0
+      0302  PushI16 255
+      0305  And
+      0306  PushI8 16
+      0308  Shl
+      0309  Or
+      030A  Ldl1
+      030B  PushI16 255
+      030E  And
+      030F  PushI8 8
+      0311  Shl
+      0312  Or
+      0313  Ldl2
+      0314  PushI16 255
+      0317  And
+      0318  Or
+      0319  ReturnValue
+
+  @surtr:Pure
+  [public] static op_==(x: int, y: int): bool
+    ; entry 31, locals 2, stack 2, code 0463..0467
+      0463  Ldl0
+      0464  Ldl1
+      0465  EQ
+      0466  ReturnValue
+
+  @surtr:Pure
+  [public] toColor(): surtr.math.Color:Color
+    ; entry 29, locals 9, stack 4, code 03C9..041A
+      03C9  Ldl0
+      03CA  Stl2
+      03CB  Ldl2
+      03CC  PushI8 16
+      03CE  Sar
+      03CF  PushI16 255
+      03D2  And
+      03D3  InvokeSpecial 34 (toFloat) args=1 ret=1
+      03D8  Ldc5
+      03D9  FDiv
+      03DA  Stl1
+      03DB  Ldl0
+      03DC  Stl4
+      03DD  Ldl4
+      03DE  PushI8 8
+      03E0  Sar
+      03E1  PushI16 255
+      03E4  And
+      03E5  InvokeSpecial 34 (toFloat) args=1 ret=1
+      03EA  Ldc5
+      03EB  FDiv
+      03EC  Stl3
+      03ED  Ldl0
+      03EE  StlS 6
+      03F0  LdlS 6
+      03F2  PushI16 255
+      03F5  And
+      03F6  InvokeSpecial 34 (toFloat) args=1 ret=1
+      03FB  Ldc5
+      03FC  FDiv
+      03FD  Stl5
+      03FE  Ldl0
+      03FF  StlS 8
+      0401  LdlS 8
+      0403  PushI8 24
+      0405  Sar
+      0406  PushI16 255
+      0409  And
+      040A  InvokeSpecial 34 (toFloat) args=1 ret=1
+      040F  Ldc5
+      0410  FDiv
+      0411  StlS 7
+      0413  Ldl1
+      0414  Ldl3
+      0415  Ldl5
+      0416  LdlS 7
+      0418  ReturnValues 4
+
+  @surtr:Pure
+  [public] virtual override toString(): string
+    ; entry 30, locals 5, stack 9, code 041A..0463
+      041A  Ldc2
+      041B  Ldl0
+      041C  Unbox
+      041D  Stl1
+      041E  Ldl1
+      041F  PushI8 16
+      0421  Sar
+      0422  PushI16 255
+      0425  And
+      0426  BoxInt
+      0427  InvokeVirtual 35 (toString) args=1 ret=1
+      042C  Ldc3
+      042D  Ldl0
+      042E  Unbox
+      042F  Stl2
+      0430  Ldl2
+      0431  PushI8 8
+      0433  Sar
+      0434  PushI16 255
+      0437  And
+      0438  BoxInt
+      0439  InvokeVirtual 35 (toString) args=1 ret=1
+      043E  Ldc3
+      043F  Ldl0
+      0440  Unbox
+      0441  Stl3
+      0442  Ldl3
+      0443  PushI16 255
+      0446  And
+      0447  BoxInt
+      0448  InvokeVirtual 35 (toString) args=1 ret=1
+      044D  Ldc3
+      044E  Ldl0
+      044F  Unbox
+      0450  Stl4
+      0451  Ldl4
+      0452  PushI8 24
+      0454  Sar
+      0455  PushI16 255
+      0458  And
+      0459  BoxInt
+      045A  InvokeVirtual 35 (toString) args=1 ret=1
+      045F  Ldc4
+      0460  StrCat 9
+      0462  ReturnValue

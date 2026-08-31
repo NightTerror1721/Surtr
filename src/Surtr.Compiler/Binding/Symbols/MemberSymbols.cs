@@ -147,6 +147,26 @@ namespace Surtr.Compiler.Binding.Symbols
         public TypeSymbol? YieldType { get; internal set; }
 
         /// <summary>
+        /// The parameters of a collection builder's <c>each</c> clause — one (<c>item: T</c>, for
+        /// <c>[ ... ]</c> literals) or two (<c>key: K, value: V</c>, for <c>{ ... }</c> literals) — or
+        /// <see langword="null"/> when this is not a builder constructor.
+        /// </summary>
+        public IReadOnlyList<ParameterSymbol>? EachParameters { get; internal set; }
+
+        /// <summary>
+        /// The synthesized <c>$fill$...</c> instance method the <c>each</c> clause compiles to, or
+        /// <see langword="null"/> when this constructor has no <c>each</c> clause. The literal
+        /// lowering calls it once per element.
+        /// </summary>
+        public MethodSymbol? FillMethod { get; internal set; }
+
+        /// <summary>Whether this constructor is a collection builder — it declares an <c>each</c> clause.</summary>
+        public bool IsCollectionBuilder => EachParameters is not null;
+
+        /// <summary>How many values one literal element/entry fills — 1 for <c>[ ]</c>, 2 for <c>{ }</c>.</summary>
+        public int EachArity => EachParameters?.Count ?? 0;
+
+        /// <summary>
         /// Whether the compiler synthesised it — a lambda body, a property accessor, a bridge —
         /// rather than the user writing it. Its name is ABI and follows the convention fixed in
         /// <c>docs/Compiler-Plan.md</c> §5.

@@ -21,6 +21,7 @@ namespace Surtr.Runtime.Classes
         private readonly int _localCount;
         private readonly int _maxStackSize;
         private readonly int _argumentSlotCount;
+        private readonly int _resultSlotCount;
         private SurtrExceptionHandler[] _handlers = System.Array.Empty<SurtrExceptionHandler>();
 
         internal SurtrBytecodeMethodInfo(
@@ -42,7 +43,8 @@ namespace Surtr.Runtime.Classes
             string[][]? genericConstraints = null,
             bool isExtension = false,
             bool isBridge = false,
-            int argumentSlotCount = -1)
+            int argumentSlotCount = -1,
+            int resultSlotCount = -1)
             : base(name, SurtrMethodImplKind.Bytecode, dispatch, role, isOverride, returnType, parameters, isStatic, visibility, declaringType, isSealed, genericParameters, genericConstraints, isExtension, isBridge)
         {
             _chunk = chunk;
@@ -55,6 +57,19 @@ namespace Surtr.Runtime.Classes
             // than read as a bare parameter count - which would drop an instance method's
             // receiver and shift every cross-module call site against it by one.
             _argumentSlotCount = argumentSlotCount;
+
+            // B6 (docs/Plan-Revision-Stdlib.md §2.6): the mirror of _argumentSlotCount, for exactly
+            // the same reason. The base ResultSlotCount is dynamic - it asks returnType.ResolvedType
+            // for a value class's linked FlattenedSlotWidth - which only exists once the declaring
+            // module has been through SurtrTypeLinker at load time. A cross-module call emitted
+            // *within the same compilation* (two modules built by one ModuleEmitter, neither loaded
+            // into any runtime yet) reads this metadata before that ever happens, so the dynamic
+            // path silently answered 1 for a multi-field value-class return - correct for every
+            // other shape, wrong for exactly this one - and the caller's own stack tracking (sized
+            // off the compiler's own, always-correct symbol-level width) underflowed against it.
+            // SurtrMethodBuilder already carries the right width once ApplyValueLayout calls
+            // SetResultSlots; baking it here is what makes it survive past Build().
+            _resultSlotCount = resultSlotCount;
 
             // Snapshot the offset instead of indexing the chunk on every call. The table is
             // fixed once the loader has built it, so this can never drift.
@@ -97,6 +112,19 @@ namespace Surtr.Runtime.Classes
         /// </summary>
         public override int ArgumentSlotCount
             => _argumentSlotCount >= 0 ? _argumentSlotCount : base.ArgumentSlotCount;
+
+        /// <summary>
+        /// How many stack slots one call to this method leaves behind - zero for void, the
+        /// flattened width of an inline return, one for everything else. Baked at <c>Build()</c>
+        /// time from the same width <see cref="ArgumentSlotCount"/> already bakes (B6,
+        /// docs/Plan-Revision-Stdlib.md §2.6): the base, dynamic answer needs the declared return
+        /// type's handle resolved, which a cross-module call emitted within the same compilation -
+        /// before either module has been loaded into a runtime - cannot assume yet. Metadata read
+        /// back from an image carries no baked count and falls through to the dynamic answer, the
+        /// same as <see cref="ArgumentSlotCount"/>.
+        /// </summary>
+        public override int ResultSlotCount
+            => _resultSlotCount >= 0 ? _resultSlotCount : base.ResultSlotCount;
 
         /// <summary>The byte offset into the chunk's code where this method's body starts.</summary>
         internal int CodeOffset
