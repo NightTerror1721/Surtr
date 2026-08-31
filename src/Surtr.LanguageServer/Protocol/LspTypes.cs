@@ -324,6 +324,27 @@ namespace Surtr.LanguageServer.Protocol
         /// limit, not a silent one.
         /// </summary>
         public List<WorkspaceFolder>? WorkspaceFolders { get; set; }
+
+        /// <summary>Server-specific settings the client passes at startup — see <see cref="SurtrInitializationOptions"/>.</summary>
+        public SurtrInitializationOptions? InitializationOptions { get; set; }
+    }
+
+    /// <summary>
+    /// This server's own settings, carried in <c>initialize</c>'s <c>initializationOptions</c> — the
+    /// LSP-standard place for a server to accept configuration a generic client has no opinion about.
+    /// </summary>
+    public sealed class SurtrInitializationOptions
+    {
+        /// <summary>
+        /// Overrides which folder the workspace treats as its compilation root (§2.1's module-path
+        /// derivation point), when it is not the folder the editor opened. A relative path resolves
+        /// against the opened workspace folder. Needed for a repo where Surtr sources live under a
+        /// nested directory alongside unrelated project folders — deriving module paths from the
+        /// repo root would fold every intermediate directory name (a C# project folder like
+        /// <c>Surtr.Stdlib</c>, illegal as a Surtr identifier because of the dot) into the path and
+        /// reject every file underneath it.
+        /// </summary>
+        public string? ProjectRoot { get; set; }
     }
 
     /// <summary>One folder of a (possibly multi-root) workspace, as <c>initialize</c> reports it.</summary>

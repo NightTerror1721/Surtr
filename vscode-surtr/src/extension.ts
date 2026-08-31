@@ -31,6 +31,11 @@ export function activate(): void {
             // just triggers the same whole-workspace rebuild a save already does.
             fileEvents: workspace.createFileSystemWatcher('**/*.surtr'),
         },
+        // Passed through verbatim as `initialize`'s initializationOptions - see
+        // SurtrInitializationOptions on the server side for what it does with projectRoot.
+        initializationOptions: {
+            projectRoot: workspace.getConfiguration('surtr').get<string>('projectRoot') || undefined,
+        },
         outputChannelName: 'Surtr Language Server',
     };
 

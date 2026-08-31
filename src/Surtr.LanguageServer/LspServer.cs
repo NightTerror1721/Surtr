@@ -148,6 +148,19 @@ namespace Surtr.LanguageServer
             if (root.Length > 0)
             {
                 root = Workspace.Workspace.PathFromUri(root);
+
+                // surtr.projectRoot (SurtrInitializationOptions.ProjectRoot): the opened folder is
+                // not always a Surtr project root by itself - see the option's own remarks. A
+                // relative override resolves against the opened folder; an absolute one is used as
+                // given.
+                string? projectRoot = parameters?.InitializationOptions?.ProjectRoot;
+                if (!string.IsNullOrEmpty(projectRoot))
+                {
+                    root = Path.IsPathRooted(projectRoot)
+                        ? Path.GetFullPath(projectRoot)
+                        : Path.GetFullPath(Path.Combine(root, projectRoot));
+                }
+
                 _workspace?.Dispose();
                 _workspace = new Workspace.Workspace(root);
                 PublishAll(_workspace.Rebuild());

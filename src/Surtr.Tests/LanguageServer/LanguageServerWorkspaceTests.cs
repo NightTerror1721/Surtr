@@ -1971,6 +1971,53 @@ public class Holder {
 
         #endregion
 
+        #region Workspace root discovery
+
+        /// <summary>
+        /// A `.claude` directory holds Claude Code's own scratch/worktree state, which can include a
+        /// full second checkout of a repo the workspace is rooted at. Without skipping it, opening
+        /// such a repo compiles every `.surtr` file under a worktree a second (or third...) time,
+        /// and since a worktree's own directory name is never a legal Surtr identifier, each
+        /// duplicate fails module-path derivation outright - a flood of diagnostics about files the
+        /// user never intended to see, from a subdirectory a plain `Directory.EnumerateFiles` walk
+        /// has no way to know is special.
+        /// </summary>
+        [Fact]
+        public void FindSourceFilesSkipsAClaudeDirectory()
+        {
+            var workspace = Tree(
+                ("app/Holder.surtr", "public class Holder { }\n"),
+                (".claude/worktrees/some-worktree/app/Holder.surtr", "public class Holder { }\n"));
+
+            var files = workspace.FindSourceFiles().ToList();
+
+            Assert.Single(files);
+            Assert.EndsWith(Path.Combine("app", "Holder.surtr"), files[0]);
+        }
+
+        /// <summary>
+        /// The other half of the same problem: even without a stray worktree, deriving module paths
+        /// from a folder that is not itself a Surtr project root (a monorepo where the sources live
+        /// a few directories down, past folder names with dots in them - a C# project directory,
+        /// say) fails every file in the same way. `SurtrInitializationOptions.ProjectRoot` exists so
+        /// the client can tell the server where the real root is instead.
+        /// </summary>
+        [Fact]
+        public void InitializationOptionsProjectRootDeserializesFromTheWireShape()
+        {
+            const string json = "{"
+                + "\"rootUri\":\"file:///d:/repo\","
+                + "\"initializationOptions\":{\"projectRoot\":\"src/Surtr.Stdlib/src\"}"
+                + "}";
+
+            var parsed = System.Text.Json.JsonSerializer.Deserialize<InitializeParams>(json, RpcJson.Options);
+
+            Assert.NotNull(parsed);
+            Assert.Equal("src/Surtr.Stdlib/src", parsed!.InitializationOptions?.ProjectRoot);
+        }
+
+        #endregion
+
         private static int CountOccurrences(string text, string needle)
         {
             int count = 0;
