@@ -7,8 +7,9 @@
 > P3 (JSON, sin tiempo) y P8 (sin investigar) quedó implementado y verificado compilando y
 > ejecutando contra el runtime real. Cuatro bugs/límites nuevos de compilador o runtime descubiertos
 > en el camino (B10, B11, B12, y un límite de `SurtrRuntime.Invoke` con argumentos ya boxeados) —
-> ninguno corregido, toda la superficie afectada retirada o evitada antes de comitear nada roto. Ver
-> §6.4 para el detalle completo de qué se implementó y qué quedó fuera.
+> B10, B11 y B12 **corregidos en una ronda posterior** (§6.3b-d), con toda la superficie afectada
+> re-añadida y con tests de regresión reales; el límite de `SurtrRuntime.Invoke` sigue documentado,
+> sin arreglar. Ver §6.4 para el detalle completo de qué se implementó y qué quedó fuera.
 >
 > **Estado (histórico, Fases 0-7):** Fases 0-4 completas (B1-B4, D1-D5, C1-C3, E1). Fases 5-7 completas. `Angle` y `Random`
 > terminados y utilizables; `Vector2`/`Vector3`/`Quaternion` escritos, matemáticamente correctos,
@@ -1246,7 +1247,7 @@ no `float` — hoy no existe ningún tipo así, y `Vector2`/`Vector3` no sirven 
 que un tipo dedicado evita). Coste: bajo (misma forma que `Vector2`/`Vector3`, aritmética entera en
 vez de flotante); riesgo: bajo. Encaja directamente como prerrequisito de P4.
 
-### 6.3b B10 — Bug del compilador/runtime: un array de una `value class` de un solo campo, cruzando el `self` de una extensión genérica, corrompe (o revienta) `array.sort(comparator)` — Prioridad ALTA — **Descubierto, no corregido; superficie afectada retirada de la stdlib**
+### 6.3b B10 — Bug del compilador: un método genérico leía de vuelta un `value class` de un solo campo asumiendo que ya venía boxeado, cuando la propia B8 podía dejarlo crudo — Prioridad ALTA — **Corregido**
 
 Descubierto implementando P6 (§6.2/O4): al intentar añadir `T[]`/`List<T>.sortNatural()` (ordenar sin
 comparador para un `T : IComparable<T>`), usando `byte` como primer caso real. Como B8/B9, **falla en
@@ -1264,51 +1265,62 @@ sin pasar por disco):
 | Lo mismo sobre `List<T>` (extensión `List<T>.sortNatural()`, que internamente llama a `List<T>.sort(comparator)`) | Correcto | **Revienta**: `SurtrExecutionException: A 'int' cannot be cast to 'byte'` |
 | El mismo patrón dentro de `Sequence<T>.sortedNatural()`/`minNatural()`/`maxNatural()` (Sequence.surtr) — el array de trabajo se construye **dentro** de un generador ya genérico, `push()` a `push()` | Correcto | **Correcto** |
 
-**Causa raíz (hipótesis fundamentada, no confirmada con debugging directo del bytecode — a
-diferencia de B6-B9, no se llegó a instrumentar el emisor esta vez; el patrón de evidencia es
-consistente pero no se verificó leyendo el IL/bytecode generado):** un array **concretamente
-tipado** `byte[]` en su sitio de construcción (p. ej. el literal `[byte(3), byte(1), byte(2)]`)
-almacena sus elementos de un solo campo **sin boxear**, exactamente como predice §2.9 ("un `value
-class` de un solo campo... erosiona al campo que envuelve") — el mismo motivo por el que `byte[]` e
-`int[]` son indistinguibles en almacenamiento. Ese mismo array, al cruzar hacia el parámetro `self:
-T[]` de una extensión (una extensión declara su **propio** parámetro de tipo, §15.4 — `T` ahí es
-genérico/erosionado, no el `byte` concreto que el llamador tiene) **no se re-boxea** en ese cruce. El
-`Compare()` nativo de `array.sort` (`SurtrCompositeBuiltIns.cs:184-195`) lee el elemento crudo con
-`SurtrValue.FromRaw(items[left])` y lo pasa tal cual a `runtime.InvokeClosure(comparator, ...)` — pero
-el comparador fue compilado contra el `T` erosionado de la extensión, que espera una referencia
-boxeada (todo slot erosionado es referencia, §1.11), no un entero crudo. `Sequence<T>.sortedNatural()`
-no lo sufre porque su array de trabajo se construye **dentro** del propio cuerpo ya-erosionado
-(`items.push(source.current)`, con cada elemento boxeado al entrar, igual que hace cualquier otro
-límite de erasure) — nunca es un array **concreto ajeno** que cruza la frontera desde fuera.
-`minNatural()`/`maxNatural()` tampoco, porque ninguno llama a `array.sort`: recorren un
-`IIterator<T>` e invocan el comparador con una llamada Surtr corriente (bytecode `Call`), no con el
-`InvokeClosure` nativo de C# que usa `Compare()`.
+**Causa raíz real (confirmada instrumentando el emisor y leyendo bytecode real, sesión posterior —
+la hipótesis de arriba, "el array literal no re-boxea sus elementos", resultó ser falsa una vez
+verificada): la propia B8, no la construcción del array.** Un `byte[]` construido como literal
+(`[byte(3), byte(1), byte(2)]`) sí boxea cada elemento (`BoxAs` antes de `ArrPack`, confirmado
+leyendo el bytecode) — §2.9 describe cómo se **almacena** un campo de tipo declarado, no cómo se
+empaqueta un elemento de array, que es una decisión de emisión aparte. El síntoma real, aislado con
+`List<T>` en vez de la extensión sobre `T[]` (que resultó no reproducir con un literal): el propio
+arreglo de B8 (`UnboxIfStillErased`, §2.8 de este documento) desboxea **incondicionalmente** un
+valor cuyo tipo estático es el parámetro de tipo desnudo de la clase genérica que lo declara, antes
+de escribirlo en el almacenamiento de una colección — asumiendo que "el almacenamiento nunca estuvo
+boxeado" es universalmente cierto. Lo es para un primitivo real (`int`/`float`/`bool`/`char`, que
+tiene su propio tag y se reconstruye sin pérdida), pero no para un `value class` de un solo campo:
+su forma cruda es bit a bit idéntica a la de su campo subyacente, así que `List<byte>.add(byte(3))`
+desboxea `byte(3)` a un `int` crudo `3` dentro de `_items` (confirmado: `Ldl1; UnboxDynamic; ArrSet`
+en el bytecode de `List<T>.add`). Al leerlo de vuelta, `List<T>.get()` hace `ArrGet; BoxDynamic` —
+y `BoxDynamic` reconstruye la clase **por el tag del valor**, que para un `int` crudo es
+`SurtrBuiltIns.Integer`, no `byte` — la identidad de clase se pierde en el viaje de ida y vuelta. El
+llamador de `get()`, que sabe por sustitución que el resultado es `byte`, hace `CastTo(byte) + Unbox`
+para leerlo de vuelta (`MethodBodyEmitter.Unerase`) — y ese `CastTo` falla contra la clase real
+(`Integer`), de ahí el `SurtrExecutionException: A 'int' cannot be cast to 'byte'` exacto de la
+tabla. Para `self.sort(...)` sobre `T[]` con un array **literal** (no generado internamente por una
+clase genérica) no hay escritura de por medio — el array llega ya boxeado desde su literal y el
+`Compare()` nativo de `array.sort` lo respeta tal cual, lo que explica por qué esa fila de la tabla
+no reprodujo con un repro aislado a un literal simple, aunque el mecanismo de fondo (`UnboxDynamic`
+perdiendo la clase de un `value class`) es el mismo.
 
-**Impacto real:** cualquier `T[]`/`List<T>` con `T` un `value class` de un solo campo (`byte`, y
-cualquier futuro `value class` de un campo — no `Vector2`/`Quaternion`, que son multi-campo y ya
-tienen su propia clase de bugs, B6) que se ordene **a través de un método de extensión genérico**
-(no un método declarado directamente en `List<T>` con su propio `T`, que no cruza esta frontera)
-puede dar un orden incorrecto en silencio, o reventar. `int[]`/`List<int>` (y cualquier primitivo)
-no están afectados — confirmado con el mismo repro exacto sustituyendo `byte` por `int`.
+**Impacto real:** cualquier valor de un `value class` de un solo campo (`byte`, y cualquier futuro
+`value class` de un campo) que atraviese el almacenamiento **propio** de una clase genérica (un
+campo declarado `T`/`array<T>` dentro de la misma clase que declara `T` — `List<T>._items`, no un
+array recibido concretamente desde fuera) puede perder su identidad de clase en el viaje de ida y
+vuelta, dando una excepción de cast al leerlo de vuelta por un sitio que hace la conversión estricta
+(`get()`), o (si nada vuelve a comprobar la clase) un valor numéricamente correcto pero sin la
+identidad correcta. `int`/`float`/`bool`/`char` (primitivos reales) no están afectados — su tag
+identifica su clase sin ambigüedad, así que el viaje de ida y vuelta no pierde nada.
 
-**Arreglo aplicado en la stdlib (mientras el bug sigue abierto):** se retiraron `T[].sortNatural()` y
-`List<T>.sortNatural()` de `collections/List.surtr` antes de comitear nada — nunca llegaron a
-publicarse rotos. `Sequence<T>.minNatural()`/`maxNatural()`/`sortedNatural()` sí se mantienen: los
-tres están verificados correctos con `byte` mediante un test de regresión real
-(`ComparableSequenceExtensionsWorkWithNoComparator`,
-`src/Surtr.Tests/Stdlib/SurtrStdlibBehaviorTests.cs`). Queda una nota en el propio `List.surtr`
-explicando por qué la superficie no está — para que nadie la vuelva a proponer sin saber por qué
-falla, y para que se recupere en cuanto el compilador lo arregle.
+**Arreglo aplicado en el compilador** (`src/Surtr.Compiler/CodeGen/MethodBodyEmitter.cs`,
+`Unerase`): la rama que leía un `value class` de un solo campo de vuelta de un slot erosionado hacía
+`CastTo(forma boxeada) + Unbox()` — asumiendo que el valor **ya** llega boxeado, lo cual dejó de
+sostenerse en cuanto `UnboxIfStillErased` (B8) puede legítimamente dejarlo crudo para encajar con el
+almacenamiento de una colección concretamente tipada. Se sustituyó por `Code.UnboxDynamic()` — el
+mismo opcode que la rama de primitivos de al lado ya usa, y por la misma razón: lee el tag del
+propio valor en vez de asumir una representación, así que desenvuelve una referencia boxeada de
+**cualquier** clase (el chequeador de tipos ya decidió en tiempo de compilación qué se esperaba aquí;
+no queda nada que verificar en tiempo de ejecución) y deja intacto un valor que ya llegó crudo — que
+es exactamente el campo que este `value class` envuelve. Se eliminó así la comprobación de clase en
+tiempo de ejecución para este caso, cambiando un cristal roto por un comportamiento silenciosamente
+correcto — la misma elección que B8 ya había hecho en el sentido contrario.
 
-**No corregido en el compilador** — a diferencia de B5-B9, esta ronda no llegó a instrumentar el
-emisor para confirmar la causa exacta (la hipótesis de arriba está bien fundamentada por las cinco
-filas de la tabla, pero no verificada leyendo bytecode real como sí se hizo con B6-B9). Candidato
-natural de arreglo: que `SurtrCompositeBuiltIns.Compare` (o el punto donde se emite/resuelve la
-llamada al comparador de `array.sort`) boxee el valor crudo leído del array antes de invocar el
-closure, cuando el closure lo declare con un parámetro erosionado — simétrico al arreglo de B8
-("UnboxIfStillErased" en escritura; aquí haría falta un "BoxIfNeededForClosureCall" en lectura).
+Re-añadidas `T[].sortNatural()` y `List<T>.sortNatural()` a `collections/List.surtr`, retiradas sin
+comitear mientras el bug seguía abierto. Verificado con
+`ListTSortNaturalAndArraySortNaturalWorkWithAValueClassElement`
+(`src/Surtr.Tests/Stdlib/SurtrStdlibBehaviorTests.cs`), que cubre `int[]`/`List<int>` (sin regresión)
+y `byte[]`/`List<byte>` (el caso que fallaba) — ordena correctamente y `List<byte>.get()` ya no
+revienta. Suite completa: 3408/3408 en verde tras este arreglo.
 
-### 6.3c B11 — Bug del compilador: un método invoca su propio parámetro-closure con el valor equivocado cuando ese closure devuelve el propio parámetro de tipo del método — Prioridad ALTA — **Descubierto, no corregido; `Result<T,E>.map/mapError/match` retirados antes de comitear**
+### 6.3c B11 — Bug del compilador: un lambda pasado al parámetro-closure de un método genérico leía su propio parámetro sin desboxear — Prioridad ALTA — **Corregido**
 
 Descubierto implementando P9 (`Result<T,E>`, §6.3). Como B10, se manifiesta en silencio — sin
 `SURTR4001`, sin excepción — devolviendo un valor incorrecto.
@@ -1328,41 +1340,96 @@ función suelta) recibe un valor de su **propio** genérico `T` y lo pasa, **en 
 argumento a un **parámetro-closure** cuyo tipo de retorno es también un genérico propio del método
 (`U`, o el propio `T`).
 
-**Lo que NO reproduce, y por qué importa:** `Sequence<T>.map<U>(mapper)`/`groupBy<K>(keySelector)` —
-ya en producción y cubiertos por tests que pasan — tienen la misma forma superficial y **no** están
-afectados. La diferencia real: `map` nunca llama a `mapper` dentro de su propio cuerpo — lo guarda y
-se lo pasa a un generador privado (`seqMap`) que lo invoca más tarde, fuera del método que lo
-declaró; `groupBy` sí invoca `keySelector` en el sitio, pero contra un **local** (`iter.current`),
-no contra un valor leído de un campo/cast. Ninguno de los dos coincide exactamente con la forma que
-falla (invocación **síncrona**, **dentro** del mismo método que declara el genérico, sobre un valor
-que **es** ese genérico).
+**Lo que NO reproduce, y por qué NO era la explicación:** `Sequence<T>.map<U>(mapper)`/
+`groupBy<K>(keySelector)` — ya en producción y cubiertos por tests que pasan — tienen la misma forma
+superficial y no están afectados, lo que llevó a sospechar de "invocación síncrona dentro del mismo
+método que declara el genérico" como la condición. Esa teoría queda **descartada**: un repro
+adicional, `class Box<T> { fun apply(f: (T) -> T): T { return f(_value); } }` invocado como
+`Box<int>(5).apply((v) => v * 100)`, invoca su closure **síncronamente**, **dentro** del método que
+lo declara, sobre un valor de su propio genérico — exactamente la forma que la teoría decía que
+debía fallar solo cuando el genérico era el del propio método, no el de una clase contenedora — y
+reprodujo el mismo síntoma igualmente. La condición real no tenía que ver con cuándo se invoca el
+closure, sino con **cómo se compiló el propio closure**.
 
-**Causa raíz:** no confirmada — a diferencia de B6-B9, no se llegó a instrumentar el emisor ni a leer
-el bytecode generado; el patrón de evidencia (siete repros, todos consistentes) es fuerte pero la
-frontera exacta de qué combinación dispara el bug no quedó cerrada.
+**Causa raíz real (confirmada instrumentando el emisor y leyendo bytecode real):** el parámetro de
+un lambda sin tipo escrito se vincula (§8, "entra en la resolución como una aridad") contra el tipo
+**ya sustituido** del parámetro al que llega — así es como `v * 100` llega a tener sentido en
+`apply(5, (v) => v * 100)`: si `v` se hubiera vinculado contra el `T` genérico sin sustituir, un `T`
+sin restricciones no admite `*` en absoluto. Confirmado en el bytecode: el lambda levantado se emite
+como `$lambda$run$0(v: int): int`, con `v` leído **crudo** (`Ldl0; PushI8 100; Mul`, sin desboxear).
+Pero `apply<T>` en sí se compila **una sola vez**, genéricamente: su propio parámetro `f` está
+declarado `(T0) -> T0`, completamente erosionado, así que su llamada `f(v)` siempre empuja `v` de la
+forma en que **todo** valor `T0` en reposo dentro de un cuerpo genérico viaja — boxeado. El lambda,
+compilado para leer su parámetro crudo, recibe entonces una referencia boxeada y multiplica por 100
+los **bits crudos de esa referencia** (un id de entidad pequeño) en vez del valor dentro de la caja —
+de ahí el `100` en vez de `500`, y el `200` de los repros donde la entidad boxeada resultó tener id 2
+en vez de 1. El mismo lambda, invocado a través de un valor de tipo verdaderamente concreto
+`(int) -> int` (nunca a través del parámetro erosionado de `apply`), nunca llega a este camino: quien
+lo llama empuja un `int` crudo desde el principio, que es justo lo que el cuerpo del lambda espera.
 
-**Impacto real:** `Result<T, E>.map<U>()`, `.mapError<F>()` y `.match<U>(onOk, onError)` — las tres
-retiradas de `core/Result.surtr` antes de comitear nada; nunca llegaron a publicarse rotas. El resto
-de `Result<T,E>` (`ok`/`error`/`isOk`/`isError`/`unwrap`/`unwrapOr`/`unwrapError`) no invoca ningún
-parámetro-closure y está verificado correcto (`ResultOkAndErrorRoundTripAcrossModules`,
-`src/Surtr.Tests/Stdlib/SurtrStdlibBehaviorTests.cs`).
+**Impacto real:** cualquier lambda sin tipo de parámetro escrito, cuyo tipo se infiera como un
+primitivo o un `value class` de un solo campo por sustitución, pasado como argumento al parámetro-
+closure de un método/clase genérica que a su vez llama a ese closure dentro de su propio cuerpo
+(todavía erosionado). `Result<T, E>.map<U>()`, `.mapError<F>()` y `.match<U>(onOk, onError)` — las
+tres retiradas de `core/Result.surtr` antes de comitear nada durante la sesión en que se descubrió
+esto — encajan exactamente en esta forma.
 
-**No corregido en el compilador.** Candidato de investigación futura: instrumentar
-`MethodBodyEmitter`/`EmitResolvedCall` para el repro mínimo de arriba y comparar contra el caso que
-sí funciona (`Sequence.groupBy`) para aislar en qué paso exacto el valor se pierde o se sustituye.
+**Arreglo aplicado en el compilador** (`src/Surtr.Compiler/CodeGen/MethodBodyEmitter.cs`,
+`EmitLambda`/nuevo `EmitLambdaParameterUnboxIfNeeded`): todo cuerpo de lambda levantado desboxea
+ahora, defensivamente, cada parámetro cuyo tipo sea un primitivo o un `value class` de un solo campo,
+al entrar — `Code.UnboxDynamic()` sobre el propio slot, antes de la primera instrucción del cuerpo
+escrito. Es el mismo truco que B10 usa al leer de vuelta un valor erosionado: no hace falta saber por
+qué convención llegó el valor, porque `UnboxDynamic` es un no-op sobre un valor que ya llegó crudo
+(la llamada directa, ordinaria, de tipo concreto) y hace exactamente lo que falta cuando llegó
+boxeado (la llamada a través del parámetro-closure erosionado de un genérico). Acotado a **cuerpos de
+lambda levantados**, no a toda función: `_captures` (no nulo únicamente para un cuerpo de lambda
+levantado) es la señal que distingue el caso — extenderlo a toda función con un parámetro primitivo
+penalizaría la inmensa mayoría de llamadas directas, que nunca cruzan esta frontera, por un hueco que
+es específico de cómo se infiere el tipo de un parámetro de lambda.
 
-### 6.3d B12 — Bug del parser: `generator<T>` no se acepta anidado dentro de otro `<...>` — Prioridad BAJA — **Descubierto al construir `Scheduler` (§6.3/P1); evitado en la stdlib con `unknown[]`, no corregido**
+**Lo que queda fuera, honestamente:** una **función nombrada** (no un lambda) convertida a closure y
+pasada por el mismo camino — `apply(5, someIntToIntFunction)` — reproduce el mismo síntoma y **no**
+está cubierta por este arreglo, porque el cuerpo de una función nombrada es compartido por todas sus
+llamadas directas (la inmensa mayoría de las cuales nunca cruza una frontera de erasure) y desboxear
+ahí penalizaría el caso común para un hueco más estrecho. Sigue abierto, documentado en vez de
+adivinado: un candidato de arreglo futuro es un método puente sintetizado en el punto de conversión a
+closure (el mismo mecanismo que ya existe para una implementación de interfaz genérica,
+`SurtrClassReference.Erase`), no tocar el cuerpo de la función original.
 
-`generator<float>` como anotación de tipo suelta (parámetro, local, retorno) funciona bien, pero
-`array<generator<float>>(n)` y `List<generator<float>>` fallan ambos a la primera con `SURTR2003:
-Expected an expression, found KeywordGenerator`. Consistente con que `generator` es "la única palabra
-reservada que también aparece en posición de tipo" (`CLAUDE.md`) — el reconocimiento contextual de
-`generator` como tipo parece limitarse a la posición de anotación directa y no a un argumento de tipo
-anidado dentro de otro genérico. `collections/Scheduler.surtr` guarda las corrutinas en un `unknown[]`
-y castea de vuelta a `generator<float>` en cada lectura (`x as generator<float>`, que sí parsea al
-ser un target de cast, no anidado) para esquivarlo por completo. No investigado más allá de
-confirmar el síntoma — de baja prioridad porque tiene un rodeo de coste cero, pero documentado para
-que la próxima vez que alguien quiera `List<generator<T>>` no lo redescubra desde cero.
+Verificado con `GenericMethodInvokesItsOwnClosureParameterWithTheRightValue`
+(`src/Surtr.Tests/Compiler/CodeGen/ModuleEmitterTests.cs`, cubre el repro mínimo del documento más
+las cuatro variantes que importaron al acotar la causa) y
+`ResultMapMapErrorAndMatchInvokeTheirClosureWithTheRightValue`
+(`src/Surtr.Tests/Stdlib/SurtrStdlibBehaviorTests.cs`). Suite completa: 3411/3411 en verde tras este
+arreglo.
+
+### 6.3d B12 — Bug del parser: `generator<T>` no se aceptaba anidado dentro de otro `<...>` — Prioridad BAJA — **Corregido**
+
+`generator<float>` como anotación de tipo suelta (parámetro, local, retorno) funcionaba bien, pero
+`array<generator<float>>(n)` y `List<generator<float>>` fallaban ambos a la primera con `SURTR2003:
+Expected an expression, found KeywordGenerator`. `collections/Scheduler.surtr` guardaba las
+corrutinas en un `unknown[]` y casteaba de vuelta a `generator<float>` en cada lectura (`x as
+generator<float>`, que sí parseaba al ser un target de cast, no anidado) para esquivarlo por
+completo.
+
+**Causa raíz confirmada:** un genérico en posición de expresión (`array<T>(n)`, una llamada con
+argumentos de tipo explícitos) se distingue de una cadena de comparaciones `<`/`>` mediante un
+barrido de lookahead (`Parser.LooksLikeTypeArgumentList`, y `LooksLikeGenericTypeOnlyAhead` para
+`typeof`) sobre "los tokens con los que se puede escribir un tipo". Ninguno de los dos barridos
+incluía `KeywordGenerator` — la única palabra reservada que también aparece en posición de tipo
+(`CLAUDE.md`) — aunque el parser de tipos real (`ParseCoreType`) ya la aceptaba en cualquier otro
+sitio. Al encontrar `generator` a mitad de barrido, el lookahead se rendía y concluía que el `<` era
+una comparación; el parser intentaba entonces leer `generator` como el operando de una expresión y
+fallaba.
+
+**Arreglo aplicado en el compilador** (`src/Surtr.Compiler/Syntax/Parser.Expressions.cs`): se añadió
+`TokenType.KeywordGenerator` al conjunto de tokens permitidos de ambos barridos.
+`collections/Scheduler.surtr` ya no necesita el rodeo — `_coroutines` es `generator<float>[]`
+directamente, sin `unknown[]` ni casteo en cada lectura.
+
+Verificado con `GeneratorTypeArgumentNestsInsideAnotherGenericTypeArgumentList`
+(`src/Surtr.Tests/Compiler/Syntax/ParserTests.cs`). Suite completa: 3409/3409 en verde tras este
+arreglo.
 
 ### 6.4 Estado final de la Fase 8 e implementación real
 
@@ -1382,8 +1449,8 @@ regresión en `src/Surtr.Tests/Stdlib/`.
   `override`: satisfacer una interfaz corriente en Surtr **no** lleva ese modificador — solo
   `override`ar un miembro ya virtual de `object`/una clase base lo lleva; confirmado por el propio
   compilador, `SURTR3068`). `Sequence<T: IComparable<T>>.minNatural()/maxNatural()/sortedNatural()`
-  añadidos y verificados correctos. **`T[]`/`List<T>.sortNatural()` NO se pudieron añadir** — ver B10
-  abajo.
+  añadidos y verificados correctos. `T[]`/`List<T>.sortNatural()` también, en una ronda posterior una
+  vez corregido B10 (§6.3b) — ver abajo.
 - **§6.2/O3 + P7** — `toDisplayString()` en `List`, `LinkedList`, `Set`, `Map`, `Queue`, `Deque`,
   `Stack`, `PriorityQueue`, `Sequence` e `IIterable<T>` (todas con `<T: object>`, y **nunca** llamadas
   `toString` — un miembro real de ese nombre, aunque sea el heredado de `object`, bloquea cualquier
@@ -1404,15 +1471,17 @@ regresión en `src/Surtr.Tests/Stdlib/`.
   sin `operator[]` multi-índice (el lenguaje solo admite indexadores de un índice, §5.7 — documentado
   en el propio archivo).
 - **P9** — `Result<T,E>` (`core/Result.surtr`): `ok`/`error`/`isOk`/`isError`/`unwrap`/`unwrapOr`/
-  `unwrapError`. **`map`/`mapError`/`match` NO se pudieron añadir** — ver B11 abajo. Es una `class`
-  ordinaria, no `value class` — el compilador rechaza un `value class` genérico de más de un campo
+  `unwrapError`. `map`/`mapError`/`match` también, en una ronda posterior una vez corregido B11
+  (§6.3c) — ver abajo. Es una `class` ordinaria, no `value class` — el compilador rechaza un `value
+  class` genérico de más de un campo
   (`SURTR3012`), aunque ninguno de los dos campos varíe realmente por sustitución. `Optional<T>`
   deliberadamente **no** se añadió: `T?` ya cubre exactamente ese hueco (§5.1), y añadir un segundo
   envoltorio habría sido la clase de abstracción redundante que `CLAUDE.md` pide evitar.
 - **"Investiga más usos de corrutinas"** — `surtr.async.Scheduler`: registra corrutinas
   `generator<float>` donde cada `yield <segundos>` es una espera; `update(deltaTime)` las avanza.
   Además tres corrutinas ya escritas para usar directamente: `delay`, `repeatEvery`, `repeatTimes`.
-  Ver B12 (bug de parser encontrado y evitado en el camino).
+  Encontró B12 (bug de parser, evitado en el camino con `unknown[]`, corregido en una ronda
+  posterior — ver §6.3d; `_coroutines` es `generator<float>[]` directamente ahora).
 - **Sección de ficheros** — `surtr.io.File`: operaciones de fichero completo (`fileReadAllText`/
   `fileWriteAllText`/`fileReadAllBytes`/`fileWriteAllBytes`/`fileExists`/`fileDelete`/
   `createDirectory`/`directoryExists`/`listFiles`/`listDirectories`). **Limitación real, documentada
@@ -1460,5 +1529,9 @@ si algún otro sitio del árbol tiene el mismo problema latente, porque ningún 
 reenvía argumentos de esta forma exacta (boxeados, desde host, hacia un método de firma arbitraria).
 
 Los cuatro bugs de compilador/parser descubiertos esta ronda (B10, B11, B12, más el hallazgo de
-`Invoke` de arriba) están documentados con su repro exacto en §6.3b-d — ninguno corregido, todos con
-la superficie afectada retirada o evitada antes de comitear código roto.
+`Invoke` de arriba) están documentados con su repro exacto en §6.3b-d. En una ronda posterior, B10,
+B11 y B12 se corrigieron los tres — cada uno con su causa raíz confirmada leyendo bytecode real (no
+solo la hipótesis inicial, que en B10 resultó apuntar al sitio equivocado y en B11 a la condición
+equivocada), su arreglo en el compilador, y la superficie de la stdlib que había sido retirada
+re-añadida con tests de regresión reales. El límite de `Invoke` con argumentos ya boxeados sigue sin
+abordar.
