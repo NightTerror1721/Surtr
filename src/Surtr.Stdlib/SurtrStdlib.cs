@@ -45,7 +45,15 @@ namespace Surtr.Stdlib
         /// </summary>
         Collections = 1 << 2,
 
-        /// <summary><c>surtr/text/</c> â€” <c>StringBuilder</c>.</summary>
+        /// <summary>
+        /// <c>surtr/text/</c> â€” <c>StringBuilder</c>, <c>Regex</c>. Unlike every other category,
+        /// this one is not self-sufficient in isolation: <c>Regex</c> builds its instruction list
+        /// and backtracking state on <c>List&lt;T&gt;</c>/<c>Stack&lt;T&gt;</c> (<see cref="Collections"/>)
+        /// and returns <c>Result&lt;Regex, string&gt;</c> from <c>compile()</c> (<see cref="Core"/>),
+        /// so selecting <c>Text</c> alone fails the whole load - the fixed-point retry loop's own
+        /// backstop (see the remarks above) catches it, but only as a load-time error, not as
+        /// something this flag alone can express.
+        /// </summary>
         Text = 1 << 3,
 
         /// <summary><c>surtr/io/</c> â€” <c>Enums</c>, <c>Stream</c>.</summary>
@@ -57,8 +65,11 @@ namespace Surtr.Stdlib
         /// <summary><c>surtr/async/</c> - <c>Scheduler</c> and its ready-made coroutines.</summary>
         Async = 1 << 6,
 
+        /// <summary><c>surtr/time/</c> - <c>Duration</c>, <c>DateTime</c>.</summary>
+        Time = 1 << 7,
+
         /// <summary>Every category â€” equivalent to the unfiltered <c>LoadInto</c> overloads.</summary>
-        All = Core | Math | Collections | Text | Io | Diagnostics | Async,
+        All = Core | Math | Collections | Text | Io | Diagnostics | Async | Time,
     }
 
     /// <summary>
@@ -311,6 +322,7 @@ namespace Surtr.Stdlib
                 "io" => StdlibModules.Io,
                 "diagnostics" => StdlibModules.Diagnostics,
                 "async" => StdlibModules.Async,
+                "time" => StdlibModules.Time,
                 _ => StdlibModules.None,
             };
 
@@ -427,6 +439,10 @@ namespace Surtr.Stdlib
             runtime.DefineNativeBody("surtr.io.File.fileWriteAllBytes", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.FileWriteAllBytes));
             runtime.DefineNativeBody("surtr.io.File.listFiles", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.ListFiles));
             runtime.DefineNativeBody("surtr.io.File.listDirectories", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrFileNative.ListDirectories));
+
+            // ── surtr.time ────────────────────────────────────────────────────
+
+            runtime.DefineNativeBody("surtr.time.DateTime.currentUnixSeconds", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrTimeNative.CurrentUnixSeconds));
         }
     }
 }

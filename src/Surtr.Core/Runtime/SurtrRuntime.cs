@@ -60,6 +60,8 @@ namespace Surtr.Runtime
         private long _pendingInstructionBudget;
         private int _pendingDataStackSlots;
         private int _pendingMaxCallDepth;
+        private IReadOnlyList<string>? _allowedModulePrefixes;
+        private bool _capabilitiesLocked;
         private bool _disposed;
 
         // Native enum case values awaiting their static slot, keyed by declaring class. Filled by
@@ -927,6 +929,70 @@ namespace Surtr.Runtime
 
         #region Modules
         /// <summary>
+        /// The module-path prefixes this runtime will load, or <see langword="null"/> (the
+        /// default) or an empty list for no restriction.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A capability sandbox for a host that hands a script (or a whole <c>.surtrx</c> package,
+        /// which can bundle modules the host did not author) to a runtime and wants a hard
+        /// guarantee that nothing outside a declared set can end up loaded - not just the entry
+        /// module, but anything it, or a dependency of it, would otherwise pull in. Every module
+        /// that ends up in this runtime passes through <see cref="LoadModule(SurtrModule)"/> - a
+        /// bundled dependency and a fixed-point retry from <see cref="LoadModules"/> included - so
+        /// checking there covers all of them; a module that never loads can never be referenced,
+        /// which is what turns a disallowed dependency into the same "no loaded module declares
+        /// that type" failure an unresolved reference already produces.
+        /// </para>
+        /// <para>
+        /// A path is allowed when it equals a listed prefix exactly, or starts with a listed prefix
+        /// followed by <c>.</c> - <c>"surtr.math"</c> allows <c>surtr.math.Math</c> and
+        /// <c>surtr.math.Vector</c>, but not <c>surtr.mathx.Foo</c>. The built-in <c>surtr</c>
+        /// module is never loaded through this path at all (it is reached by name, not registered
+        /// in this runtime's module table), so it is always reachable regardless of this list.
+        /// </para>
+        /// <para>
+        /// Must be set before this runtime loads its first module - the same one-shot rule
+        /// <see cref="DataStackSlots"/>/<see cref="MaxCallDepth"/> already follow, so a script
+        /// cannot be granted a laxer policy than the one decided up front.
+        /// </para>
+        /// </remarks>
+        /// <exception cref="InvalidOperationException">A module has already been loaded into this runtime.</exception>
+        public IReadOnlyList<string>? AllowedModulePrefixes
+        {
+            get => _allowedModulePrefixes;
+            set
+            {
+                if (_capabilitiesLocked)
+                {
+                    throw new InvalidOperationException(
+                        "AllowedModulePrefixes cannot change once this runtime has loaded a module. Set it before the first LoadModule/LoadModules call.");
+                }
+
+                _allowedModulePrefixes = value;
+            }
+        }
+
+        /// <summary>Whether <paramref name="modulePath"/> matches one of <paramref name="prefixes"/>.</summary>
+        private static bool IsModulePathAllowed(string modulePath, IReadOnlyList<string> prefixes)
+        {
+            foreach (var prefix in prefixes)
+            {
+                if (string.Equals(modulePath, prefix, StringComparison.Ordinal))
+                    return true;
+
+                if (modulePath.Length > prefix.Length
+                    && modulePath.StartsWith(prefix, StringComparison.Ordinal)
+                    && modulePath[prefix.Length] == '.')
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
         /// Brings a module into the runtime: binds every type it mentions, then links every type
         /// it declares.
         /// </summary>
@@ -936,10 +1002,22 @@ namespace Surtr.Runtime
         /// module declares, which is a load failure rather than something to discover mid-execution.
         /// </remarks>
         /// <exception cref="InvalidOperationException">A module with that path is already loaded, or a type it mentions cannot be found.</exception>
+        /// <exception cref="SurtrCapabilityDeniedException"><see cref="AllowedModulePrefixes"/> is set and <paramref name="module"/>'s path is not in it.</exception>
         public void LoadModule(SurtrModule module)
         {
             if (module is null)
                 throw new ArgumentNullException(nameof(module));
+
+            // Locked on the first attempt regardless of outcome - a policy decided mid-session,
+            // after seeing what a script tried to load, defeats the point of a sandbox fixed up
+            // front.
+            _capabilitiesLocked = true;
+
+            if (_allowedModulePrefixes is { Count: > 0 } prefixes && !IsModulePathAllowed(module.Path, prefixes))
+            {
+                throw new SurtrCapabilityDeniedException(
+                    $"Module '{module.Path}' is not in this runtime's AllowedModulePrefixes and cannot be loaded.");
+            }
 
             if (_context.Modules.ContainsKey(module.Path))
                 throw new InvalidOperationException($"A module is already loaded at path '{module.Path}'.");

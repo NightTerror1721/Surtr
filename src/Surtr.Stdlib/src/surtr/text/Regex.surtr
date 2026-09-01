@@ -1,0 +1,839 @@
+import surtr.core.Result;
+import surtr.collections.List;
+import surtr.collections.Stack;
+import surtr.text.StringBuilder;
+
+// A real regular-expression engine - not Lua's limited "patterns" (no alternation, no real nested
+// groups) - covering, deliberately, exactly this v1 grammar and nothing more:
+//
+//   literals, `.`, character classes `[...]`/`[^...]` (with `a-z` ranges), the shorthand classes
+//   `\d`/`\D`/`\w`/`\W`/`\s`/`\S`, quantifiers `* + ? {n,m}` (greedy only), alternation `|`,
+//   capture groups `(...)` (unnamed), and the anchors `^`/`$`.
+//
+// Deliberately deferred (each would multiply the engine's complexity for the last few percent of
+// real-world usage): backreferences (`\1`) - they break reducibility to an automaton and force pure
+// backtracking with no shortcuts; lookahead/lookbehind - they need a second, non-consuming match
+// mode; lazy quantifiers (`*?`) and named groups.
+//
+// The pattern compiles to a flat list of small VM instructions (Char/Any/Class/Jmp/Split/Save/
+// Match/AnchorStart/AnchorEnd - the classic Thompson/Pike shape), matched by an explicit
+// backtracking loop over a `Stack<Thread>` of saved (pc, text position, capture slots) states -
+// not plain recursive backtracking over the AST. The difference matters: a naive recursive matcher
+// recurses once per repetition a `*`/`+` consumes, so `a*` against a few thousand `a`s would blow
+// past `MaxCallDepth` (default 1024, docs/Guia-Embedding-Surtr.md §1.1) on ordinary input. The
+// explicit stack lives on the heap instead, bounded only by however many backtrack points the
+// pattern itself creates - the `InstructionBudget` sandbox is what catches a genuinely pathological
+// pattern like `(a+)+b` against text with no `b`, the same way it catches anything else that loops
+// too long, rather than a silent stack blowout.
+
+// ── Opcodes for the compiled instruction list ───────────────────────────────────────────────────
+
+const OpChar: int = 0;
+const OpAny: int = 1;
+const OpClass: int = 2;
+const OpJmp: int = 3;
+const OpSplit: int = 4;
+const OpSave: int = 5;
+const OpMatch: int = 6;
+const OpAnchorStart: int = 7;
+const OpAnchorEnd: int = 8;
+
+// ── AST node kinds ──────────────────────────────────────────────────────────────────────────────
+
+const NodeLiteral: int = 0;
+const NodeAny: int = 1;
+const NodeClass: int = 2;
+const NodeConcat: int = 3;
+const NodeAlt: int = 4;
+const NodeStar: int = 5;
+const NodePlus: int = 6;
+const NodeOpt: int = 7;
+const NodeRepeat: int = 8;
+const NodeGroup: int = 9;
+const NodeAnchorStart: int = 10;
+const NodeAnchorEnd: int = 11;
+
+class RegexParseException : Exception
+{
+    public constructor(message: string) : super(message) {}
+}
+
+// One [lo, hi] inclusive character range inside a character class.
+class CharRange
+{
+    public var lo: char;
+    public var hi: char;
+
+    public constructor(lo: char, hi: char)
+    {
+        this.lo = lo;
+        this.hi = hi;
+    }
+}
+
+// `[...]`/`[^...]`, or one of the `\d`/`\w`/`\s` shorthands compiled down to the same shape.
+class CharClass
+{
+    public var negate: bool;
+    private let _ranges: List<CharRange>;
+
+    public constructor(negate: bool)
+    {
+        this.negate = negate;
+        this._ranges = List<CharRange>();
+    }
+
+    public fun addRange(lo: char, hi: char): void => _ranges.add(CharRange(lo, hi));
+    public fun addChar(c: char): void => _ranges.add(CharRange(c, c));
+
+    public fun matches(c: char): bool
+    {
+        var found = false;
+        for (var i = 0; i < _ranges.length; i++)
+        {
+            let r = _ranges.get(i);
+            if (c >= r.lo && c <= r.hi) { found = true; break; }
+        }
+        return negate ? !found : found;
+    }
+}
+
+// One pattern AST node. A loose, single class with a `kind` tag rather than a class hierarchy -
+// the engine's own AST is small and short-lived (built once per `compile()`, discarded once the
+// instruction list exists), so the dispatch a hierarchy would buy is not worth the extra types.
+class Node
+{
+    public var kind: int;
+    public var ch: char;
+    public var charClass: CharClass?;
+    public var children: List<Node>?;
+    public var repeatMin: int;
+    public var repeatMax: int;
+    public var groupIndex: int;
+
+    public constructor(kind: int)
+    {
+        this.kind = kind;
+        this.ch = ' ';
+        this.charClass = null;
+        this.children = null;
+        this.repeatMin = 0;
+        this.repeatMax = 0;
+        this.groupIndex = 0;
+    }
+}
+
+// One instruction of the compiled program. Mutable so the compiler can emit a placeholder and
+// backpatch its target once the code it jumps over has been emitted.
+class Instr
+{
+    public var op: int;
+    public var a: int;
+    public var b: int;
+    public var ch: char;
+    public var classIndex: int;
+
+    public constructor(op: int)
+    {
+        this.op = op;
+        this.a = 0;
+        this.b = 0;
+        this.ch = ' ';
+        this.classIndex = 0;
+    }
+}
+
+// One backtrack point: resume at `pc`/`pos` with the capture slots as they were when this was
+// pushed - a `Split`'s untaken branch, saved before the taken one runs and possibly overwrites
+// slots a capture group inside it would set.
+class Thread
+{
+    public var pc: int;
+    public var pos: int;
+    public var saves: int[];
+
+    public constructor(pc: int, pos: int, saves: int[])
+    {
+        this.pc = pc;
+        this.pos = pos;
+        this.saves = saves;
+    }
+}
+
+// One successful match: the whole match plus every capture group, `text.substring`-sliced from
+// the positions the compiled `Save` instructions recorded.
+public class Match
+{
+    private let _index: int;
+    private let _value: string;
+    private let _groups: string?[];
+
+    public constructor(index: int, value: string, groups: string?[])
+    {
+        this._index = index;
+        this._value = value;
+        this._groups = groups;
+    }
+
+    /// Where the match starts in the text it was found in.
+    @Pure
+    public index: int { get { return this._index; } }
+
+    /// The whole match's text - the same as `group(0)`.
+    @Pure
+    public value: string { get { return this._value; } }
+
+    /// How many capturing groups the pattern declared (not counting group 0, the whole match).
+    public inline groupCount: int => _groups.length;
+
+    /// Group 0 is the whole match; group `n >= 1` is `null` if that group did not participate in
+    /// this match (e.g. the untaken side of an alternation).
+    public fun group(n: int): string?
+    {
+        if (n == 0) return this._value;
+        if (n < 1 || n > _groups.length) return null;
+        return _groups[n - 1];
+    }
+
+    @Pure
+    public override fun toString(): string => this._value;
+}
+
+class RegexParser
+{
+    private let _pattern: string;
+    private var _pos: int;
+    private var _groupCount: int;
+
+    public constructor(pattern: string)
+    {
+        this._pattern = pattern;
+        this._pos = 0;
+        this._groupCount = 0;
+    }
+
+    public inline groupCount: int => _groupCount;
+
+    public fun parse(): Node
+    {
+        let node = parseAlt();
+        if (_pos != _pattern.length)
+            throw RegexParseException("unexpected '" + _pattern.substring(_pos, 1) + "' at position " + intToString(_pos));
+        return node;
+    }
+
+    private fun atEnd(): bool => _pos >= _pattern.length;
+    private fun current(): char => _pattern.charAt(_pos);
+
+    private fun expect(c: char): void
+    {
+        if (atEnd() || current() != c)
+            throw RegexParseException("expected '" + string.fromChar(c) + "' at position " + intToString(_pos));
+        _pos = _pos + 1;
+    }
+
+    // pattern := alt
+    // alt     := concat ('|' concat)*
+    private fun parseAlt(): Node
+    {
+        let first = parseConcat();
+        if (atEnd() || current() != '|')
+            return first;
+
+        let branches = List<Node>();
+        branches.add(first);
+        while (!atEnd() && current() == '|')
+        {
+            _pos = _pos + 1;
+            branches.add(parseConcat());
+        }
+
+        let node = Node(NodeAlt);
+        node.children = branches;
+        return node;
+    }
+
+    // concat := repeat*
+    private fun parseConcat(): Node
+    {
+        let items = List<Node>();
+        while (!atEnd() && current() != '|' && current() != ')')
+            items.add(parseRepeat());
+
+        if (items.length == 1)
+            return items.get(0);
+
+        let node = Node(NodeConcat);
+        node.children = items;
+        return node;
+    }
+
+    // repeat := atom ('*' | '+' | '?' | '{' int (',' int?)? '}')?
+    private fun parseRepeat(): Node
+    {
+        let atom = parseAtom();
+        if (atEnd())
+            return atom;
+
+        let c = current();
+        if (c == '*') { _pos = _pos + 1; let n = Node(NodeStar); n.children = singleChild(atom); return n; }
+        if (c == '+') { _pos = _pos + 1; let n = Node(NodePlus); n.children = singleChild(atom); return n; }
+        if (c == '?') { _pos = _pos + 1; let n = Node(NodeOpt); n.children = singleChild(atom); return n; }
+        if (c == '{') return parseBoundedRepeat(atom);
+        return atom;
+    }
+
+    private fun singleChild(node: Node): List<Node>
+    {
+        let list = List<Node>();
+        list.add(node);
+        return list;
+    }
+
+    private fun parseBoundedRepeat(atom: Node): Node
+    {
+        _pos = _pos + 1; // '{'
+        let min = parseUnsignedInt();
+        var max = min;
+
+        if (!atEnd() && current() == ',')
+        {
+            _pos = _pos + 1;
+            max = (!atEnd() && isDigit(current())) ? parseUnsignedInt() : -1; // -1 = unbounded
+        }
+
+        expect('}');
+
+        let node = Node(NodeRepeat);
+        node.children = singleChild(atom);
+        node.repeatMin = min;
+        node.repeatMax = max;
+        return node;
+    }
+
+    private fun parseUnsignedInt(): int
+    {
+        if (atEnd() || !isDigit(current()))
+            throw RegexParseException("expected a number at position " + intToString(_pos));
+
+        var value = 0;
+        while (!atEnd() && isDigit(current()))
+        {
+            value = value * 10 + digitValue(current());
+            _pos = _pos + 1;
+        }
+        return value;
+    }
+
+    // atom := '.' | '^' | '$' | '(' alt ')' | '[' class ']' | '\' escape | literal
+    private fun parseAtom(): Node
+    {
+        let c = current();
+
+        if (c == '.') { _pos = _pos + 1; return Node(NodeAny); }
+        if (c == '^') { _pos = _pos + 1; return Node(NodeAnchorStart); }
+        if (c == '$') { _pos = _pos + 1; return Node(NodeAnchorEnd); }
+        if (c == '(') return parseGroup();
+        if (c == '[') return parseClass();
+        if (c == '\\') return parseEscape();
+
+        _pos = _pos + 1;
+        let node = Node(NodeLiteral);
+        node.ch = c;
+        return node;
+    }
+
+    private fun parseGroup(): Node
+    {
+        _pos = _pos + 1; // '('
+        _groupCount = _groupCount + 1;
+        let index = _groupCount;
+
+        let inner = parseAlt();
+        expect(')');
+
+        let node = Node(NodeGroup);
+        node.children = singleChild(inner);
+        node.groupIndex = index;
+        return node;
+    }
+
+    private fun parseClass(): Node
+    {
+        _pos = _pos + 1; // '['
+        var negate = false;
+        if (!atEnd() && current() == '^') { negate = true; _pos = _pos + 1; }
+
+        let charClass = CharClass(negate);
+        var first = true;
+        while (!atEnd() && (current() != ']' || first))
+        {
+            first = false;
+            let lo = readClassChar();
+            if (!atEnd() && current() == '-' && _pos + 1 < _pattern.length && _pattern.charAt(_pos + 1) != ']')
+            {
+                _pos = _pos + 1; // '-'
+                let hi = readClassChar();
+                charClass.addRange(lo, hi);
+            }
+            else
+            {
+                charClass.addChar(lo);
+            }
+        }
+        expect(']');
+
+        let node = Node(NodeClass);
+        node.charClass = charClass;
+        return node;
+    }
+
+    private fun readClassChar(): char
+    {
+        if (atEnd())
+            throw RegexParseException("unterminated character class");
+
+        let c = current();
+        if (c == '\\')
+        {
+            _pos = _pos + 1;
+            return readEscapedLiteralChar();
+        }
+
+        _pos = _pos + 1;
+        return c;
+    }
+
+    private fun parseEscape(): Node
+    {
+        _pos = _pos + 1; // '\'
+        if (atEnd())
+            throw RegexParseException("dangling '\\' at end of pattern");
+
+        let c = current();
+        if (c == 'd' || c == 'D') { _pos = _pos + 1; return classNode(digitClass(c == 'D')); }
+        if (c == 'w' || c == 'W') { _pos = _pos + 1; return classNode(wordClass(c == 'W')); }
+        if (c == 's' || c == 'S') { _pos = _pos + 1; return classNode(spaceClass(c == 'S')); }
+
+        let node = Node(NodeLiteral);
+        node.ch = readEscapedLiteralChar();
+        return node;
+    }
+
+    private fun classNode(charClass: CharClass): Node
+    {
+        let node = Node(NodeClass);
+        node.charClass = charClass;
+        return node;
+    }
+
+    // Consumes the character right after a '\' that isn't d/D/w/W/s/S, and returns the literal
+    // char it stands for - n/t/r as the actual control characters, anything else (including every
+    // regex metacharacter) as itself.
+    private fun readEscapedLiteralChar(): char
+    {
+        if (atEnd())
+            throw RegexParseException("dangling '\\' at end of pattern");
+
+        let c = current();
+        _pos = _pos + 1;
+        if (c == 'n') return '\n';
+        if (c == 't') return '\t';
+        if (c == 'r') return '\r';
+        return c;
+    }
+
+    private fun digitClass(negate: bool): CharClass
+    {
+        let cc = CharClass(negate);
+        cc.addRange('0', '9');
+        return cc;
+    }
+
+    private fun wordClass(negate: bool): CharClass
+    {
+        let cc = CharClass(negate);
+        cc.addRange('a', 'z');
+        cc.addRange('A', 'Z');
+        cc.addRange('0', '9');
+        cc.addChar('_');
+        return cc;
+    }
+
+    private fun spaceClass(negate: bool): CharClass
+    {
+        let cc = CharClass(negate);
+        cc.addChar(' ');
+        cc.addChar('\t');
+        cc.addChar('\n');
+        cc.addChar('\r');
+        return cc;
+    }
+}
+
+private fun digitValue(c: char): int
+{
+    if (c == '0') return 0;
+    if (c == '1') return 1;
+    if (c == '2') return 2;
+    if (c == '3') return 3;
+    if (c == '4') return 4;
+    if (c == '5') return 5;
+    if (c == '6') return 6;
+    if (c == '7') return 7;
+    if (c == '8') return 8;
+    if (c == '9') return 9;
+    return -1;
+}
+
+private fun isDigit(c: char): bool => digitValue(c) >= 0;
+
+private fun intToString(n: int): string => n.toString();
+
+private fun copyOfInts(source: int[]): int[]
+{
+    let result = array<int>(source.length);
+    for (var i = 0; i < source.length; i++)
+        result[i] = source[i];
+    return result;
+}
+
+public class Regex
+{
+    private let _instructions: List<Instr>;
+    private let _classes: List<CharClass>;
+    private let _groupCount: int;
+
+    private constructor(instructions: List<Instr>, classes: List<CharClass>, groupCount: int)
+    {
+        this._instructions = instructions;
+        this._classes = classes;
+        this._groupCount = groupCount;
+    }
+
+    /// Compiles `pattern`. `Result.error` carries a human-readable message on a malformed pattern.
+    public static fun compile(pattern: string): Result<Regex, string>
+    {
+        try
+        {
+            let parser = RegexParser(pattern);
+            let root = parser.parse();
+
+            let instructions = List<Instr>();
+            let classes = List<CharClass>();
+
+            instructions.add(saveInstr(0));
+            emitNode(root, instructions, classes);
+            instructions.add(saveInstr(1));
+            instructions.add(Instr(OpMatch));
+
+            return Result<Regex, string>.ok(Regex(instructions, classes, parser.groupCount));
+        }
+        catch (e: RegexParseException)
+        {
+            return Result<Regex, string>.error(e.message);
+        }
+    }
+
+    private static fun saveInstr(slot: int): Instr
+    {
+        let instr = Instr(OpSave);
+        instr.a = slot;
+        return instr;
+    }
+
+    private static fun emitNode(node: Node, prog: List<Instr>, classes: List<CharClass>): void
+    {
+        if (node.kind == NodeLiteral) { emitChar(node.ch, prog); return; }
+        if (node.kind == NodeAny) { prog.add(Instr(OpAny)); return; }
+        if (node.kind == NodeAnchorStart) { prog.add(Instr(OpAnchorStart)); return; }
+        if (node.kind == NodeAnchorEnd) { prog.add(Instr(OpAnchorEnd)); return; }
+        if (node.kind == NodeClass) { emitClass(node.charClass!!, prog, classes); return; }
+        if (node.kind == NodeConcat) { emitConcat(node.children!!, prog, classes); return; }
+        if (node.kind == NodeAlt) { emitAlt(node.children!!, prog, classes); return; }
+        if (node.kind == NodeGroup) { emitGroup(node, prog, classes); return; }
+        if (node.kind == NodeStar) { emitStar(node.children!!.get(0), prog, classes); return; }
+        if (node.kind == NodePlus) { emitPlus(node.children!!.get(0), prog, classes); return; }
+        if (node.kind == NodeOpt) { emitOpt(node.children!!.get(0), prog, classes); return; }
+        if (node.kind == NodeRepeat) { emitRepeat(node, prog, classes); return; }
+    }
+
+    private static fun emitChar(c: char, prog: List<Instr>): void
+    {
+        let instr = Instr(OpChar);
+        instr.ch = c;
+        prog.add(instr);
+    }
+
+    private static fun emitClass(charClass: CharClass, prog: List<Instr>, classes: List<CharClass>): void
+    {
+        let index = classes.length;
+        classes.add(charClass);
+        let instr = Instr(OpClass);
+        instr.classIndex = index;
+        prog.add(instr);
+    }
+
+    private static fun emitConcat(items: List<Node>, prog: List<Instr>, classes: List<CharClass>): void
+    {
+        for (var i = 0; i < items.length; i++)
+            emitNode(items.get(i), prog, classes);
+    }
+
+    private static fun emitGroup(node: Node, prog: List<Instr>, classes: List<CharClass>): void
+    {
+        prog.add(saveInstr(2 * node.groupIndex));
+        emitNode(node.children!!.get(0), prog, classes);
+        prog.add(saveInstr(2 * node.groupIndex + 1));
+    }
+
+    // a|b|...|z:
+    //   split L1, L2
+    //   L1: <a>
+    //       jmp Lend
+    //   L2: split L3, L4
+    //   L3: <b>
+    //       jmp Lend
+    //   ...
+    //   Lz: <z>          (last branch, no trailing split/jmp needed)
+    //   Lend:
+    private static fun emitAlt(branches: List<Node>, prog: List<Instr>, classes: List<CharClass>): void
+    {
+        if (branches.length == 1) { emitNode(branches.get(0), prog, classes); return; }
+
+        let jumpsToPatch = List<int>();
+        for (var i = 0; i < branches.length - 1; i++)
+        {
+            let splitAt = prog.length;
+            prog.add(Instr(OpSplit));
+
+            let split = prog.get(splitAt);
+            split.a = prog.length;
+            emitNode(branches.get(i), prog, classes);
+
+            let jumpAt = prog.length;
+            prog.add(Instr(OpJmp));
+            jumpsToPatch.add(jumpAt);
+
+            split.b = prog.length;
+        }
+
+        emitNode(branches.get(branches.length - 1), prog, classes);
+
+        let end = prog.length;
+        for (var i = 0; i < jumpsToPatch.length; i++)
+            prog.get(jumpsToPatch.get(i)).a = end;
+    }
+
+    // x*:  L1: split L2, L3
+    //      L2: <x>
+    //          jmp L1
+    //      L3:
+    private static fun emitStar(child: Node, prog: List<Instr>, classes: List<CharClass>): void
+    {
+        let l1 = prog.length;
+        prog.add(Instr(OpSplit));
+        let split = prog.get(l1);
+        split.a = prog.length;
+
+        emitNode(child, prog, classes);
+        let jmp = Instr(OpJmp);
+        jmp.a = l1;
+        prog.add(jmp);
+
+        split.b = prog.length;
+    }
+
+    // x+:  L1: <x>
+    //          split L1, L2
+    //      L2:
+    private static fun emitPlus(child: Node, prog: List<Instr>, classes: List<CharClass>): void
+    {
+        let l1 = prog.length;
+        emitNode(child, prog, classes);
+
+        let split = Instr(OpSplit);
+        split.a = l1;
+        prog.add(split);
+        split.b = prog.length;
+    }
+
+    // x?:  split L1, L2
+    //      L1: <x>
+    //      L2:
+    private static fun emitOpt(child: Node, prog: List<Instr>, classes: List<CharClass>): void
+    {
+        let splitAt = prog.length;
+        prog.add(Instr(OpSplit));
+        let split = prog.get(splitAt);
+        split.a = prog.length;
+
+        emitNode(child, prog, classes);
+        split.b = prog.length;
+    }
+
+    // {n,m}: n mandatory copies, then either (m - n) nested-optional copies (bounded) or one
+    // trailing `*` copy (unbounded, repeatMax < 0).
+    private static fun emitRepeat(node: Node, prog: List<Instr>, classes: List<CharClass>): void
+    {
+        let child = node.children!!.get(0);
+        for (var i = 0; i < node.repeatMin; i++)
+            emitNode(child, prog, classes);
+
+        if (node.repeatMax < 0)
+        {
+            emitStar(child, prog, classes);
+            return;
+        }
+
+        for (var i = node.repeatMin; i < node.repeatMax; i++)
+            emitOpt(child, prog, classes);
+    }
+
+    public fun isMatch(text: string): bool => tryFind(text, 0) != null;
+
+    public fun match(text: string): Match? => tryFind(text, 0);
+
+    /// Every non-overlapping match, left to right. An empty match still advances by one position,
+    /// so a pattern that can match nothing (`a*`) does not loop forever.
+    public generator matches(text: string): Match
+    {
+        var start = 0;
+        while (start <= text.length)
+        {
+            let found = tryFind(text, start);
+            if (found == null) return;
+
+            yield found;
+            start = found.index + (found.value.length > 0 ? found.value.length : 1);
+        }
+    }
+
+    /// Replaces every non-overlapping match with `replacement` (taken literally - no `$1`-style
+    /// backreferences in the replacement text in this v1).
+    public fun replace(text: string, replacement: string): string
+    {
+        let builder = StringBuilder();
+        var last = 0;
+        for (m in matches(text))
+        {
+            builder.append(text.substring(last, m.index - last));
+            builder.append(replacement);
+            last = m.index + m.value.length;
+        }
+        builder.append(text.substring(last, text.length - last));
+        return builder.toString();
+    }
+
+    /// Splits `text` on every match of this pattern, the matches themselves discarded.
+    public fun split(text: string): string[]
+    {
+        let pieces = List<string>();
+        var last = 0;
+        for (m in matches(text))
+        {
+            pieces.add(text.substring(last, m.index - last));
+            last = m.index + m.value.length;
+        }
+        pieces.add(text.substring(last, text.length - last));
+
+        let result = array<string>(pieces.length);
+        for (var i = 0; i < pieces.length; i++)
+            result[i] = pieces.get(i);
+        return result;
+    }
+
+    private fun tryFind(text: string, from: int): Match?
+    {
+        var start = from;
+        while (start <= text.length)
+        {
+            let found = tryMatchAt(text, start);
+            if (found != null) return found;
+            start = start + 1;
+        }
+        return null;
+    }
+
+    private fun tryMatchAt(text: string, start: int): Match?
+    {
+        let saveCount = 2 * (_groupCount + 1);
+        var saves = array<int>(saveCount);
+        for (var i = 0; i < saveCount; i++)
+            saves[i] = -1;
+
+        let backtrack = Stack<Thread>();
+        var pc = 0;
+        var pos = start;
+
+        while (true)
+        {
+            let instr = _instructions.get(pc);
+            var ok = true;
+
+            if (instr.op == OpChar)
+            {
+                if (pos < text.length && text.charAt(pos) == instr.ch) { pos = pos + 1; pc = pc + 1; }
+                else ok = false;
+            }
+            else if (instr.op == OpAny)
+            {
+                if (pos < text.length) { pos = pos + 1; pc = pc + 1; }
+                else ok = false;
+            }
+            else if (instr.op == OpClass)
+            {
+                if (pos < text.length && _classes.get(instr.classIndex).matches(text.charAt(pos))) { pos = pos + 1; pc = pc + 1; }
+                else ok = false;
+            }
+            else if (instr.op == OpJmp)
+            {
+                pc = instr.a;
+            }
+            else if (instr.op == OpSplit)
+            {
+                backtrack.push(Thread(instr.b, pos, copyOfInts(saves)));
+                pc = instr.a;
+            }
+            else if (instr.op == OpSave)
+            {
+                saves[instr.a] = pos;
+                pc = pc + 1;
+            }
+            else if (instr.op == OpAnchorStart)
+            {
+                if (pos == 0) pc = pc + 1; else ok = false;
+            }
+            else if (instr.op == OpAnchorEnd)
+            {
+                if (pos == text.length) pc = pc + 1; else ok = false;
+            }
+            else // OpMatch
+            {
+                return buildMatch(text, saves);
+            }
+
+            if (!ok)
+            {
+                if (backtrack.isEmpty) return null;
+                let thread = backtrack.pop();
+                pc = thread.pc;
+                pos = thread.pos;
+                saves = thread.saves;
+            }
+        }
+    }
+
+    private fun buildMatch(text: string, saves: int[]): Match
+    {
+        let value = text.substring(saves[0], saves[1] - saves[0]);
+        let groups = array<string?>(_groupCount);
+        for (var i = 0; i < _groupCount; i++)
+        {
+            let s = saves[2 * (i + 1)];
+            let e = saves[2 * (i + 1) + 1];
+            groups[i] = (s >= 0 && e >= 0) ? text.substring(s, e - s) : null;
+        }
+        return Match(saves[0], value, groups);
+    }
+}

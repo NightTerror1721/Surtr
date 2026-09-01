@@ -1,0 +1,192 @@
+module surtr.time.Duration
+  constants: 4   types: 1   fields: 0   methods: 21   modules: 0
+  string #3 = " s"
+
+  type table:
+    #0  surtr.time.Duration:Duration
+
+  method table:
+    #0  surtr.time.Duration:Duration.ctor(float) -> void
+    #1  surtr.time.Duration:Duration.get_totalSeconds() -> float
+    #2  surtr.time.Duration:Duration.get_totalMilliseconds() -> float
+    #3  surtr.time.Duration:Duration.get_totalMinutes() -> float
+    #4  surtr.time.Duration:Duration.get_zero() -> float
+    #5  surtr.time.Duration:Duration.fromSeconds(float) -> float
+    #6  surtr.time.Duration:Duration.fromMilliseconds(float) -> float
+    #7  surtr.time.Duration:Duration.fromMinutes(float) -> float
+    #8  surtr.time.Duration:Duration.toString() -> string
+    #9  surtr.time.Duration:Duration.op_+(float, float) -> float
+    #10  surtr.time.Duration:Duration.op_-(float, float) -> float
+    #11  surtr.time.Duration:Duration.op_*(float, float) -> float
+    #12  surtr.time.Duration:Duration.op_/(float, float) -> float
+    #13  surtr.time.Duration:Duration.op_-u(float) -> float
+    #14  surtr.time.Duration:Duration.op_==(float, float) -> bool
+    #15  surtr.time.Duration:Duration.op_<=>(float, float) -> int
+    #16  surtr.time.Duration:Duration.equals(float) -> bool
+    #17  surtr.time.Duration:Duration.compareTo(float) -> int
+    #18  float.toString() -> string
+    #19  surtr.time.Duration:Duration.compareTo(unknown) -> int
+    #20  surtr.time.Duration:Duration.equals(unknown) -> bool
+
+sealed class Duration : surtr:ValueType, surtr:IComparable<float>, surtr:IEquatable<float>  [public]
+  [private] readonly field _seconds: float
+
+  @surtr:Pure
+  [public] property totalMilliseconds: float { get; }
+    get:
+      ; entry 2, locals 1, stack 2, code 0003..0007
+        0003  Ldl0
+        0004  Ldc0
+        0005  FMul
+        0006  ReturnValue
+
+  @surtr:Pure
+  [public] property totalMinutes: float { get; }
+    get:
+      ; entry 3, locals 1, stack 2, code 0007..000B
+        0007  Ldl0
+        0008  Ldc1
+        0009  FDiv
+        000A  ReturnValue
+
+  @surtr:Pure
+  [public] property totalSeconds: float { get; }
+    get:
+      ; entry 1, locals 1, stack 1, code 0001..0003
+        0001  Ldl0
+        0002  ReturnValue
+
+  [public] static property zero: float { get; }
+    get:
+      ; entry 4, locals 0, stack 1, code 000B..000D
+        000B  Ldc2
+        000C  ReturnValue
+
+  [public] compareTo(other: float): int
+    ; entry 17, locals 2, stack 2, code 0057..005F
+      0057  Ldl0
+      0058  Ldl1
+      0059  InvokeStatic 15 (op_<=>) args=2 ret=1
+      005E  ReturnValue
+
+  [public] virtual compareTo(other: unknown): int
+    ; entry 18, locals 2, stack 2, code 005F..006C
+      005F  Ldl0
+      0060  Unbox
+      0061  Ldl1
+      0062  Cast 0 (surtr.time.Duration:Duration)
+      0065  Unbox
+      0066  InvokeSpecial 17 (compareTo) args=2 ret=1
+      006B  ReturnValue
+
+  [public] ctor (seconds: float): void
+    ; entry 0, locals 2, stack 0, code 0000..0001
+      0000  ReturnVoid
+
+  [public] equals(other: float): bool
+    ; entry 16, locals 2, stack 2, code 0053..0057
+      0053  Ldl0
+      0054  Ldl1
+      0055  FEQ
+      0056  ReturnValue
+
+  [public] virtual equals(other: unknown): bool
+    ; entry 19, locals 2, stack 2, code 006C..0079
+      006C  Ldl0
+      006D  Unbox
+      006E  Ldl1
+      006F  Cast 0 (surtr.time.Duration:Duration)
+      0072  Unbox
+      0073  InvokeSpecial 16 (equals) args=2 ret=1
+      0078  ReturnValue
+
+  [public] static fromMilliseconds(milliseconds: float): float
+    ; entry 6, locals 1, stack 2, code 000F..0013
+      000F  Ldl0
+      0010  Ldc0
+      0011  FDiv
+      0012  ReturnValue
+
+  [public] static fromMinutes(minutes: float): float
+    ; entry 7, locals 1, stack 2, code 0013..0017
+      0013  Ldl0
+      0014  Ldc1
+      0015  FMul
+      0016  ReturnValue
+
+  [public] static fromSeconds(seconds: float): float
+    ; entry 5, locals 1, stack 1, code 000D..000F
+      000D  Ldl0
+      000E  ReturnValue
+
+  [public] static op_*(a: float, scalar: float): float
+    ; entry 11, locals 2, stack 2, code 002B..002F
+      002B  Ldl0
+      002C  Ldl1
+      002D  FMul
+      002E  ReturnValue
+
+  [public] static op_+(a: float, b: float): float
+    ; entry 9, locals 2, stack 2, code 0023..0027
+      0023  Ldl0
+      0024  Ldl1
+      0025  FAdd
+      0026  ReturnValue
+
+  [public] static op_-(a: float, b: float): float
+    ; entry 10, locals 2, stack 2, code 0027..002B
+      0027  Ldl0
+      0028  Ldl1
+      0029  FSub
+      002A  ReturnValue
+
+  [public] static op_-u(a: float): float
+    ; entry 13, locals 1, stack 1, code 0033..0036
+      0033  Ldl0
+      0034  FNeg
+      0035  ReturnValue
+
+  [public] static op_/(a: float, scalar: float): float
+    ; entry 12, locals 2, stack 2, code 002F..0033
+      002F  Ldl0
+      0030  Ldl1
+      0031  FDiv
+      0032  ReturnValue
+
+  [public] static op_<=>(a: float, b: float): int
+    ; entry 15, locals 2, stack 2, code 003A..0053
+      003A  Ldl0
+      003B  Ldl1
+      003C  FLT
+      003D  JPZ +5 -> L0 (0045)
+      0040  PushI8 -1
+      0042  JP +13 -> L2 (0052)
+    L0:
+      0045  Ldl0
+      0046  Ldl1
+      0047  FGT
+      0048  JPZ +5 -> L1 (0050)
+      004B  PushI8 1
+      004D  JP +2 -> L2 (0052)
+    L1:
+      0050  PushI8 0
+    L2:
+      0052  ReturnValue
+
+  [public] static op_==(a: float, b: float): bool
+    ; entry 14, locals 2, stack 2, code 0036..003A
+      0036  Ldl0
+      0037  Ldl1
+      0038  FEQ
+      0039  ReturnValue
+
+  @surtr:Pure
+  [public] virtual override toString(): string
+    ; entry 8, locals 1, stack 2, code 0017..0023
+      0017  Ldl0
+      0018  Unbox
+      0019  BoxFloat
+      001A  InvokeVirtual 18 (toString) args=1 ret=1
+      001F  Ldc3
+      0020  StrCat 2
+      0022  ReturnValue

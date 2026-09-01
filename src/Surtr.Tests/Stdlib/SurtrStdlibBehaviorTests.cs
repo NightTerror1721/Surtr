@@ -7,6 +7,7 @@ using Surtr.Runtime;
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
 using Surtr.Stdlib;
+using Surtr.VM;
 using System;
 using System.IO;
 using System.Linq;
@@ -2317,6 +2318,337 @@ namespace Surtr.Tests.Stdlib
                 "io/File.surtr");
 
             Assert.Throws<System.IO.DirectoryNotFoundException>(() => Bool(runtime, "run"));
+        }
+
+        // ── surtr.time: Duration / DateTime (docs/Plan-Roadmap-Novedades.md Fase 0) ─────────────
+
+        [Fact]
+        public void DurationConvertsBetweenSecondsMillisecondsAndMinutes()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.time.Duration;\n"
+                    + "fun run(): bool {\n"
+                    + "    let d = Duration.fromSeconds(90.0);\n"
+                    + "    if (d.totalSeconds < 89.999 || d.totalSeconds > 90.001) return false;\n"
+                    + "    if (d.totalMinutes < 1.499 || d.totalMinutes > 1.501) return false;\n"
+                    + "    let fromMs = Duration.fromMilliseconds(1500.0);\n"
+                    + "    return fromMs.totalSeconds > 1.499 && fromMs.totalSeconds < 1.501;\n"
+                    + "}\n",
+                "time/Duration.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void DurationOperatorsAndComparison()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.time.Duration;\n"
+                    + "fun run(): bool {\n"
+                    + "    let a = Duration.fromSeconds(10.0);\n"
+                    + "    let b = Duration.fromSeconds(4.0);\n"
+                    + "    let sum = a + b;\n"
+                    + "    if (sum.totalSeconds < 13.999 || sum.totalSeconds > 14.001) return false;\n"
+                    + "    let diff = a - b;\n"
+                    + "    if (diff.totalSeconds < 5.999 || diff.totalSeconds > 6.001) return false;\n"
+                    + "    if (!(b < a)) return false;\n"
+                    + "    if (a == b) return false;\n"
+                    + "    if ((-a).totalSeconds > -9.999) return false;\n"
+                    + "    return (a * 2.0).totalSeconds > 19.999 && (a / 2.0).totalSeconds > 4.999 && (a / 2.0).totalSeconds < 5.001;\n"
+                    + "}\n",
+                "time/Duration.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void DurationZeroIsTheAdditiveIdentity()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.time.Duration;\n"
+                    + "fun run(): bool {\n"
+                    + "    let a = Duration.fromSeconds(7.0);\n"
+                    + "    return (a + Duration.zero) == a && Duration.zero.equals(Duration.fromSeconds(0.0));\n"
+                    + "}\n",
+                "time/Duration.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void DateTimeNowIsCloseToTheHostsOwnUtcNow()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.time.DateTime;\n"
+                    + "fun run(): float { return DateTime.now().unixSeconds; }\n",
+                "math/Math.surtr", "time/Duration.surtr", "time/DateTime.surtr");
+
+            double reported = Float(runtime, "run");
+            double expected = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
+
+            // Generous tolerance - this is checking "the native body actually reads the host clock",
+            // not measuring latency between the two calls.
+            Assert.True(Math.Abs(reported - expected) < 30.0, $"reported={reported}, expected={expected}");
+        }
+
+        [Fact]
+        public void DateTimeArithmeticWithDuration()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.time.Duration;\n"
+                    + "import surtr.time.DateTime;\n"
+                    + "fun run(): bool {\n"
+                    + "    let start = DateTime.epoch;\n"
+                    + "    let later = start + Duration.fromSeconds(90.0);\n"
+                    + "    if (later.unixSeconds < 89.999 || later.unixSeconds > 90.001) return false;\n"
+                    + "    let elapsed = later - start;\n"
+                    + "    if (elapsed.totalSeconds < 89.999 || elapsed.totalSeconds > 90.001) return false;\n"
+                    + "    let back = later.subtract(Duration.fromSeconds(90.0));\n"
+                    + "    return back == start;\n"
+                    + "}\n",
+                "math/Math.surtr", "time/Duration.surtr", "time/DateTime.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void DateTimeComparisonAndLerp()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.time.Duration;\n"
+                    + "import surtr.time.DateTime;\n"
+                    + "fun run(): bool {\n"
+                    + "    let a = DateTime.epoch;\n"
+                    + "    let b = a + Duration.fromSeconds(100.0);\n"
+                    + "    if (!(a < b)) return false;\n"
+                    + "    if (a == b) return false;\n"
+                    + "    let mid = DateTime.lerp(a, b, 0.5);\n"
+                    + "    return mid.unixSeconds > 49.999 && mid.unixSeconds < 50.001;\n"
+                    + "}\n",
+                "math/Math.surtr", "time/Duration.surtr", "time/DateTime.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        // ── surtr.text.Regex (docs/Plan-Roadmap-Novedades.md Fase 0) ────────────────────────────
+
+        private static readonly string[] RegexDeps =
+        {
+            "core/Result.surtr", "collections/Collection.surtr", "collections/List.surtr",
+            "collections/Stack.surtr", "text/StringBuilder.surtr", "text/Regex.surtr",
+        };
+
+        [Fact]
+        public void RegexMatchesLiteralsAndDot()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.text.Regex;\n"
+                    + "fun run(): bool {\n"
+                    + "    let re = Regex.compile(\"a.c\").unwrap();\n"
+                    + "    return re.isMatch(\"abc\") && re.isMatch(\"axc\") && !re.isMatch(\"ac\") && !re.isMatch(\"abd\");\n"
+                    + "}\n",
+                RegexDeps);
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void RegexCharacterClassesAndRanges()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.text.Regex;\n"
+                    + "fun run(): bool {\n"
+                    + "    let re = Regex.compile(\"[a-c0-9]+\").unwrap();\n"
+                    + "    if (!re.isMatch(\"cab12\")) return false;\n"
+                    + "    if (re.isMatch(\"xyz\")) return false;\n"
+                    + "    let negated = Regex.compile(\"[^0-9]+\").unwrap();\n"
+                    + "    return negated.isMatch(\"abc\") && !negated.isMatch(\"123\");\n"
+                    + "}\n",
+                RegexDeps);
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void RegexQuantifiersStarPlusOptAndBounded()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.text.Regex;\n"
+                    + "fun run(): bool {\n"
+                    + "    let star = Regex.compile(\"ab*c\").unwrap();\n"
+                    + "    if (!star.isMatch(\"ac\") || !star.isMatch(\"abbbc\")) return false;\n"
+                    + "    let plus = Regex.compile(\"ab+c\").unwrap();\n"
+                    + "    if (plus.isMatch(\"ac\") || !plus.isMatch(\"abc\")) return false;\n"
+                    + "    let opt = Regex.compile(\"colou?r\").unwrap();\n"
+                    + "    if (!opt.isMatch(\"color\") || !opt.isMatch(\"colour\")) return false;\n"
+                    + "    return true;\n"
+                    + "}\n",
+                RegexDeps);
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void RegexBoundedQuantifierMatchesExactCounts()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.text.Regex;\n"
+                    + "fun run(): bool {\n"
+                    + "    let re = Regex.compile(\"^a{2,3}\\$\").unwrap();\n"
+                    + "    return !re.isMatch(\"a\") && re.isMatch(\"aa\") && re.isMatch(\"aaa\") && !re.isMatch(\"aaaa\");\n"
+                    + "}\n",
+                RegexDeps);
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void RegexAlternation()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.text.Regex;\n"
+                    + "fun run(): bool {\n"
+                    + "    let re = Regex.compile(\"cat|dog|bird\").unwrap();\n"
+                    + "    return re.isMatch(\"I have a dog\") && re.isMatch(\"cat\") && !re.isMatch(\"fish\");\n"
+                    + "}\n",
+                RegexDeps);
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void RegexCaptureGroups()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.text.Regex;\n"
+                    + "fun run(): string {\n"
+                    + "    let re = Regex.compile(\"(\\\\d+)-(\\\\d+)\").unwrap();\n"
+                    + "    let m = re.match(\"12-345\");\n"
+                    + "    if (m == null) return \"NO MATCH\";\n"
+                    + "    let g1 = m.group(1);\n"
+                    + "    let g2 = m.group(2);\n"
+                    + "    if (g1 == null || g2 == null) return \"NULL GROUP\";\n"
+                    + "    return g1 + \"|\" + g2 + \"|\" + m.value;\n"
+                    + "}\n",
+                RegexDeps);
+
+            Assert.Equal("12|345|12-345", Text(runtime, "run"));
+        }
+
+        [Fact]
+        public void RegexAnchorsRestrictToStartAndEnd()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.text.Regex;\n"
+                    + "fun run(): bool {\n"
+                    + "    let re = Regex.compile(\"^abc\\$\").unwrap();\n"
+                    + "    return re.isMatch(\"abc\") && !re.isMatch(\"xabc\") && !re.isMatch(\"abcx\");\n"
+                    + "}\n",
+                RegexDeps);
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void RegexShorthandClasses()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.text.Regex;\n"
+                    + "fun run(): bool {\n"
+                    + "    let digits = Regex.compile(\"\\\\d+\").unwrap();\n"
+                    + "    let words = Regex.compile(\"\\\\w+\").unwrap();\n"
+                    + "    let spaces = Regex.compile(\"a\\\\sb\").unwrap();\n"
+                    + "    return digits.isMatch(\"abc123\") && !digits.isMatch(\"abc\")\n"
+                    + "        && words.isMatch(\"_x9\") && spaces.isMatch(\"a b\") && !spaces.isMatch(\"ab\");\n"
+                    + "}\n",
+                RegexDeps);
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void RegexMatchesFindsEveryNonOverlappingMatch()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.text.Regex;\n"
+                    + "fun run(): int {\n"
+                    + "    let re = Regex.compile(\"\\\\d+\").unwrap();\n"
+                    + "    var count = 0;\n"
+                    + "    for (m in re.matches(\"a1 b22 c333\")) count += 1;\n"
+                    + "    return count;\n"
+                    + "}\n",
+                RegexDeps);
+
+            Assert.Equal(3, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void RegexReplace()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.text.Regex;\n"
+                    + "fun run(): string {\n"
+                    + "    let re = Regex.compile(\"\\\\d+\").unwrap();\n"
+                    + "    return re.replace(\"a1 b22 c333\", \"#\");\n"
+                    + "}\n",
+                RegexDeps);
+
+            Assert.Equal("a# b# c#", Text(runtime, "run"));
+        }
+
+        [Fact]
+        public void RegexSplit()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.text.Regex;\n"
+                    + "fun run(): string {\n"
+                    + "    let re = Regex.compile(\",\\\\s*\").unwrap();\n"
+                    + "    let parts = re.split(\"a, b,c ,  d\");\n"
+                    + "    var joined = \"\";\n"
+                    + "    for (var i = 0; i < parts.length; i++) {\n"
+                    + "        if (i > 0) joined += \"|\";\n"
+                    + "        joined += parts[i];\n"
+                    + "    }\n"
+                    + "    return joined;\n"
+                    + "}\n",
+                RegexDeps);
+
+            Assert.Equal("a|b|c |d", Text(runtime, "run"));
+        }
+
+        [Fact]
+        public void RegexInvalidPatternReturnsAnErrorResult()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.text.Regex;\n"
+                    + "fun run(): bool {\n"
+                    + "    let result = Regex.compile(\"a(b\");\n"
+                    + "    return result.isError;\n"
+                    + "}\n",
+                RegexDeps);
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        /// <summary>
+        /// A classic catastrophic-backtracking pattern - the point is that the sandbox's
+        /// <see cref="SurtrRuntime.InstructionBudget"/> is what stops it (a controlled,
+        /// deterministic abort), not that it silently hangs the process.
+        /// </summary>
+        [Fact]
+        public void RegexPathologicalPatternIsCutOffByTheInstructionBudget_NotAHang()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.text.Regex;\n"
+                    + "fun run(): bool {\n"
+                    + "    let re = Regex.compile(\"(a+)+b\").unwrap();\n"
+                    + "    return re.isMatch(\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac\");\n"
+                    + "}\n",
+                RegexDeps);
+
+            runtime.InstructionBudget = 5_000_000;
+
+            Assert.Throws<SurtrBudgetExceededException>(() => Bool(runtime, "run"));
         }
     }
 }

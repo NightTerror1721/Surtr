@@ -67,10 +67,49 @@ namespace Surtr.Run
             {
                 "run" => Run(args),
                 "list" => List(args),
+                "repl" => Repl(),
                 "help" => OkWith(Usage),
                 "version" => OkWith(() => Console.WriteLine($"surtr {VersionText()}")),
                 _ => Unknown(args[0]),
             };
+        }
+
+        /// <summary>
+        /// An interactive read-eval-print loop over a fresh runtime with the standard library
+        /// loaded, using <see cref="ReplSession"/> for everything but console I/O.
+        /// </summary>
+        private static int Repl()
+        {
+            using var runtime = new SurtrRuntime();
+            SurtrStdlib.LoadAll(runtime);
+            var session = new ReplSession(runtime);
+
+            Console.WriteLine($"surtr {VersionText()} - interactive REPL.");
+            Console.WriteLine("Type a declaration (let/var/fun/class/...) to add it to the session,");
+            Console.WriteLine("or any other expression/statement to run it once. :q to exit.");
+            Console.WriteLine("A module-level 'let'/'var' needs an explicit type, e.g. 'let x: int = 5;'.");
+
+            while (true)
+            {
+                Console.Write("> ");
+                string? line = Console.ReadLine();
+
+                // EOF (Ctrl+D on a pipe, Ctrl+Z on Windows) ends the session the same way :q does.
+                if (line is null)
+                    break;
+
+                string trimmed = line.Trim();
+                if (trimmed is ":q" or ":quit" or "exit" or "quit")
+                    break;
+
+                var outcome = session.Submit(line);
+                if (!outcome.Success)
+                    Console.Error.WriteLine(outcome.Error);
+                else if (outcome.Printed is not null)
+                    Console.WriteLine("=> " + outcome.Printed);
+            }
+
+            return Ok;
         }
 
         private static int Run(string[] args)
@@ -311,6 +350,7 @@ namespace Surtr.Run
             Console.WriteLine("  run <path> <module.path> <function> [args...]");
             Console.WriteLine("  run <file>.surtrx [args...]      run a packaged program");
             Console.WriteLine("  list <path>                      list a path's module-level functions");
+            Console.WriteLine("  repl                              interactive read-eval-print loop");
             Console.WriteLine("  help                            show this help");
             Console.WriteLine("  version                         show the version");
             Console.WriteLine();

@@ -1,0 +1,58 @@
+import surtr.math.Math;
+import surtr.time.Duration;
+
+// Only "what time is it right now" needs the host - everything else (arithmetic, comparison,
+// formatting) is ordinary Surtr over the sampled value, the same split Random.surtr uses for its
+// entropy seed.
+native fun currentUnixSeconds(): float;
+
+// A point in time, UTC, as seconds since the Unix epoch. Deliberately just that: no calendar
+// breakdown (year/month/day/hour) - that needs real Gregorian calendar arithmetic (leap years,
+// days-in-month tables), which is a distinct, much larger piece of work than "a point in time you
+// can compare, subtract and add a Duration to". A host that needs calendar fields already has one
+// on its own side (`DateTimeOffset`) and can convert `unixSeconds` itself.
+public value class DateTime : IComparable<DateTime>, IEquatable<DateTime>
+{
+    private let _unixSeconds: float;
+
+    public constructor(unixSeconds: float)
+    {
+        this._unixSeconds = unixSeconds;
+    }
+
+    @Pure
+    public unixSeconds: float
+    {
+        get { return this._unixSeconds; }
+    }
+
+    public static fun now(): DateTime => DateTime(currentUnixSeconds());
+
+    public static epoch: DateTime => DateTime(0.0);
+
+    /// `this` moved back by `duration`. Not `operator-(DateTime, Duration)`: DateTime already
+    /// spends its one collision-free `-` slot on `operator-(DateTime, DateTime): Duration` below -
+    /// both erase to `op_-(FF)` (single-field value classes erase to their wrapped field), so only
+    /// one of the two can be an operator overload without the two colliding in the method table.
+    public fun subtract(duration: Duration): DateTime => DateTime(_unixSeconds - duration.totalSeconds);
+
+    @Pure
+    public override fun toString(): string => "$_unixSeconds";
+
+    public static fun lerp(a: DateTime, b: DateTime, t: float): DateTime
+    {
+        let ct = clamp01(t);
+        return DateTime(a._unixSeconds + (b._unixSeconds - a._unixSeconds) * ct);
+    }
+
+    operator+(a: DateTime, b: Duration): DateTime { return DateTime(a._unixSeconds + b.totalSeconds); }
+
+    /// Elapsed time from `b` to `a`.
+    operator-(a: DateTime, b: DateTime): Duration { return Duration(a._unixSeconds - b._unixSeconds); }
+
+    inline operator==(a: DateTime, b: DateTime): bool { return a._unixSeconds == b._unixSeconds; }
+    inline operator<=>(a: DateTime, b: DateTime): int { return a._unixSeconds < b._unixSeconds ? -1 : (a._unixSeconds > b._unixSeconds ? 1 : 0); }
+
+    public inline fun equals(other: DateTime): bool => _unixSeconds == other._unixSeconds;
+    public inline fun compareTo(other: DateTime): int => this <=> other;
+}

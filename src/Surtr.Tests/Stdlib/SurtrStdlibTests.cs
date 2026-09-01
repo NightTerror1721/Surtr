@@ -182,13 +182,19 @@ namespace Surtr.Tests.Stdlib
         [Fact]
         public void SelectiveLoadUnionsTheChosenCategories()
         {
+            // Text is not self-sufficient on its own since Regex was added (it needs List/Stack
+            // from Collections, and Result from Core - see StdlibModules.Text's own doc comment),
+            // so this now selects three categories, not two, and asserts what Text now drags in
+            // rather than that it doesn't.
             using var runtime = new SurtrRuntime();
-            SurtrStdlib.LoadInto(runtime, AllImages(), StdlibModules.Math | StdlibModules.Text);
+            SurtrStdlib.LoadInto(runtime, AllImages(), StdlibModules.Math | StdlibModules.Text | StdlibModules.Collections | StdlibModules.Core);
 
             Assert.True(runtime.TryGetModule("surtr.math.Math", out _));
             Assert.True(runtime.TryGetModule("surtr.text.StringBuilder", out _));
-            Assert.False(runtime.TryGetModule("surtr.core.Exception", out _));
-            Assert.False(runtime.TryGetModule("surtr.collections.List", out _));
+            Assert.True(runtime.TryGetModule("surtr.text.Regex", out _));
+            Assert.True(runtime.TryGetModule("surtr.collections.List", out _));
+            Assert.True(runtime.TryGetModule("surtr.core.Result", out _));
+            Assert.False(runtime.TryGetModule("surtr.diagnostics.Assert", out _));
         }
 
         /// <summary><see cref="StdlibModules.All"/> loads everything, matching the unfiltered overload.</summary>

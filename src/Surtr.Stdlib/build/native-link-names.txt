@@ -40,3 +40,4 @@ surtr.math.Math.sin
 surtr.math.Math.sqrt
 surtr.math.Math.tan
 surtr.math.Random.randomSeed
+surtr.time.DateTime.currentUnixSeconds

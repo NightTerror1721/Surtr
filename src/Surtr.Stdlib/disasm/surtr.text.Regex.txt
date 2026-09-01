@@ -1,0 +1,2794 @@
+module surtr.text.Regex
+  constants: 8   types: 22   fields: 30   methods: 81   modules: 0
+  string #0 = "unexpected '"
+  string #1 = "' at position "
+  string #2 = "expected '"
+  string #3 = "expected a number at position "
+  string #4 = "unterminated character class"
+  string #5 = "dangling '\' at end of pattern"
+  string #6 = "'CharClass?' was null where '!!' asserted it was not."
+  string #7 = "'List<Node>?' was null where '!!' asserted it was not."
+
+  type table:
+    #0  surtr.collections.List:List<surtr.text.Regex:CharRange>
+    #1  surtr.text.Regex:CharRange
+    #2  surtr.text.Regex:RegexParseException
+    #3  surtr.collections.List:List<surtr.text.Regex:Node>
+    #4  surtr.text.Regex:Node
+    #5  surtr.text.Regex:CharClass
+    #6  surtr.text.Regex:RegexParser
+    #7  surtr.collections.List:List<surtr.text.Regex:Instr>
+    #8  surtr.collections.List:List<surtr.text.Regex:CharClass>
+    #9  surtr.text.Regex:Instr
+    #10  surtr.text.Regex:Regex
+    #11  surtr:NullReferenceException
+    #12  surtr.collections.List:List<int>
+    #13  generator<surtr.text.Regex:Match>
+    #14  surtr.text.StringBuilder:StringBuilder
+    #15  surtr.text.Regex:Match
+    #16  surtr.collections.List:List<string>
+    #17  string[]
+    #18  string
+    #19  int[]
+    #20  surtr.collections.Stack:Stack<surtr.text.Regex:Thread>
+    #21  surtr.text.Regex:Thread
+
+  field table:
+    #0  surtr.text.Regex:CharRange.lo: char
+    #1  surtr.text.Regex:CharRange.hi: char
+    #2  surtr.text.Regex:CharClass.negate: bool
+    #3  surtr.text.Regex:CharClass._ranges: surtr.collections.List:List<surtr.text.Regex:CharRange>
+    #4  surtr.collections.List:List<._length: int
+    #5  surtr.text.Regex:Node.kind: int
+    #6  surtr.text.Regex:Node.ch: char
+    #7  surtr.text.Regex:Node.charClass: surtr.text.Regex:CharClass
+    #8  surtr.text.Regex:Node.children: surtr.collections.List:List<surtr.text.Regex:Node>
+    #9  surtr.text.Regex:Node.repeatMin: int
+    #10  surtr.text.Regex:Node.repeatMax: int
+    #11  surtr.text.Regex:Node.groupIndex: int
+    #12  surtr.text.Regex:Instr.op: int
+    #13  surtr.text.Regex:Instr.a: int
+    #14  surtr.text.Regex:Instr.b: int
+    #15  surtr.text.Regex:Instr.ch: char
+    #16  surtr.text.Regex:Instr.classIndex: int
+    #17  surtr.text.Regex:Thread.pc: int
+    #18  surtr.text.Regex:Thread.pos: int
+    #19  surtr.text.Regex:Thread.saves: int[]
+    #20  surtr.text.Regex:Match._index: int
+    #21  surtr.text.Regex:Match._value: string
+    #22  surtr.text.Regex:Match._groups: string[]
+    #23  surtr.text.Regex:RegexParser._pattern: string
+    #24  surtr.text.Regex:RegexParser._pos: int
+    #25  surtr.text.Regex:RegexParser._groupCount: int
+    #26  surtr.text.Regex:Regex._instructions: surtr.collections.List:List<surtr.text.Regex:Instr>
+    #27  surtr.text.Regex:Regex._classes: surtr.collections.List:List<surtr.text.Regex:CharClass>
+    #28  surtr.text.Regex:Regex._groupCount: int
+    #29  surtr.collections.Stack:Stack<._items: T0[]
+
+  method table:
+    #0  surtr.text.Regex:RegexParseException.ctor(string) -> void
+    #1  surtr.text.Regex:CharRange.ctor(char, char) -> void
+    #2  surtr.text.Regex:CharClass.ctor(bool) -> void
+    #3  surtr.text.Regex:CharClass.addRange(char, char) -> void
+    #4  surtr.text.Regex:CharClass.addChar(char) -> void
+    #5  surtr.text.Regex:CharClass.matches(char) -> bool
+    #6  surtr.text.Regex:Node.ctor(int) -> void
+    #7  surtr.text.Regex:Instr.ctor(int) -> void
+    #8  surtr.text.Regex:Thread.ctor(int, int, int[]) -> void
+    #9  surtr.text.Regex:Match.ctor(int, string, string[]) -> void
+    #10  surtr.text.Regex:Match.get_index() -> int
+    #11  surtr.text.Regex:Match.get_value() -> string
+    #12  surtr.text.Regex:Match.get_groupCount() -> int
+    #13  surtr.text.Regex:Match.group(int) -> string
+    #14  surtr.text.Regex:Match.toString() -> string
+    #15  surtr.text.Regex:RegexParser.ctor(string) -> void
+    #16  surtr.text.Regex:RegexParser.get_groupCount() -> int
+    #17  surtr.text.Regex:RegexParser.parse() -> surtr.text.Regex:Node
+    #18  surtr.text.Regex:RegexParser.atEnd() -> bool
+    #19  surtr.text.Regex:RegexParser.current() -> char
+    #20  surtr.text.Regex:RegexParser.expect(char) -> void
+    #21  surtr.text.Regex:RegexParser.parseAlt() -> surtr.text.Regex:Node
+    #22  surtr.text.Regex:RegexParser.parseConcat() -> surtr.text.Regex:Node
+    #23  surtr.text.Regex:RegexParser.parseRepeat() -> surtr.text.Regex:Node
+    #24  surtr.text.Regex:RegexParser.singleChild(surtr.text.Regex:Node) -> surtr.collections.List:List<surtr.text.Regex:Node>
+    #25  surtr.text.Regex:RegexParser.parseBoundedRepeat(surtr.text.Regex:Node) -> surtr.text.Regex:Node
+    #26  surtr.text.Regex:RegexParser.parseUnsignedInt() -> int
+    #27  surtr.text.Regex:RegexParser.parseAtom() -> surtr.text.Regex:Node
+    #28  surtr.text.Regex:RegexParser.parseGroup() -> surtr.text.Regex:Node
+    #29  surtr.text.Regex:RegexParser.parseClass() -> surtr.text.Regex:Node
+    #30  surtr.text.Regex:RegexParser.readClassChar() -> char
+    #31  surtr.text.Regex:RegexParser.parseEscape() -> surtr.text.Regex:Node
+    #32  surtr.text.Regex:RegexParser.classNode(surtr.text.Regex:CharClass) -> surtr.text.Regex:Node
+    #33  surtr.text.Regex:RegexParser.readEscapedLiteralChar() -> char
+    #34  surtr.text.Regex:RegexParser.digitClass(bool) -> surtr.text.Regex:CharClass
+    #35  surtr.text.Regex:RegexParser.wordClass(bool) -> surtr.text.Regex:CharClass
+    #36  surtr.text.Regex:RegexParser.spaceClass(bool) -> surtr.text.Regex:CharClass
+    #37  surtr.text.Regex:Regex.ctor(surtr.collections.List:List<surtr.text.Regex:Instr>, surtr.collections.List:List<surtr.text.Regex:CharClass>, int) -> void
+    #38  surtr.text.Regex:Regex.compile(string) -> surtr.core.Result:Result<surtr.text.Regex:Regex, string>
+    #39  surtr.text.Regex:Regex.saveInstr(int) -> surtr.text.Regex:Instr
+    #40  surtr.text.Regex:Regex.emitNode(surtr.text.Regex:Node, surtr.collections.List:List<surtr.text.Regex:Instr>, surtr.collections.List:List<surtr.text.Regex:CharClass>) -> void
+    #41  surtr.text.Regex:Regex.emitChar(char, surtr.collections.List:List<surtr.text.Regex:Instr>) -> void
+    #42  surtr.text.Regex:Regex.emitClass(surtr.text.Regex:CharClass, surtr.collections.List:List<surtr.text.Regex:Instr>, surtr.collections.List:List<surtr.text.Regex:CharClass>) -> void
+    #43  surtr.text.Regex:Regex.emitConcat(surtr.collections.List:List<surtr.text.Regex:Node>, surtr.collections.List:List<surtr.text.Regex:Instr>, surtr.collections.List:List<surtr.text.Regex:CharClass>) -> void
+    #44  surtr.text.Regex:Regex.emitGroup(surtr.text.Regex:Node, surtr.collections.List:List<surtr.text.Regex:Instr>, surtr.collections.List:List<surtr.text.Regex:CharClass>) -> void
+    #45  surtr.text.Regex:Regex.emitAlt(surtr.collections.List:List<surtr.text.Regex:Node>, surtr.collections.List:List<surtr.text.Regex:Instr>, surtr.collections.List:List<surtr.text.Regex:CharClass>) -> void
+    #46  surtr.text.Regex:Regex.emitStar(surtr.text.Regex:Node, surtr.collections.List:List<surtr.text.Regex:Instr>, surtr.collections.List:List<surtr.text.Regex:CharClass>) -> void
+    #47  surtr.text.Regex:Regex.emitPlus(surtr.text.Regex:Node, surtr.collections.List:List<surtr.text.Regex:Instr>, surtr.collections.List:List<surtr.text.Regex:CharClass>) -> void
+    #48  surtr.text.Regex:Regex.emitOpt(surtr.text.Regex:Node, surtr.collections.List:List<surtr.text.Regex:Instr>, surtr.collections.List:List<surtr.text.Regex:CharClass>) -> void
+    #49  surtr.text.Regex:Regex.emitRepeat(surtr.text.Regex:Node, surtr.collections.List:List<surtr.text.Regex:Instr>, surtr.collections.List:List<surtr.text.Regex:CharClass>) -> void
+    #50  surtr.text.Regex:Regex.isMatch(string) -> bool
+    #51  surtr.text.Regex:Regex.match(string) -> surtr.text.Regex:Match
+    #52  surtr.text.Regex:Regex.matches(string) -> generator<surtr.text.Regex:Match>
+    #53  surtr.text.Regex:Regex.$generator$matches$0(string) -> void
+    #54  surtr.text.Regex:Regex.replace(string, string) -> string
+    #55  surtr.text.Regex:Regex.split(string) -> string[]
+    #56  surtr.text.Regex:Regex.tryFind(string, int) -> surtr.text.Regex:Match
+    #57  surtr.text.Regex:Regex.tryMatchAt(string, int) -> surtr.text.Regex:Match
+    #58  surtr.text.Regex:Regex.buildMatch(string, int[]) -> surtr.text.Regex:Match
+    #59  digitValue(char) -> int
+    #60  isDigit(char) -> bool
+    #61  intToString(int) -> string
+    #62  copyOfInts(int[]) -> int[]
+    #63  surtr:Exception.ctor(string) -> void
+    #64  surtr.collections.List:List<.ctor(int) -> void
+    #65  surtr.collections.List:List<.add(T0) -> void
+    #66  surtr.collections.List:List<.get(int) -> T0
+    #67  string.substring(int, int) -> string
+    #68  string.fromChar(char) -> string
+    #69  surtr.core.Result:Result<.ok(T0) -> surtr.core.Result:Result<T0, T1>
+    #70  surtr:Exception.get_message() -> string
+    #71  surtr.core.Result:Result<.error(T1) -> surtr.core.Result:Result<T0, T1>
+    #72  surtr:NullReferenceException.ctor(string) -> void
+    #73  surtr.text.StringBuilder:StringBuilder.ctor(int) -> void
+    #74  surtr.text.StringBuilder:StringBuilder.append(string) -> surtr.text.StringBuilder:StringBuilder
+    #75  generator<>.dispose() -> void
+    #76  surtr.text.StringBuilder:StringBuilder.toString() -> string
+    #77  surtr.collections.Stack:Stack<.ctor() -> void
+    #78  surtr.collections.Stack:Stack<.push(T0) -> void
+    #79  surtr.collections.Stack:Stack<.pop() -> T0
+    #80  int.toString() -> string
+
+[private] static copyOfInts(source: int[]): int[]
+  ; entry 3, locals 3, stack 4, code 0079..0096
+    0079  Ldl0
+    007A  ArrLen
+    007B  ArrNew 19 (int[])
+    007E  Stl1
+    007F  PushI8 0
+    0081  Stl2
+  L0:
+    0082  Ldl2
+    0083  Ldl0
+    0084  ArrLen
+    0085  JPGE +12 -> L1 (0094)
+    0088  Ldl1
+    0089  Ldl2
+    008A  Ldl0
+    008B  Ldl2
+    008C  ArrGet
+    008D  ArrSet
+    008E  IncLocal 2 by 1
+    0091  JP -18 -> L0 (0082)
+  L1:
+    0094  Ldl1
+    0095  ReturnValue
+
+[private] static digitValue(c: char): int
+  ; entry 0, locals 1, stack 2, code 0000..0067
+    0000  Ldl0
+    0001  PushChar '0'
+    0004  JPNE +3 -> L0 (000A)
+    0007  PushI8 0
+    0009  ReturnValue
+  L0:
+    000A  Ldl0
+    000B  PushChar '1'
+    000E  JPNE +3 -> L1 (0014)
+    0011  PushI8 1
+    0013  ReturnValue
+  L1:
+    0014  Ldl0
+    0015  PushChar '2'
+    0018  JPNE +3 -> L2 (001E)
+    001B  PushI8 2
+    001D  ReturnValue
+  L2:
+    001E  Ldl0
+    001F  PushChar '3'
+    0022  JPNE +3 -> L3 (0028)
+    0025  PushI8 3
+    0027  ReturnValue
+  L3:
+    0028  Ldl0
+    0029  PushChar '4'
+    002C  JPNE +3 -> L4 (0032)
+    002F  PushI8 4
+    0031  ReturnValue
+  L4:
+    0032  Ldl0
+    0033  PushChar '5'
+    0036  JPNE +3 -> L5 (003C)
+    0039  PushI8 5
+    003B  ReturnValue
+  L5:
+    003C  Ldl0
+    003D  PushChar '6'
+    0040  JPNE +3 -> L6 (0046)
+    0043  PushI8 6
+    0045  ReturnValue
+  L6:
+    0046  Ldl0
+    0047  PushChar '7'
+    004A  JPNE +3 -> L7 (0050)
+    004D  PushI8 7
+    004F  ReturnValue
+  L7:
+    0050  Ldl0
+    0051  PushChar '8'
+    0054  JPNE +3 -> L8 (005A)
+    0057  PushI8 8
+    0059  ReturnValue
+  L8:
+    005A  Ldl0
+    005B  PushChar '9'
+    005E  JPNE +3 -> L9 (0064)
+    0061  PushI8 9
+    0063  ReturnValue
+  L9:
+    0064  PushI8 -1
+    0066  ReturnValue
+
+[private] static intToString(n: int): string
+  ; entry 2, locals 1, stack 1, code 0071..0079
+    0071  Ldl0
+    0072  BoxInt
+    0073  InvokeVirtual 80 (toString) args=1 ret=1
+    0078  ReturnValue
+
+[private] static isDigit(c: char): bool
+  ; entry 1, locals 1, stack 2, code 0067..0071
+    0067  Ldl0
+    0068  CallLocalModule 59 (digitValue) args=1 ret=1
+    006D  PushI8 0
+    006F  GE
+    0070  ReturnValue
+
+class CharClass : surtr:object  [internal]
+  [private] readonly field _ranges: surtr.collections.List:List<surtr.text.Regex:CharRange>
+  [public] field negate: bool
+
+  [public] addChar(c: char): void
+    ; entry 8, locals 2, stack 5, code 00D3..00E8
+      00D3  Ldl0
+      00D4  FieldGet 3 (_ranges)
+      00D7  ObjNew 1 (surtr.text.Regex:CharRange)
+      00DA  Dup
+      00DB  Ldl1
+      00DC  Ldl1
+      00DD  InvokeSpecial 1 (ctor) args=3 ret=0
+      00E2  InvokeSpecial 65 (add) args=2 ret=0
+      00E7  ReturnVoid
+
+  [public] addRange(lo: char, hi: char): void
+    ; entry 7, locals 3, stack 5, code 00BE..00D3
+      00BE  Ldl0
+      00BF  FieldGet 3 (_ranges)
+      00C2  ObjNew 1 (surtr.text.Regex:CharRange)
+      00C5  Dup
+      00C6  Ldl1
+      00C7  Ldl2
+      00C8  InvokeSpecial 1 (ctor) args=3 ret=0
+      00CD  InvokeSpecial 65 (add) args=2 ret=0
+      00D2  ReturnVoid
+
+  [public] ctor (negate: bool): void
+    ; entry 6, locals 2, stack 4, code 00A9..00BE
+      00A9  Ldl0
+      00AA  Ldl1
+      00AB  FieldSet 2 (negate)
+      00AE  Ldl0
+      00AF  ObjNew 0 (surtr.collections.List:List<surtr.text.Regex:CharRange>)
+      00B2  Dup
+      00B3  PushI8 16
+      00B5  InvokeSpecial 64 (ctor) args=2 ret=0
+      00BA  FieldSet 3 (_ranges)
+      00BD  ReturnVoid
+
+  [public] matches(c: char): bool
+    ; entry 9, locals 6, stack 2, code 00E8..0138
+      00E8  PushFalse
+      00E9  Stl2
+      00EA  PushI8 0
+      00EC  Stl3
+    L0:
+      00ED  Ldl3
+      00EE  Ldl0
+      00EF  FieldGet 3 (_ranges)
+      00F2  Stl4
+      00F3  Ldl4
+      00F4  FieldGet 4 (_length)
+      00F7  JPGE +48 -> L3 (012A)
+      00FA  Ldl0
+      00FB  FieldGet 3 (_ranges)
+      00FE  Ldl3
+      00FF  InvokeSpecial 66 (get) args=2 ret=1
+      0104  Cast 1 (surtr.text.Regex:CharRange)
+      0107  Stl5
+      0108  Ldl1
+      0109  Ldl5
+      010A  FieldGet 0 (lo)
+      010D  GE
+      010E  Dup
+      010F  JPZ +10 -> L1 (011C)
+      0112  Pop
+      0113  Ldl1
+      0114  Ldl5
+      0115  FieldGet 1 (hi)
+      0118  LE
+      0119  JP +0 -> L1 (011C)
+    L1:
+      011C  JPZ +5 -> L2 (0124)
+      011F  PushTrue
+      0120  Stl2
+      0121  JP +6 -> L3 (012A)
+    L2:
+      0124  IncLocal 3 by 1
+      0127  JP -61 -> L0 (00ED)
+    L3:
+      012A  Ldl0
+      012B  FieldGet 2 (negate)
+      012E  JPZ +5 -> L4 (0136)
+      0131  Ldl2
+      0132  Inv
+      0133  JP +1 -> L5 (0137)
+    L4:
+      0136  Ldl2
+    L5:
+      0137  ReturnValue
+
+class CharRange : surtr:object  [internal]
+  [public] field hi: char
+  [public] field lo: char
+
+  [public] ctor (lo: char, hi: char): void
+    ; entry 5, locals 3, stack 2, code 009E..00A9
+      009E  Ldl0
+      009F  Ldl1
+      00A0  FieldSet 0 (lo)
+      00A3  Ldl0
+      00A4  Ldl2
+      00A5  FieldSet 1 (hi)
+      00A8  ReturnVoid
+
+class Instr : surtr:object  [internal]
+  [public] field a: int
+  [public] field b: int
+  [public] field ch: char
+  [public] field classIndex: int
+  [public] field op: int
+
+  [public] ctor (op: int): void
+    ; entry 11, locals 2, stack 2, code 0161..0180
+      0161  Ldl0
+      0162  Ldl1
+      0163  FieldSet 12 (op)
+      0166  Ldl0
+      0167  PushI8 0
+      0169  FieldSet 13 (a)
+      016C  Ldl0
+      016D  PushI8 0
+      016F  FieldSet 14 (b)
+      0172  Ldl0
+      0173  PushChar ' '
+      0176  FieldSet 15 (ch)
+      0179  Ldl0
+      017A  PushI8 0
+      017C  FieldSet 16 (classIndex)
+      017F  ReturnVoid
+
+class Match : surtr:object  [public]
+  [private] readonly field _groups: string[]
+  [private] readonly field _index: int
+  [private] readonly field _value: string
+
+  [public] property groupCount: int { get; }
+    get:
+      ; entry 16, locals 1, stack 1, code 01AA..01B0
+        01AA  Ldl0
+        01AB  FieldGet 22 (_groups)
+        01AE  ArrLen
+        01AF  ReturnValue
+
+  @surtr:Pure
+  [public] property index: int { get; }
+    get:
+      ; entry 14, locals 1, stack 1, code 01A0..01A5
+        01A0  Ldl0
+        01A1  FieldGet 20 (_index)
+        01A4  ReturnValue
+
+  @surtr:Pure
+  [public] property value: string { get; }
+    get:
+      ; entry 15, locals 1, stack 1, code 01A5..01AA
+        01A5  Ldl0
+        01A6  FieldGet 21 (_value)
+        01A9  ReturnValue
+
+  [public] ctor (index: int, value: string, groups: string[]): void
+    ; entry 13, locals 4, stack 2, code 0190..01A0
+      0190  Ldl0
+      0191  Ldl1
+      0192  FieldSet 20 (_index)
+      0195  Ldl0
+      0196  Ldl2
+      0197  FieldSet 21 (_value)
+      019A  Ldl0
+      019B  Ldl3
+      019C  FieldSet 22 (_groups)
+      019F  ReturnVoid
+
+  [public] group(n: int): string
+    ; entry 17, locals 2, stack 3, code 01B0..01DD
+      01B0  Ldl1
+      01B1  PushI8 0
+      01B3  JPNE +5 -> L0 (01BB)
+      01B6  Ldl0
+      01B7  FieldGet 21 (_value)
+      01BA  ReturnValue
+    L0:
+      01BB  Ldl1
+      01BC  PushI8 1
+      01BE  LT
+      01BF  Dup
+      01C0  JPNZ +11 -> L1 (01CE)
+      01C3  Pop
+      01C4  Ldl1
+      01C5  Ldl0
+      01C6  FieldGet 22 (_groups)
+      01C9  ArrLen
+      01CA  GT
+      01CB  JP +0 -> L1 (01CE)
+    L1:
+      01CE  JPZ +2 -> L2 (01D3)
+      01D1  PushNull
+      01D2  ReturnValue
+    L2:
+      01D3  Ldl0
+      01D4  FieldGet 22 (_groups)
+      01D7  Ldl1
+      01D8  PushI8 1
+      01DA  Sub
+      01DB  ArrGet
+      01DC  ReturnValue
+
+  @surtr:Pure
+  [public] virtual override toString(): string
+    ; entry 18, locals 1, stack 1, code 01DD..01E2
+      01DD  Ldl0
+      01DE  FieldGet 21 (_value)
+      01E1  ReturnValue
+
+class Node : surtr:object  [internal]
+  [public] field ch: char
+  [public] field charClass: surtr.text.Regex:CharClass
+  [public] field children: surtr.collections.List:List<surtr.text.Regex:Node>
+  [public] field groupIndex: int
+  [public] field kind: int
+  [public] field repeatMax: int
+  [public] field repeatMin: int
+
+  [public] ctor (kind: int): void
+    ; entry 10, locals 2, stack 2, code 0138..0161
+      0138  Ldl0
+      0139  Ldl1
+      013A  FieldSet 5 (kind)
+      013D  Ldl0
+      013E  PushChar ' '
+      0141  FieldSet 6 (ch)
+      0144  Ldl0
+      0145  PushNull
+      0146  FieldSet 7 (charClass)
+      0149  Ldl0
+      014A  PushNull
+      014B  FieldSet 8 (children)
+      014E  Ldl0
+      014F  PushI8 0
+      0151  FieldSet 9 (repeatMin)
+      0154  Ldl0
+      0155  PushI8 0
+      0157  FieldSet 10 (repeatMax)
+      015A  Ldl0
+      015B  PushI8 0
+      015D  FieldSet 11 (groupIndex)
+      0160  ReturnVoid
+
+class Regex : surtr:object  [public]
+  [private] readonly field _classes: surtr.collections.List:List<surtr.text.Regex:CharClass>
+  [private] readonly field _groupCount: int
+  [private] readonly field _instructions: surtr.collections.List:List<surtr.text.Regex:Instr>
+
+  [private] $generator$matches$0(text: string): void
+    ; entry 57, locals 7, stack 3, code 0E70..0EB0
+      0E70  PushI8 0
+      0E72  Stl2
+    L0:
+      0E73  Ldl2
+      0E74  Ldl1
+      0E75  StrLen
+      0E76  JPGT +54 -> L4 (0EAF)
+      0E79  Ldl0
+      0E7A  Ldl1
+      0E7B  Ldl2
+      0E7C  InvokeSpecial 56 (tryFind) args=3 ret=1
+      0E81  Stl3
+      0E82  Ldl3
+      0E83  JPNN +1 -> L1 (0E87)
+      0E86  ReturnVoid
+    L1:
+      0E87  Ldl3
+      0E88  Yield
+      0E89  Ldl3
+      0E8A  Stl4
+      0E8B  Ldl4
+      0E8C  FieldGet 20 (_index)
+      0E8F  Ldl3
+      0E90  Stl5
+      0E91  Ldl5
+      0E92  FieldGet 21 (_value)
+      0E95  StrLen
+      0E96  PushI8 0
+      0E98  GT
+      0E99  JPZ +12 -> L2 (0EA8)
+      0E9C  Ldl3
+      0E9D  StlS 6
+      0E9F  LdlS 6
+      0EA1  FieldGet 21 (_value)
+      0EA4  StrLen
+      0EA5  JP +2 -> L3 (0EAA)
+    L2:
+      0EA8  PushI8 1
+    L3:
+      0EAA  Add
+      0EAB  Stl2
+      0EAC  JP -60 -> L0 (0E73)
+    L4:
+      0EAF  ReturnVoid
+
+  [private] buildMatch(text: string, saves: int[]): surtr.text.Regex:Match
+    ; entry 62, locals 8, stack 6, code 11BD..123C
+      11BD  Ldl1
+      11BE  Ldl2
+      11BF  PushI8 0
+      11C1  ArrGet
+      11C2  Ldl2
+      11C3  PushI8 1
+      11C5  ArrGet
+      11C6  Ldl2
+      11C7  PushI8 0
+      11C9  ArrGet
+      11CA  Sub
+      11CB  InvokeSpecial 67 (substring) args=3 ret=1
+      11D0  Stl3
+      11D1  Ldl0
+      11D2  FieldGet 28 (_groupCount)
+      11D5  ArrNew 17 (string[])
+      11D8  Stl4
+      11D9  PushI8 0
+      11DB  Stl5
+    L0:
+      11DC  Ldl5
+      11DD  Ldl0
+      11DE  FieldGet 28 (_groupCount)
+      11E1  JPGE +72 -> L4 (122C)
+      11E4  Ldl2
+      11E5  PushI8 2
+      11E7  Ldl5
+      11E8  PushI8 1
+      11EA  Add
+      11EB  Mul
+      11EC  ArrGet
+      11ED  StlS 6
+      11EF  Ldl2
+      11F0  PushI8 2
+      11F2  Ldl5
+      11F3  PushI8 1
+      11F5  Add
+      11F6  Mul
+      11F7  PushI8 1
+      11F9  Add
+      11FA  ArrGet
+      11FB  StlS 7
+      11FD  Ldl4
+      11FE  Ldl5
+      11FF  LdlS 6
+      1201  PushI8 0
+      1203  GE
+      1204  Dup
+      1205  JPZ +9 -> L1 (1211)
+      1208  Pop
+      1209  LdlS 7
+      120B  PushI8 0
+      120D  GE
+      120E  JP +0 -> L1 (1211)
+    L1:
+      1211  JPZ +16 -> L2 (1224)
+      1214  Ldl1
+      1215  LdlS 6
+      1217  LdlS 7
+      1219  LdlS 6
+      121B  Sub
+      121C  InvokeSpecial 67 (substring) args=3 ret=1
+      1221  JP +1 -> L3 (1225)
+    L2:
+      1224  PushNull
+    L3:
+      1225  ArrSet
+      1226  IncLocal 5 by 1
+      1229  JP -80 -> L0 (11DC)
+    L4:
+      122C  ObjNew 15 (surtr.text.Regex:Match)
+      122F  Dup
+      1230  Ldl2
+      1231  PushI8 0
+      1233  ArrGet
+      1234  Ldl3
+      1235  Ldl4
+      1236  InvokeSpecial 9 (ctor) args=4 ret=0
+      123B  ReturnValue
+
+  [public] static compile(pattern: string): surtr.core.Result:Result<surtr.text.Regex:Regex, string>
+    ; entry 42, locals 7, stack 5, code 0939..09BD
+    ; try_0 begin
+      0939  ObjNew 6 (surtr.text.Regex:RegexParser)
+      093C  Dup
+      093D  Ldl0
+      093E  InvokeSpecial 15 (ctor) args=2 ret=0
+      0943  Stl1
+      0944  Ldl1
+      0945  InvokeSpecial 17 (parse) args=1 ret=1
+      094A  Stl2
+      094B  ObjNew 7 (surtr.collections.List:List<surtr.text.Regex:Instr>)
+      094E  Dup
+      094F  PushI8 16
+      0951  InvokeSpecial 64 (ctor) args=2 ret=0
+      0956  Stl3
+      0957  ObjNew 8 (surtr.collections.List:List<surtr.text.Regex:CharClass>)
+      095A  Dup
+      095B  PushI8 16
+      095D  InvokeSpecial 64 (ctor) args=2 ret=0
+      0962  Stl4
+      0963  Ldl3
+      0964  PushI8 0
+      0966  InvokeStatic 39 (saveInstr) args=1 ret=1
+      096B  InvokeSpecial 65 (add) args=2 ret=0
+      0970  Ldl2
+      0971  Ldl3
+      0972  Ldl4
+      0973  InvokeStatic 40 (emitNode) args=3 ret=0
+      0978  Ldl3
+      0979  PushI8 1
+      097B  InvokeStatic 39 (saveInstr) args=1 ret=1
+      0980  InvokeSpecial 65 (add) args=2 ret=0
+      0985  Ldl3
+      0986  ObjNew 9 (surtr.text.Regex:Instr)
+      0989  Dup
+      098A  PushI8 6
+      098C  InvokeSpecial 7 (ctor) args=2 ret=0
+      0991  InvokeSpecial 65 (add) args=2 ret=0
+      0996  ObjNew 10 (surtr.text.Regex:Regex)
+      0999  Dup
+      099A  Ldl3
+      099B  Ldl4
+      099C  Ldl1
+      099D  Stl5
+      099E  Ldl5
+      099F  FieldGet 25 (_groupCount)
+      09A2  InvokeSpecial 37 (ctor) args=4 ret=0
+      09A7  InvokeStatic 69 (ok) args=1 ret=1
+      09AC  ReturnValue
+    ; try_0 end
+    ; catch_0 (surtr.text.Regex:RegexParseException)
+      09AD  StlS 6
+      09AF  LdlS 6
+      09B1  InvokeSpecial 70 (get_message) args=1 ret=1
+      09B6  InvokeStatic 71 (error) args=1 ret=1
+      09BB  ReturnValue
+      09BC  ReturnVoid
+    handler [0939, 09AD) -> 09AD  catch surtr.text.Regex:RegexParseException
+
+  [private] ctor (instructions: surtr.collections.List:List<surtr.text.Regex:Instr>, classes: surtr.collections.List:List<surtr.text.Regex:CharClass>, groupCount: int): void
+    ; entry 41, locals 4, stack 2, code 0929..0939
+      0929  Ldl0
+      092A  Ldl1
+      092B  FieldSet 26 (_instructions)
+      092E  Ldl0
+      092F  Ldl2
+      0930  FieldSet 27 (_classes)
+      0933  Ldl0
+      0934  Ldl3
+      0935  FieldSet 28 (_groupCount)
+      0938  ReturnVoid
+
+  [private] static emitAlt(branches: surtr.collections.List:List<surtr.text.Regex:Node>, prog: surtr.collections.List:List<surtr.text.Regex:Instr>, classes: surtr.collections.List:List<surtr.text.Regex:CharClass>): void
+    ; entry 49, locals 19, stack 4, code 0C08..0D15
+      0C08  Ldl0
+      0C09  Stl3
+      0C0A  Ldl3
+      0C0B  FieldGet 4 (_length)
+      0C0E  PushI8 1
+      0C10  JPNE +19 -> L0 (0C26)
+      0C13  Ldl0
+      0C14  PushI8 0
+      0C16  InvokeSpecial 66 (get) args=2 ret=1
+      0C1B  Cast 4 (surtr.text.Regex:Node)
+      0C1E  Ldl1
+      0C1F  Ldl2
+      0C20  InvokeStatic 40 (emitNode) args=3 ret=0
+      0C25  ReturnVoid
+    L0:
+      0C26  ObjNew 12 (surtr.collections.List:List<int>)
+      0C29  Dup
+      0C2A  PushI8 16
+      0C2C  InvokeSpecial 64 (ctor) args=2 ret=0
+      0C31  Stl4
+      0C32  PushI8 0
+      0C34  Stl5
+    L1:
+      0C35  Ldl5
+      0C36  Ldl0
+      0C37  StlS 6
+      0C39  LdlS 6
+      0C3B  FieldGet 4 (_length)
+      0C3E  PushI8 1
+      0C40  Sub
+      0C41  JPGE +125 -> L2 (0CC1)
+      0C44  Ldl1
+      0C45  StlS 8
+      0C47  LdlS 8
+      0C49  FieldGet 4 (_length)
+      0C4C  StlS 7
+      0C4E  Ldl1
+      0C4F  ObjNew 9 (surtr.text.Regex:Instr)
+      0C52  Dup
+      0C53  PushI8 4
+      0C55  InvokeSpecial 7 (ctor) args=2 ret=0
+      0C5A  InvokeSpecial 65 (add) args=2 ret=0
+      0C5F  Ldl1
+      0C60  LdlS 7
+      0C62  InvokeSpecial 66 (get) args=2 ret=1
+      0C67  Cast 9 (surtr.text.Regex:Instr)
+      0C6A  StlS 9
+      0C6C  LdlS 9
+      0C6E  Ldl1
+      0C6F  StlS 10
+      0C71  LdlS 10
+      0C73  FieldGet 4 (_length)
+      0C76  FieldSet 13 (a)
+      0C79  Ldl0
+      0C7A  Ldl5
+      0C7B  InvokeSpecial 66 (get) args=2 ret=1
+      0C80  Cast 4 (surtr.text.Regex:Node)
+      0C83  Ldl1
+      0C84  Ldl2
+      0C85  InvokeStatic 40 (emitNode) args=3 ret=0
+      0C8A  Ldl1
+      0C8B  StlS 12
+      0C8D  LdlS 12
+      0C8F  FieldGet 4 (_length)
+      0C92  StlS 11
+      0C94  Ldl1
+      0C95  ObjNew 9 (surtr.text.Regex:Instr)
+      0C98  Dup
+      0C99  PushI8 3
+      0C9B  InvokeSpecial 7 (ctor) args=2 ret=0
+      0CA0  InvokeSpecial 65 (add) args=2 ret=0
+      0CA5  Ldl4
+      0CA6  LdlS 11
+      0CA8  BoxInt
+      0CA9  InvokeSpecial 65 (add) args=2 ret=0
+      0CAE  LdlS 9
+      0CB0  Ldl1
+      0CB1  StlS 13
+      0CB3  LdlS 13
+      0CB5  FieldGet 4 (_length)
+      0CB8  FieldSet 14 (b)
+      0CBB  IncLocal 5 by 1
+      0CBE  JP -140 -> L1 (0C35)
+    L2:
+      0CC1  Ldl0
+      0CC2  Ldl0
+      0CC3  StlS 14
+      0CC5  LdlS 14
+      0CC7  FieldGet 4 (_length)
+      0CCA  PushI8 1
+      0CCC  Sub
+      0CCD  InvokeSpecial 66 (get) args=2 ret=1
+      0CD2  Cast 4 (surtr.text.Regex:Node)
+      0CD5  Ldl1
+      0CD6  Ldl2
+      0CD7  InvokeStatic 40 (emitNode) args=3 ret=0
+      0CDC  Ldl1
+      0CDD  StlS 16
+      0CDF  LdlS 16
+      0CE1  FieldGet 4 (_length)
+      0CE4  StlS 15
+      0CE6  PushI8 0
+      0CE8  StlS 17
+    L3:
+      0CEA  LdlS 17
+      0CEC  Ldl4
+      0CED  StlS 18
+      0CEF  LdlS 18
+      0CF1  FieldGet 4 (_length)
+      0CF4  JPGE +29 -> L4 (0D14)
+      0CF7  Ldl1
+      0CF8  Ldl4
+      0CF9  LdlS 17
+      0CFB  InvokeSpecial 66 (get) args=2 ret=1
+      0D00  UnboxDynamic
+      0D01  InvokeSpecial 66 (get) args=2 ret=1
+      0D06  Cast 9 (surtr.text.Regex:Instr)
+      0D09  LdlS 15
+      0D0B  FieldSet 13 (a)
+      0D0E  IncLocal 17 by 1
+      0D11  JP -42 -> L3 (0CEA)
+    L4:
+      0D14  ReturnVoid
+
+  [private] static emitChar(c: char, prog: surtr.collections.List:List<surtr.text.Regex:Instr>): void
+    ; entry 45, locals 3, stack 3, code 0B56..0B6F
+      0B56  ObjNew 9 (surtr.text.Regex:Instr)
+      0B59  Dup
+      0B5A  PushI8 0
+      0B5C  InvokeSpecial 7 (ctor) args=2 ret=0
+      0B61  Stl2
+      0B62  Ldl2
+      0B63  Ldl0
+      0B64  FieldSet 15 (ch)
+      0B67  Ldl1
+      0B68  Ldl2
+      0B69  InvokeSpecial 65 (add) args=2 ret=0
+      0B6E  ReturnVoid
+
+  [private] static emitClass(charClass: surtr.text.Regex:CharClass, prog: surtr.collections.List:List<surtr.text.Regex:Instr>, classes: surtr.collections.List:List<surtr.text.Regex:CharClass>): void
+    ; entry 46, locals 6, stack 3, code 0B6F..0B96
+      0B6F  Ldl2
+      0B70  Stl4
+      0B71  Ldl4
+      0B72  FieldGet 4 (_length)
+      0B75  Stl3
+      0B76  Ldl2
+      0B77  Ldl0
+      0B78  InvokeSpecial 65 (add) args=2 ret=0
+      0B7D  ObjNew 9 (surtr.text.Regex:Instr)
+      0B80  Dup
+      0B81  PushI8 2
+      0B83  InvokeSpecial 7 (ctor) args=2 ret=0
+      0B88  Stl5
+      0B89  Ldl5
+      0B8A  Ldl3
+      0B8B  FieldSet 16 (classIndex)
+      0B8E  Ldl1
+      0B8F  Ldl5
+      0B90  InvokeSpecial 65 (add) args=2 ret=0
+      0B95  ReturnVoid
+
+  [private] static emitConcat(items: surtr.collections.List:List<surtr.text.Regex:Node>, prog: surtr.collections.List:List<surtr.text.Regex:Instr>, classes: surtr.collections.List:List<surtr.text.Regex:CharClass>): void
+    ; entry 47, locals 5, stack 3, code 0B96..0BBB
+      0B96  PushI8 0
+      0B98  Stl3
+    L0:
+      0B99  Ldl3
+      0B9A  Ldl0
+      0B9B  Stl4
+      0B9C  Ldl4
+      0B9D  FieldGet 4 (_length)
+      0BA0  JPGE +23 -> L1 (0BBA)
+      0BA3  Ldl0
+      0BA4  Ldl3
+      0BA5  InvokeSpecial 66 (get) args=2 ret=1
+      0BAA  Cast 4 (surtr.text.Regex:Node)
+      0BAD  Ldl1
+      0BAE  Ldl2
+      0BAF  InvokeStatic 40 (emitNode) args=3 ret=0
+      0BB4  IncLocal 3 by 1
+      0BB7  JP -33 -> L0 (0B99)
+    L1:
+      0BBA  ReturnVoid
+
+  [private] static emitGroup(node: surtr.text.Regex:Node, prog: surtr.collections.List:List<surtr.text.Regex:Instr>, classes: surtr.collections.List:List<surtr.text.Regex:CharClass>): void
+    ; entry 48, locals 3, stack 3, code 0BBB..0C08
+      0BBB  Ldl1
+      0BBC  PushI8 2
+      0BBE  Ldl0
+      0BBF  FieldGet 11 (groupIndex)
+      0BC2  Mul
+      0BC3  InvokeStatic 39 (saveInstr) args=1 ret=1
+      0BC8  InvokeSpecial 65 (add) args=2 ret=0
+      0BCD  Ldl0
+      0BCE  FieldGet 8 (children)
+      0BD1  Dup
+      0BD2  JPNN +12 -> L0 (0BE1)
+      0BD5  Pop
+      0BD6  ObjNew 11 (surtr:NullReferenceException)
+      0BD9  Dup
+      0BDA  Ldc7
+      0BDB  InvokeSpecial 72 (ctor) args=2 ret=0
+      0BE0  Throw
+    L0:
+      0BE1  PushI8 0
+      0BE3  InvokeSpecial 66 (get) args=2 ret=1
+      0BE8  Cast 4 (surtr.text.Regex:Node)
+      0BEB  Ldl1
+      0BEC  Ldl2
+      0BED  InvokeStatic 40 (emitNode) args=3 ret=0
+      0BF2  Ldl1
+      0BF3  PushI8 2
+      0BF5  Ldl0
+      0BF6  FieldGet 11 (groupIndex)
+      0BF9  Mul
+      0BFA  PushI8 1
+      0BFC  Add
+      0BFD  InvokeStatic 39 (saveInstr) args=1 ret=1
+      0C02  InvokeSpecial 65 (add) args=2 ret=0
+      0C07  ReturnVoid
+
+  [private] static emitNode(node: surtr.text.Regex:Node, prog: surtr.collections.List:List<surtr.text.Regex:Instr>, classes: surtr.collections.List:List<surtr.text.Regex:CharClass>): void
+    ; entry 44, locals 3, stack 4, code 09D0..0B56
+      09D0  Ldl0
+      09D1  FieldGet 5 (kind)
+      09D4  PushI8 0
+      09D6  JPNE +11 -> L0 (09E4)
+      09D9  Ldl0
+      09DA  FieldGet 6 (ch)
+      09DD  Ldl1
+      09DE  InvokeStatic 41 (emitChar) args=2 ret=0
+      09E3  ReturnVoid
+    L0:
+      09E4  Ldl0
+      09E5  FieldGet 5 (kind)
+      09E8  PushI8 1
+      09EA  JPNE +18 -> L1 (09FF)
+      09ED  Ldl1
+      09EE  ObjNew 9 (surtr.text.Regex:Instr)
+      09F1  Dup
+      09F2  PushI8 1
+      09F4  InvokeSpecial 7 (ctor) args=2 ret=0
+      09F9  InvokeSpecial 65 (add) args=2 ret=0
+      09FE  ReturnVoid
+    L1:
+      09FF  Ldl0
+      0A00  FieldGet 5 (kind)
+      0A03  PushI8 10
+      0A05  JPNE +18 -> L2 (0A1A)
+      0A08  Ldl1
+      0A09  ObjNew 9 (surtr.text.Regex:Instr)
+      0A0C  Dup
+      0A0D  PushI8 7
+      0A0F  InvokeSpecial 7 (ctor) args=2 ret=0
+      0A14  InvokeSpecial 65 (add) args=2 ret=0
+      0A19  ReturnVoid
+    L2:
+      0A1A  Ldl0
+      0A1B  FieldGet 5 (kind)
+      0A1E  PushI8 11
+      0A20  JPNE +18 -> L3 (0A35)
+      0A23  Ldl1
+      0A24  ObjNew 9 (surtr.text.Regex:Instr)
+      0A27  Dup
+      0A28  PushI8 8
+      0A2A  InvokeSpecial 7 (ctor) args=2 ret=0
+      0A2F  InvokeSpecial 65 (add) args=2 ret=0
+      0A34  ReturnVoid
+    L3:
+      0A35  Ldl0
+      0A36  FieldGet 5 (kind)
+      0A39  PushI8 2
+      0A3B  JPNE +28 -> L5 (0A5A)
+      0A3E  Ldl0
+      0A3F  FieldGet 7 (charClass)
+      0A42  Dup
+      0A43  JPNN +12 -> L4 (0A52)
+      0A46  Pop
+      0A47  ObjNew 11 (surtr:NullReferenceException)
+      0A4A  Dup
+      0A4B  Ldc6
+      0A4C  InvokeSpecial 72 (ctor) args=2 ret=0
+      0A51  Throw
+    L4:
+      0A52  Ldl1
+      0A53  Ldl2
+      0A54  InvokeStatic 42 (emitClass) args=3 ret=0
+      0A59  ReturnVoid
+    L5:
+      0A5A  Ldl0
+      0A5B  FieldGet 5 (kind)
+      0A5E  PushI8 3
+      0A60  JPNE +28 -> L7 (0A7F)
+      0A63  Ldl0
+      0A64  FieldGet 8 (children)
+      0A67  Dup
+      0A68  JPNN +12 -> L6 (0A77)
+      0A6B  Pop
+      0A6C  ObjNew 11 (surtr:NullReferenceException)
+      0A6F  Dup
+      0A70  Ldc7
+      0A71  InvokeSpecial 72 (ctor) args=2 ret=0
+      0A76  Throw
+    L6:
+      0A77  Ldl1
+      0A78  Ldl2
+      0A79  InvokeStatic 43 (emitConcat) args=3 ret=0
+      0A7E  ReturnVoid
+    L7:
+      0A7F  Ldl0
+      0A80  FieldGet 5 (kind)
+      0A83  PushI8 4
+      0A85  JPNE +28 -> L9 (0AA4)
+      0A88  Ldl0
+      0A89  FieldGet 8 (children)
+      0A8C  Dup
+      0A8D  JPNN +12 -> L8 (0A9C)
+      0A90  Pop
+      0A91  ObjNew 11 (surtr:NullReferenceException)
+      0A94  Dup
+      0A95  Ldc7
+      0A96  InvokeSpecial 72 (ctor) args=2 ret=0
+      0A9B  Throw
+    L8:
+      0A9C  Ldl1
+      0A9D  Ldl2
+      0A9E  InvokeStatic 45 (emitAlt) args=3 ret=0
+      0AA3  ReturnVoid
+    L9:
+      0AA4  Ldl0
+      0AA5  FieldGet 5 (kind)
+      0AA8  PushI8 9
+      0AAA  JPNE +9 -> L10 (0AB6)
+      0AAD  Ldl0
+      0AAE  Ldl1
+      0AAF  Ldl2
+      0AB0  InvokeStatic 44 (emitGroup) args=3 ret=0
+      0AB5  ReturnVoid
+    L10:
+      0AB6  Ldl0
+      0AB7  FieldGet 5 (kind)
+      0ABA  PushI8 5
+      0ABC  JPNE +38 -> L12 (0AE5)
+      0ABF  Ldl0
+      0AC0  FieldGet 8 (children)
+      0AC3  Dup
+      0AC4  JPNN +12 -> L11 (0AD3)
+      0AC7  Pop
+      0AC8  ObjNew 11 (surtr:NullReferenceException)
+      0ACB  Dup
+      0ACC  Ldc7
+      0ACD  InvokeSpecial 72 (ctor) args=2 ret=0
+      0AD2  Throw
+    L11:
+      0AD3  PushI8 0
+      0AD5  InvokeSpecial 66 (get) args=2 ret=1
+      0ADA  Cast 4 (surtr.text.Regex:Node)
+      0ADD  Ldl1
+      0ADE  Ldl2
+      0ADF  InvokeStatic 46 (emitStar) args=3 ret=0
+      0AE4  ReturnVoid
+    L12:
+      0AE5  Ldl0
+      0AE6  FieldGet 5 (kind)
+      0AE9  PushI8 6
+      0AEB  JPNE +38 -> L14 (0B14)
+      0AEE  Ldl0
+      0AEF  FieldGet 8 (children)
+      0AF2  Dup
+      0AF3  JPNN +12 -> L13 (0B02)
+      0AF6  Pop
+      0AF7  ObjNew 11 (surtr:NullReferenceException)
+      0AFA  Dup
+      0AFB  Ldc7
+      0AFC  InvokeSpecial 72 (ctor) args=2 ret=0
+      0B01  Throw
+    L13:
+      0B02  PushI8 0
+      0B04  InvokeSpecial 66 (get) args=2 ret=1
+      0B09  Cast 4 (surtr.text.Regex:Node)
+      0B0C  Ldl1
+      0B0D  Ldl2
+      0B0E  InvokeStatic 47 (emitPlus) args=3 ret=0
+      0B13  ReturnVoid
+    L14:
+      0B14  Ldl0
+      0B15  FieldGet 5 (kind)
+      0B18  PushI8 7
+      0B1A  JPNE +38 -> L16 (0B43)
+      0B1D  Ldl0
+      0B1E  FieldGet 8 (children)
+      0B21  Dup
+      0B22  JPNN +12 -> L15 (0B31)
+      0B25  Pop
+      0B26  ObjNew 11 (surtr:NullReferenceException)
+      0B29  Dup
+      0B2A  Ldc7
+      0B2B  InvokeSpecial 72 (ctor) args=2 ret=0
+      0B30  Throw
+    L15:
+      0B31  PushI8 0
+      0B33  InvokeSpecial 66 (get) args=2 ret=1
+      0B38  Cast 4 (surtr.text.Regex:Node)
+      0B3B  Ldl1
+      0B3C  Ldl2
+      0B3D  InvokeStatic 48 (emitOpt) args=3 ret=0
+      0B42  ReturnVoid
+    L16:
+      0B43  Ldl0
+      0B44  FieldGet 5 (kind)
+      0B47  PushI8 8
+      0B49  JPNE +9 -> L17 (0B55)
+      0B4C  Ldl0
+      0B4D  Ldl1
+      0B4E  Ldl2
+      0B4F  InvokeStatic 49 (emitRepeat) args=3 ret=0
+      0B54  ReturnVoid
+    L17:
+      0B55  ReturnVoid
+
+  [private] static emitOpt(child: surtr.text.Regex:Node, prog: surtr.collections.List:List<surtr.text.Regex:Instr>, classes: surtr.collections.List:List<surtr.text.Regex:CharClass>): void
+    ; entry 52, locals 8, stack 4, code 0DA8..0DEC
+      0DA8  Ldl1
+      0DA9  Stl4
+      0DAA  Ldl4
+      0DAB  FieldGet 4 (_length)
+      0DAE  Stl3
+      0DAF  Ldl1
+      0DB0  ObjNew 9 (surtr.text.Regex:Instr)
+      0DB3  Dup
+      0DB4  PushI8 4
+      0DB6  InvokeSpecial 7 (ctor) args=2 ret=0
+      0DBB  InvokeSpecial 65 (add) args=2 ret=0
+      0DC0  Ldl1
+      0DC1  Ldl3
+      0DC2  InvokeSpecial 66 (get) args=2 ret=1
+      0DC7  Cast 9 (surtr.text.Regex:Instr)
+      0DCA  Stl5
+      0DCB  Ldl5
+      0DCC  Ldl1
+      0DCD  StlS 6
+      0DCF  LdlS 6
+      0DD1  FieldGet 4 (_length)
+      0DD4  FieldSet 13 (a)
+      0DD7  Ldl0
+      0DD8  Ldl1
+      0DD9  Ldl2
+      0DDA  InvokeStatic 40 (emitNode) args=3 ret=0
+      0DDF  Ldl5
+      0DE0  Ldl1
+      0DE1  StlS 7
+      0DE3  LdlS 7
+      0DE5  FieldGet 4 (_length)
+      0DE8  FieldSet 14 (b)
+      0DEB  ReturnVoid
+
+  [private] static emitPlus(child: surtr.text.Regex:Node, prog: surtr.collections.List:List<surtr.text.Regex:Instr>, classes: surtr.collections.List:List<surtr.text.Regex:CharClass>): void
+    ; entry 51, locals 7, stack 3, code 0D74..0DA8
+      0D74  Ldl1
+      0D75  Stl4
+      0D76  Ldl4
+      0D77  FieldGet 4 (_length)
+      0D7A  Stl3
+      0D7B  Ldl0
+      0D7C  Ldl1
+      0D7D  Ldl2
+      0D7E  InvokeStatic 40 (emitNode) args=3 ret=0
+      0D83  ObjNew 9 (surtr.text.Regex:Instr)
+      0D86  Dup
+      0D87  PushI8 4
+      0D89  InvokeSpecial 7 (ctor) args=2 ret=0
+      0D8E  Stl5
+      0D8F  Ldl5
+      0D90  Ldl3
+      0D91  FieldSet 13 (a)
+      0D94  Ldl1
+      0D95  Ldl5
+      0D96  InvokeSpecial 65 (add) args=2 ret=0
+      0D9B  Ldl5
+      0D9C  Ldl1
+      0D9D  StlS 6
+      0D9F  LdlS 6
+      0DA1  FieldGet 4 (_length)
+      0DA4  FieldSet 14 (b)
+      0DA7  ReturnVoid
+
+  [private] static emitRepeat(node: surtr.text.Regex:Node, prog: surtr.collections.List:List<surtr.text.Regex:Instr>, classes: surtr.collections.List:List<surtr.text.Regex:CharClass>): void
+    ; entry 53, locals 6, stack 3, code 0DEC..0E52
+      0DEC  Ldl0
+      0DED  FieldGet 8 (children)
+      0DF0  Dup
+      0DF1  JPNN +12 -> L0 (0E00)
+      0DF4  Pop
+      0DF5  ObjNew 11 (surtr:NullReferenceException)
+      0DF8  Dup
+      0DF9  Ldc7
+      0DFA  InvokeSpecial 72 (ctor) args=2 ret=0
+      0DFF  Throw
+    L0:
+      0E00  PushI8 0
+      0E02  InvokeSpecial 66 (get) args=2 ret=1
+      0E07  Cast 4 (surtr.text.Regex:Node)
+      0E0A  Stl3
+      0E0B  PushI8 0
+      0E0D  Stl4
+    L1:
+      0E0E  Ldl4
+      0E0F  Ldl0
+      0E10  FieldGet 9 (repeatMin)
+      0E13  JPGE +14 -> L2 (0E24)
+      0E16  Ldl3
+      0E17  Ldl1
+      0E18  Ldl2
+      0E19  InvokeStatic 40 (emitNode) args=3 ret=0
+      0E1E  IncLocal 4 by 1
+      0E21  JP -22 -> L1 (0E0E)
+    L2:
+      0E24  Ldl0
+      0E25  FieldGet 10 (repeatMax)
+      0E28  PushI8 0
+      0E2A  JPGE +9 -> L3 (0E36)
+      0E2D  Ldl3
+      0E2E  Ldl1
+      0E2F  Ldl2
+      0E30  InvokeStatic 46 (emitStar) args=3 ret=0
+      0E35  ReturnVoid
+    L3:
+      0E36  Ldl0
+      0E37  FieldGet 9 (repeatMin)
+      0E3A  Stl5
+    L4:
+      0E3B  Ldl5
+      0E3C  Ldl0
+      0E3D  FieldGet 10 (repeatMax)
+      0E40  JPGE +14 -> L5 (0E51)
+      0E43  Ldl3
+      0E44  Ldl1
+      0E45  Ldl2
+      0E46  InvokeStatic 48 (emitOpt) args=3 ret=0
+      0E4B  IncLocal 5 by 1
+      0E4E  JP -22 -> L4 (0E3B)
+    L5:
+      0E51  ReturnVoid
+
+  [private] static emitStar(child: surtr.text.Regex:Node, prog: surtr.collections.List:List<surtr.text.Regex:Instr>, classes: surtr.collections.List:List<surtr.text.Regex:CharClass>): void
+    ; entry 50, locals 9, stack 4, code 0D15..0D74
+      0D15  Ldl1
+      0D16  Stl4
+      0D17  Ldl4
+      0D18  FieldGet 4 (_length)
+      0D1B  Stl3
+      0D1C  Ldl1
+      0D1D  ObjNew 9 (surtr.text.Regex:Instr)
+      0D20  Dup
+      0D21  PushI8 4
+      0D23  InvokeSpecial 7 (ctor) args=2 ret=0
+      0D28  InvokeSpecial 65 (add) args=2 ret=0
+      0D2D  Ldl1
+      0D2E  Ldl3
+      0D2F  InvokeSpecial 66 (get) args=2 ret=1
+      0D34  Cast 9 (surtr.text.Regex:Instr)
+      0D37  Stl5
+      0D38  Ldl5
+      0D39  Ldl1
+      0D3A  StlS 6
+      0D3C  LdlS 6
+      0D3E  FieldGet 4 (_length)
+      0D41  FieldSet 13 (a)
+      0D44  Ldl0
+      0D45  Ldl1
+      0D46  Ldl2
+      0D47  InvokeStatic 40 (emitNode) args=3 ret=0
+      0D4C  ObjNew 9 (surtr.text.Regex:Instr)
+      0D4F  Dup
+      0D50  PushI8 3
+      0D52  InvokeSpecial 7 (ctor) args=2 ret=0
+      0D57  StlS 7
+      0D59  LdlS 7
+      0D5B  Ldl3
+      0D5C  FieldSet 13 (a)
+      0D5F  Ldl1
+      0D60  LdlS 7
+      0D62  InvokeSpecial 65 (add) args=2 ret=0
+      0D67  Ldl5
+      0D68  Ldl1
+      0D69  StlS 8
+      0D6B  LdlS 8
+      0D6D  FieldGet 4 (_length)
+      0D70  FieldSet 14 (b)
+      0D73  ReturnVoid
+
+  [public] isMatch(text: string): bool
+    ; entry 54, locals 2, stack 3, code 0E52..0E5D
+      0E52  Ldl0
+      0E53  Ldl1
+      0E54  PushI8 0
+      0E56  InvokeSpecial 56 (tryFind) args=3 ret=1
+      0E5B  IsNotNull
+      0E5C  ReturnValue
+
+  [public] match(text: string): surtr.text.Regex:Match
+    ; entry 55, locals 2, stack 3, code 0E5D..0E67
+      0E5D  Ldl0
+      0E5E  Ldl1
+      0E5F  PushI8 0
+      0E61  InvokeSpecial 56 (tryFind) args=3 ret=1
+      0E66  ReturnValue
+
+  [public] matches(text: string): generator<surtr.text.Regex:Match>
+    ; entry 56, locals 2, stack 2, code 0E67..0E70
+      0E67  Ldl0
+      0E68  Ldl1
+      0E69  GenNew 53 ($generator$matches$0)  13 (generator<surtr.text.Regex:Match>) args=2
+      0E6F  ReturnValue
+
+  [public] replace(text: string, replacement: string): string
+    ; entry 58, locals 11, stack 5, code 0EB0..0F37
+      0EB0  ObjNew 14 (surtr.text.StringBuilder:StringBuilder)
+      0EB3  Dup
+      0EB4  PushI8 16
+      0EB6  InvokeSpecial 73 (ctor) args=2 ret=0
+      0EBB  Stl3
+      0EBC  PushI8 0
+      0EBE  Stl4
+      0EBF  Ldl0
+      0EC0  Ldl1
+      0EC1  InvokeSpecial 52 (matches) args=2 ret=1
+      0EC6  GenIterate
+      0EC7  Stl5
+    ; try_0 begin
+    L0:
+      0EC8  Ldl5
+      0EC9  GenResume
+      0ECA  JPZ +62 -> L1 (0F0B)
+      0ECD  Ldl5
+      0ECE  GenCurrent
+      0ECF  Cast 15 (surtr.text.Regex:Match)
+      0ED2  StlS 6
+      0ED4  Ldl3
+      0ED5  Ldl1
+      0ED6  Ldl4
+      0ED7  LdlS 6
+      0ED9  StlS 7
+      0EDB  LdlS 7
+      0EDD  FieldGet 20 (_index)
+      0EE0  Ldl4
+      0EE1  Sub
+      0EE2  InvokeSpecial 67 (substring) args=3 ret=1
+      0EE7  InvokeSpecial 74 (append) args=2 ret=0
+      0EEC  Ldl3
+      0EED  Ldl2
+      0EEE  InvokeSpecial 74 (append) args=2 ret=0
+      0EF3  LdlS 6
+      0EF5  StlS 8
+      0EF7  LdlS 8
+      0EF9  FieldGet 20 (_index)
+      0EFC  LdlS 6
+      0EFE  StlS 9
+      0F00  LdlS 9
+      0F02  FieldGet 21 (_value)
+      0F05  StrLen
+      0F06  Add
+      0F07  Stl4
+      0F08  JP -67 -> L0 (0EC8)
+    ; try_0 end
+    L1:
+      0F0B  Ldl5
+      0F0C  InvokeVirtual 75 (dispose) args=1 ret=0
+      0F11  JP +11 -> L2 (0F1F)
+    ; catch_0 (*)
+      0F14  StlS 10
+      0F16  Ldl5
+      0F17  InvokeVirtual 75 (dispose) args=1 ret=0
+      0F1C  LdlS 10
+      0F1E  Throw
+    L2:
+      0F1F  Ldl3
+      0F20  Ldl1
+      0F21  Ldl4
+      0F22  Ldl1
+      0F23  StrLen
+      0F24  Ldl4
+      0F25  Sub
+      0F26  InvokeSpecial 67 (substring) args=3 ret=1
+      0F2B  InvokeSpecial 74 (append) args=2 ret=0
+      0F30  Ldl3
+      0F31  InvokeVirtual 76 (toString) args=1 ret=1
+      0F36  ReturnValue
+    handler [0EC8, 0F0B) -> 0F14  catch *
+
+  [private] static saveInstr(slot: int): surtr.text.Regex:Instr
+    ; entry 43, locals 2, stack 3, code 09BD..09D0
+      09BD  ObjNew 9 (surtr.text.Regex:Instr)
+      09C0  Dup
+      09C1  PushI8 5
+      09C3  InvokeSpecial 7 (ctor) args=2 ret=0
+      09C8  Stl1
+      09C9  Ldl1
+      09CA  Ldl0
+      09CB  FieldSet 13 (a)
+      09CE  Ldl1
+      09CF  ReturnValue
+
+  [public] split(text: string): string[]
+    ; entry 59, locals 14, stack 5, code 0F37..0FE3
+      0F37  ObjNew 16 (surtr.collections.List:List<string>)
+      0F3A  Dup
+      0F3B  PushI8 16
+      0F3D  InvokeSpecial 64 (ctor) args=2 ret=0
+      0F42  Stl2
+      0F43  PushI8 0
+      0F45  Stl3
+      0F46  Ldl0
+      0F47  Ldl1
+      0F48  InvokeSpecial 52 (matches) args=2 ret=1
+      0F4D  GenIterate
+      0F4E  Stl4
+    ; try_0 begin
+    L0:
+      0F4F  Ldl4
+      0F50  GenResume
+      0F51  JPZ +51 -> L1 (0F87)
+      0F54  Ldl4
+      0F55  GenCurrent
+      0F56  Cast 15 (surtr.text.Regex:Match)
+      0F59  Stl5
+      0F5A  Ldl2
+      0F5B  Ldl1
+      0F5C  Ldl3
+      0F5D  Ldl5
+      0F5E  StlS 6
+      0F60  LdlS 6
+      0F62  FieldGet 20 (_index)
+      0F65  Ldl3
+      0F66  Sub
+      0F67  InvokeSpecial 67 (substring) args=3 ret=1
+      0F6C  InvokeSpecial 65 (add) args=2 ret=0
+      0F71  Ldl5
+      0F72  StlS 7
+      0F74  LdlS 7
+      0F76  FieldGet 20 (_index)
+      0F79  Ldl5
+      0F7A  StlS 8
+      0F7C  LdlS 8
+      0F7E  FieldGet 21 (_value)
+      0F81  StrLen
+      0F82  Add
+      0F83  Stl3
+      0F84  JP -56 -> L0 (0F4F)
+    ; try_0 end
+    L1:
+      0F87  Ldl4
+      0F88  InvokeVirtual 75 (dispose) args=1 ret=0
+      0F8D  JP +11 -> L2 (0F9B)
+    ; catch_0 (*)
+      0F90  StlS 9
+      0F92  Ldl4
+      0F93  InvokeVirtual 75 (dispose) args=1 ret=0
+      0F98  LdlS 9
+      0F9A  Throw
+    L2:
+      0F9B  Ldl2
+      0F9C  Ldl1
+      0F9D  Ldl3
+      0F9E  Ldl1
+      0F9F  StrLen
+      0FA0  Ldl3
+      0FA1  Sub
+      0FA2  InvokeSpecial 67 (substring) args=3 ret=1
+      0FA7  InvokeSpecial 65 (add) args=2 ret=0
+      0FAC  Ldl2
+      0FAD  StlS 11
+      0FAF  LdlS 11
+      0FB1  FieldGet 4 (_length)
+      0FB4  ArrNew 17 (string[])
+      0FB7  StlS 10
+      0FB9  PushI8 0
+      0FBB  StlS 12
+    L3:
+      0FBD  LdlS 12
+      0FBF  Ldl2
+      0FC0  StlS 13
+      0FC2  LdlS 13
+      0FC4  FieldGet 4 (_length)
+      0FC7  JPGE +22 -> L4 (0FE0)
+      0FCA  LdlS 10
+      0FCC  LdlS 12
+      0FCE  Ldl2
+      0FCF  LdlS 12
+      0FD1  InvokeSpecial 66 (get) args=2 ret=1
+      0FD6  Cast 18 (string)
+      0FD9  ArrSet
+      0FDA  IncLocal 12 by 1
+      0FDD  JP -35 -> L3 (0FBD)
+    L4:
+      0FE0  LdlS 10
+      0FE2  ReturnValue
+    handler [0F4F, 0F87) -> 0F90  catch *
+
+  [private] tryFind(text: string, from: int): surtr.text.Regex:Match
+    ; entry 60, locals 5, stack 3, code 0FE3..1002
+      0FE3  Ldl2
+      0FE4  Stl3
+    L0:
+      0FE5  Ldl3
+      0FE6  Ldl1
+      0FE7  StrLen
+      0FE8  JPGT +21 -> L2 (1000)
+      0FEB  Ldl0
+      0FEC  Ldl1
+      0FED  Ldl3
+      0FEE  InvokeSpecial 57 (tryMatchAt) args=3 ret=1
+      0FF3  Stl4
+      0FF4  Ldl4
+      0FF5  JPN +2 -> L1 (0FFA)
+      0FF8  Ldl4
+      0FF9  ReturnValue
+    L1:
+      0FFA  IncLocal 3 by 1
+      0FFD  JP -27 -> L0 (0FE5)
+    L2:
+      1000  PushNull
+      1001  ReturnValue
+
+  [private] tryMatchAt(text: string, start: int): surtr.text.Regex:Match
+    ; entry 61, locals 13, stack 6, code 1002..11BD
+      1002  PushI8 2
+      1004  Ldl0
+      1005  FieldGet 28 (_groupCount)
+      1008  PushI8 1
+      100A  Add
+      100B  Mul
+      100C  Stl3
+      100D  Ldl3
+      100E  ArrNew 19 (int[])
+      1011  Stl4
+      1012  PushI8 0
+      1014  Stl5
+    L0:
+      1015  Ldl5
+      1016  Ldl3
+      1017  JPGE +11 -> L1 (1025)
+      101A  Ldl4
+      101B  Ldl5
+      101C  PushI8 -1
+      101E  ArrSet
+      101F  IncLocal 5 by 1
+      1022  JP -16 -> L0 (1015)
+    L1:
+      1025  ObjNew 20 (surtr.collections.Stack:Stack<surtr.text.Regex:Thread>)
+      1028  Dup
+      1029  InvokeSpecial 77 (ctor) args=1 ret=0
+      102E  StlS 6
+      1030  PushI8 0
+      1032  StlS 7
+      1034  Ldl2
+      1035  StlS 8
+    L2:
+      1037  Ldl0
+      1038  FieldGet 26 (_instructions)
+      103B  LdlS 7
+      103D  InvokeSpecial 66 (get) args=2 ret=1
+      1042  Cast 9 (surtr.text.Regex:Instr)
+      1045  StlS 9
+      1047  PushTrue
+      1048  StlS 10
+      104A  LdlS 9
+      104C  FieldGet 12 (op)
+      104F  PushI8 0
+      1051  JPNE +41 -> L6 (107D)
+      1054  LdlS 8
+      1056  Ldl1
+      1057  StrLen
+      1058  LT
+      1059  Dup
+      105A  JPZ +14 -> L3 (106B)
+      105D  Pop
+      105E  Ldl1
+      105F  LdlS 8
+      1061  StrGet
+      1062  LdlS 9
+      1064  FieldGet 15 (ch)
+      1067  EQ
+      1068  JP +0 -> L3 (106B)
+    L3:
+      106B  JPZ +9 -> L4 (1077)
+      106E  IncLocal 8 by 1
+      1071  IncLocal 7 by 1
+      1074  JP +3 -> L5 (107A)
+    L4:
+      1077  PushFalse
+      1078  StlS 10
+    L5:
+      107A  JP +260 -> L23 (1181)
+    L6:
+      107D  LdlS 9
+      107F  FieldGet 12 (op)
+      1082  PushI8 1
+      1084  JPNE +22 -> L9 (109D)
+      1087  LdlS 8
+      1089  Ldl1
+      108A  StrLen
+      108B  JPGE +9 -> L7 (1097)
+      108E  IncLocal 8 by 1
+      1091  IncLocal 7 by 1
+      1094  JP +3 -> L8 (109A)
+    L7:
+      1097  PushFalse
+      1098  StlS 10
+    L8:
+      109A  JP +228 -> L23 (1181)
+    L9:
+      109D  LdlS 9
+      109F  FieldGet 12 (op)
+      10A2  PushI8 2
+      10A4  JPNE +57 -> L13 (10E0)
+      10A7  LdlS 8
+      10A9  Ldl1
+      10AA  StrLen
+      10AB  LT
+      10AC  Dup
+      10AD  JPZ +30 -> L10 (10CE)
+      10B0  Pop
+      10B1  Ldl0
+      10B2  FieldGet 27 (_classes)
+      10B5  LdlS 9
+      10B7  FieldGet 16 (classIndex)
+      10BA  InvokeSpecial 66 (get) args=2 ret=1
+      10BF  Cast 5 (surtr.text.Regex:CharClass)
+      10C2  Ldl1
+      10C3  LdlS 8
+      10C5  StrGet
+      10C6  InvokeSpecial 5 (matches) args=2 ret=1
+      10CB  JP +0 -> L10 (10CE)
+    L10:
+      10CE  JPZ +9 -> L11 (10DA)
+      10D1  IncLocal 8 by 1
+      10D4  IncLocal 7 by 1
+      10D7  JP +3 -> L12 (10DD)
+    L11:
+      10DA  PushFalse
+      10DB  StlS 10
+    L12:
+      10DD  JP +161 -> L23 (1181)
+    L13:
+      10E0  LdlS 9
+      10E2  FieldGet 12 (op)
+      10E5  PushI8 3
+      10E7  JPNE +10 -> L14 (10F4)
+      10EA  LdlS 9
+      10EC  FieldGet 13 (a)
+      10EF  StlS 7
+      10F1  JP +141 -> L23 (1181)
+    L14:
+      10F4  LdlS 9
+      10F6  FieldGet 12 (op)
+      10F9  PushI8 4
+      10FB  JPNE +39 -> L15 (1125)
+      10FE  LdlS 6
+      1100  ObjNew 21 (surtr.text.Regex:Thread)
+      1103  Dup
+      1104  LdlS 9
+      1106  FieldGet 14 (b)
+      1109  LdlS 8
+      110B  Ldl4
+      110C  CallLocalModule 62 (copyOfInts) args=1 ret=1
+      1111  InvokeSpecial 8 (ctor) args=4 ret=0
+      1116  InvokeSpecial 78 (push) args=2 ret=0
+      111B  LdlS 9
+      111D  FieldGet 13 (a)
+      1120  StlS 7
+      1122  JP +92 -> L23 (1181)
+    L15:
+      1125  LdlS 9
+      1127  FieldGet 12 (op)
+      112A  PushI8 5
+      112C  JPNE +15 -> L16 (113E)
+      112F  Ldl4
+      1130  LdlS 9
+      1132  FieldGet 13 (a)
+      1135  LdlS 8
+      1137  ArrSet
+      1138  IncLocal 7 by 1
+      113B  JP +67 -> L23 (1181)
+    L16:
+      113E  LdlS 9
+      1140  FieldGet 12 (op)
+      1143  PushI8 7
+      1145  JPNE +19 -> L19 (115B)
+      1148  LdlS 8
+      114A  PushI8 0
+      114C  JPNE +6 -> L17 (1155)
+      114F  IncLocal 7 by 1
+      1152  JP +3 -> L18 (1158)
+    L17:
+      1155  PushFalse
+      1156  StlS 10
+    L18:
+      1158  JP +38 -> L23 (1181)
+    L19:
+      115B  LdlS 9
+      115D  FieldGet 12 (op)
+      1160  PushI8 8
+      1162  JPNE +19 -> L22 (1178)
+      1165  LdlS 8
+      1167  Ldl1
+      1168  StrLen
+      1169  JPNE +6 -> L20 (1172)
+      116C  IncLocal 7 by 1
+      116F  JP +3 -> L21 (1175)
+    L20:
+      1172  PushFalse
+      1173  StlS 10
+    L21:
+      1175  JP +9 -> L23 (1181)
+    L22:
+      1178  Ldl0
+      1179  Ldl1
+      117A  Ldl4
+      117B  InvokeSpecial 58 (buildMatch) args=3 ret=1
+      1180  ReturnValue
+    L23:
+      1181  LdlS 10
+      1183  Inv
+      1184  JPZ +50 -> L25 (11B9)
+      1187  LdlS 6
+      1189  StlS 11
+      118B  LdlS 11
+      118D  FieldGet 29 (_items)
+      1190  ArrLen
+      1191  PushI8 0
+      1193  EQ
+      1194  JPZ +2 -> L24 (1199)
+      1197  PushNull
+      1198  ReturnValue
+    L24:
+      1199  LdlS 6
+      119B  InvokeSpecial 79 (pop) args=1 ret=1
+      11A0  Cast 21 (surtr.text.Regex:Thread)
+      11A3  StlS 12
+      11A5  LdlS 12
+      11A7  FieldGet 17 (pc)
+      11AA  StlS 7
+      11AC  LdlS 12
+      11AE  FieldGet 18 (pos)
+      11B1  StlS 8
+      11B3  LdlS 12
+      11B5  FieldGet 19 (saves)
+      11B8  Stl4
+    L25:
+      11B9  JP -389 -> L2 (1037)
+      11BC  ReturnVoid
+
+class RegexParseException : surtr:Exception  [internal]
+
+  [public] ctor (message: string): void
+    ; entry 4, locals 2, stack 2, code 0096..009E
+      0096  Ldl0
+      0097  Ldl1
+      0098  InvokeSpecial 63 (ctor) args=2 ret=0
+      009D  ReturnVoid
+
+class RegexParser : surtr:object  [internal]
+  [private] field _groupCount: int
+  [private] readonly field _pattern: string
+  [private] field _pos: int
+
+  [public] property groupCount: int { get; }
+    get:
+      ; entry 20, locals 1, stack 1, code 01F4..01F9
+        01F4  Ldl0
+        01F5  FieldGet 25 (_groupCount)
+        01F8  ReturnValue
+
+  [private] atEnd(): bool
+    ; entry 22, locals 1, stack 2, code 0234..023F
+      0234  Ldl0
+      0235  FieldGet 24 (_pos)
+      0238  Ldl0
+      0239  FieldGet 23 (_pattern)
+      023C  StrLen
+      023D  GE
+      023E  ReturnValue
+
+  [private] classNode(charClass: surtr.text.Regex:CharClass): surtr.text.Regex:Node
+    ; entry 36, locals 3, stack 3, code 0849..085C
+      0849  ObjNew 4 (surtr.text.Regex:Node)
+      084C  Dup
+      084D  PushI8 2
+      084F  InvokeSpecial 6 (ctor) args=2 ret=0
+      0854  Stl2
+      0855  Ldl2
+      0856  Ldl1
+      0857  FieldSet 7 (charClass)
+      085A  Ldl2
+      085B  ReturnValue
+
+  [public] ctor (pattern: string): void
+    ; entry 19, locals 2, stack 2, code 01E2..01F4
+      01E2  Ldl0
+      01E3  Ldl1
+      01E4  FieldSet 23 (_pattern)
+      01E7  Ldl0
+      01E8  PushI8 0
+      01EA  FieldSet 24 (_pos)
+      01ED  Ldl0
+      01EE  PushI8 0
+      01F0  FieldSet 25 (_groupCount)
+      01F3  ReturnVoid
+
+  [private] current(): char
+    ; entry 23, locals 1, stack 2, code 023F..0249
+      023F  Ldl0
+      0240  FieldGet 23 (_pattern)
+      0243  Ldl0
+      0244  FieldGet 24 (_pos)
+      0247  StrGet
+      0248  ReturnValue
+
+  [private] digitClass(negate: bool): surtr.text.Regex:CharClass
+    ; entry 38, locals 3, stack 3, code 08A5..08BE
+      08A5  ObjNew 5 (surtr.text.Regex:CharClass)
+      08A8  Dup
+      08A9  Ldl1
+      08AA  InvokeSpecial 2 (ctor) args=2 ret=0
+      08AF  Stl2
+      08B0  Ldl2
+      08B1  PushChar '0'
+      08B4  PushChar '9'
+      08B7  InvokeSpecial 3 (addRange) args=3 ret=0
+      08BC  Ldl2
+      08BD  ReturnValue
+
+  [private] expect(c: char): void
+    ; entry 24, locals 2, stack 6, code 0249..028B
+      0249  Ldl0
+      024A  InvokeSpecial 18 (atEnd) args=1 ret=1
+      024F  Dup
+      0250  JPNZ +12 -> L0 (025F)
+      0253  Pop
+      0254  Ldl0
+      0255  InvokeSpecial 19 (current) args=1 ret=1
+      025A  Ldl1
+      025B  NE
+      025C  JP +0 -> L0 (025F)
+    L0:
+      025F  JPZ +29 -> L1 (027F)
+      0262  ObjNew 2 (surtr.text.Regex:RegexParseException)
+      0265  Dup
+      0266  Ldc2
+      0267  Ldl1
+      0268  InvokeStatic 68 (fromChar) args=1 ret=1
+      026D  Ldc1
+      026E  Ldl0
+      026F  FieldGet 24 (_pos)
+      0272  CallLocalModule 61 (intToString) args=1 ret=1
+      0277  StrCat 4
+      0279  InvokeSpecial 0 (ctor) args=2 ret=0
+      027E  Throw
+    L1:
+      027F  Ldl0
+      0280  Ldl0
+      0281  FieldGet 24 (_pos)
+      0284  PushI8 1
+      0286  Add
+      0287  FieldSet 24 (_pos)
+      028A  ReturnVoid
+
+  [public] parse(): surtr.text.Regex:Node
+    ; entry 21, locals 2, stack 6, code 01F9..0234
+      01F9  Ldl0
+      01FA  InvokeSpecial 21 (parseAlt) args=1 ret=1
+      01FF  Stl1
+      0200  Ldl0
+      0201  FieldGet 24 (_pos)
+      0204  Ldl0
+      0205  FieldGet 23 (_pattern)
+      0208  StrLen
+      0209  JPEQ +38 -> L0 (0232)
+      020C  ObjNew 2 (surtr.text.Regex:RegexParseException)
+      020F  Dup
+      0210  Ldc0
+      0211  Ldl0
+      0212  FieldGet 23 (_pattern)
+      0215  Ldl0
+      0216  FieldGet 24 (_pos)
+      0219  PushI8 1
+      021B  InvokeSpecial 67 (substring) args=3 ret=1
+      0220  Ldc1
+      0221  Ldl0
+      0222  FieldGet 24 (_pos)
+      0225  CallLocalModule 61 (intToString) args=1 ret=1
+      022A  StrCat 4
+      022C  InvokeSpecial 0 (ctor) args=2 ret=0
+      0231  Throw
+    L0:
+      0232  Ldl1
+      0233  ReturnValue
+
+  [private] parseAlt(): surtr.text.Regex:Node
+    ; entry 25, locals 4, stack 3, code 028B..030B
+      028B  Ldl0
+      028C  InvokeSpecial 22 (parseConcat) args=1 ret=1
+      0291  Stl1
+      0292  Ldl0
+      0293  InvokeSpecial 18 (atEnd) args=1 ret=1
+      0298  Dup
+      0299  JPNZ +14 -> L0 (02AA)
+      029C  Pop
+      029D  Ldl0
+      029E  InvokeSpecial 19 (current) args=1 ret=1
+      02A3  PushChar '|'
+      02A6  NE
+      02A7  JP +0 -> L0 (02AA)
+    L0:
+      02AA  JPZ +2 -> L1 (02AF)
+      02AD  Ldl1
+      02AE  ReturnValue
+    L1:
+      02AF  ObjNew 3 (surtr.collections.List:List<surtr.text.Regex:Node>)
+      02B2  Dup
+      02B3  PushI8 16
+      02B5  InvokeSpecial 64 (ctor) args=2 ret=0
+      02BA  Stl2
+      02BB  Ldl2
+      02BC  Ldl1
+      02BD  InvokeSpecial 65 (add) args=2 ret=0
+    L2:
+      02C2  Ldl0
+      02C3  InvokeSpecial 18 (atEnd) args=1 ret=1
+      02C8  Inv
+      02C9  Dup
+      02CA  JPZ +14 -> L3 (02DB)
+      02CD  Pop
+      02CE  Ldl0
+      02CF  InvokeSpecial 19 (current) args=1 ret=1
+      02D4  PushChar '|'
+      02D7  EQ
+      02D8  JP +0 -> L3 (02DB)
+    L3:
+      02DB  JPZ +26 -> L4 (02F8)
+      02DE  Ldl0
+      02DF  Ldl0
+      02E0  FieldGet 24 (_pos)
+      02E3  PushI8 1
+      02E5  Add
+      02E6  FieldSet 24 (_pos)
+      02E9  Ldl2
+      02EA  Ldl0
+      02EB  InvokeSpecial 22 (parseConcat) args=1 ret=1
+      02F0  InvokeSpecial 65 (add) args=2 ret=0
+      02F5  JP -54 -> L2 (02C2)
+    L4:
+      02F8  ObjNew 4 (surtr.text.Regex:Node)
+      02FB  Dup
+      02FC  PushI8 4
+      02FE  InvokeSpecial 6 (ctor) args=2 ret=0
+      0303  Stl3
+      0304  Ldl3
+      0305  Ldl2
+      0306  FieldSet 8 (children)
+      0309  Ldl3
+      030A  ReturnValue
+
+  [private] parseAtom(): surtr.text.Regex:Node
+    ; entry 31, locals 3, stack 3, code 0542..05EB
+      0542  Ldl0
+      0543  InvokeSpecial 19 (current) args=1 ret=1
+      0548  Stl1
+      0549  Ldl1
+      054A  PushChar '.'
+      054D  JPNE +23 -> L0 (0567)
+      0550  Ldl0
+      0551  Ldl0
+      0552  FieldGet 24 (_pos)
+      0555  PushI8 1
+      0557  Add
+      0558  FieldSet 24 (_pos)
+      055B  ObjNew 4 (surtr.text.Regex:Node)
+      055E  Dup
+      055F  PushI8 1
+      0561  InvokeSpecial 6 (ctor) args=2 ret=0
+      0566  ReturnValue
+    L0:
+      0567  Ldl1
+      0568  PushChar '^'
+      056B  JPNE +23 -> L1 (0585)
+      056E  Ldl0
+      056F  Ldl0
+      0570  FieldGet 24 (_pos)
+      0573  PushI8 1
+      0575  Add
+      0576  FieldSet 24 (_pos)
+      0579  ObjNew 4 (surtr.text.Regex:Node)
+      057C  Dup
+      057D  PushI8 10
+      057F  InvokeSpecial 6 (ctor) args=2 ret=0
+      0584  ReturnValue
+    L1:
+      0585  Ldl1
+      0586  PushChar '$'
+      0589  JPNE +23 -> L2 (05A3)
+      058C  Ldl0
+      058D  Ldl0
+      058E  FieldGet 24 (_pos)
+      0591  PushI8 1
+      0593  Add
+      0594  FieldSet 24 (_pos)
+      0597  ObjNew 4 (surtr.text.Regex:Node)
+      059A  Dup
+      059B  PushI8 11
+      059D  InvokeSpecial 6 (ctor) args=2 ret=0
+      05A2  ReturnValue
+    L2:
+      05A3  Ldl1
+      05A4  PushChar '('
+      05A7  JPNE +7 -> L3 (05B1)
+      05AA  Ldl0
+      05AB  InvokeSpecial 28 (parseGroup) args=1 ret=1
+      05B0  ReturnValue
+    L3:
+      05B1  Ldl1
+      05B2  PushChar '['
+      05B5  JPNE +7 -> L4 (05BF)
+      05B8  Ldl0
+      05B9  InvokeSpecial 29 (parseClass) args=1 ret=1
+      05BE  ReturnValue
+    L4:
+      05BF  Ldl1
+      05C0  PushChar '\'
+      05C3  JPNE +7 -> L5 (05CD)
+      05C6  Ldl0
+      05C7  InvokeSpecial 31 (parseEscape) args=1 ret=1
+      05CC  ReturnValue
+    L5:
+      05CD  Ldl0
+      05CE  Ldl0
+      05CF  FieldGet 24 (_pos)
+      05D2  PushI8 1
+      05D4  Add
+      05D5  FieldSet 24 (_pos)
+      05D8  ObjNew 4 (surtr.text.Regex:Node)
+      05DB  Dup
+      05DC  PushI8 0
+      05DE  InvokeSpecial 6 (ctor) args=2 ret=0
+      05E3  Stl2
+      05E4  Ldl2
+      05E5  Ldl1
+      05E6  FieldSet 6 (ch)
+      05E9  Ldl2
+      05EA  ReturnValue
+
+  [private] parseBoundedRepeat(atom: surtr.text.Regex:Node): surtr.text.Regex:Node
+    ; entry 29, locals 5, stack 3, code 043E..04CE
+      043E  Ldl0
+      043F  Ldl0
+      0440  FieldGet 24 (_pos)
+      0443  PushI8 1
+      0445  Add
+      0446  FieldSet 24 (_pos)
+      0449  Ldl0
+      044A  InvokeSpecial 26 (parseUnsignedInt) args=1 ret=1
+      044F  Stl2
+      0450  Ldl2
+      0451  Stl3
+      0452  Ldl0
+      0453  InvokeSpecial 18 (atEnd) args=1 ret=1
+      0458  Inv
+      0459  Dup
+      045A  JPZ +14 -> L0 (046B)
+      045D  Pop
+      045E  Ldl0
+      045F  InvokeSpecial 19 (current) args=1 ret=1
+      0464  PushChar ','
+      0467  EQ
+      0468  JP +0 -> L0 (046B)
+    L0:
+      046B  JPZ +52 -> L4 (04A2)
+      046E  Ldl0
+      046F  Ldl0
+      0470  FieldGet 24 (_pos)
+      0473  PushI8 1
+      0475  Add
+      0476  FieldSet 24 (_pos)
+      0479  Ldl0
+      047A  InvokeSpecial 18 (atEnd) args=1 ret=1
+      047F  Inv
+      0480  Dup
+      0481  JPZ +15 -> L1 (0493)
+      0484  Pop
+      0485  Ldl0
+      0486  InvokeSpecial 19 (current) args=1 ret=1
+      048B  CallLocalModule 60 (isDigit) args=1 ret=1
+      0490  JP +0 -> L1 (0493)
+    L1:
+      0493  JPZ +9 -> L2 (049F)
+      0496  Ldl0
+      0497  InvokeSpecial 26 (parseUnsignedInt) args=1 ret=1
+      049C  JP +2 -> L3 (04A1)
+    L2:
+      049F  PushI8 -1
+    L3:
+      04A1  Stl3
+    L4:
+      04A2  Ldl0
+      04A3  PushChar '}'
+      04A6  InvokeSpecial 20 (expect) args=2 ret=0
+      04AB  ObjNew 4 (surtr.text.Regex:Node)
+      04AE  Dup
+      04AF  PushI8 8
+      04B1  InvokeSpecial 6 (ctor) args=2 ret=0
+      04B6  Stl4
+      04B7  Ldl4
+      04B8  Ldl0
+      04B9  Ldl1
+      04BA  InvokeSpecial 24 (singleChild) args=2 ret=1
+      04BF  FieldSet 8 (children)
+      04C2  Ldl4
+      04C3  Ldl2
+      04C4  FieldSet 9 (repeatMin)
+      04C7  Ldl4
+      04C8  Ldl3
+      04C9  FieldSet 10 (repeatMax)
+      04CC  Ldl4
+      04CD  ReturnValue
+
+  [private] parseClass(): surtr.text.Regex:Node
+    ; entry 33, locals 7, stack 3, code 0634..0734
+      0634  Ldl0
+      0635  Ldl0
+      0636  FieldGet 24 (_pos)
+      0639  PushI8 1
+      063B  Add
+      063C  FieldSet 24 (_pos)
+      063F  PushFalse
+      0640  Stl1
+      0641  Ldl0
+      0642  InvokeSpecial 18 (atEnd) args=1 ret=1
+      0647  Inv
+      0648  Dup
+      0649  JPZ +14 -> L0 (065A)
+      064C  Pop
+      064D  Ldl0
+      064E  InvokeSpecial 19 (current) args=1 ret=1
+      0653  PushChar '^'
+      0656  EQ
+      0657  JP +0 -> L0 (065A)
+    L0:
+      065A  JPZ +13 -> L1 (066A)
+      065D  PushTrue
+      065E  Stl1
+      065F  Ldl0
+      0660  Ldl0
+      0661  FieldGet 24 (_pos)
+      0664  PushI8 1
+      0666  Add
+      0667  FieldSet 24 (_pos)
+    L1:
+      066A  ObjNew 5 (surtr.text.Regex:CharClass)
+      066D  Dup
+      066E  Ldl1
+      066F  InvokeSpecial 2 (ctor) args=2 ret=0
+      0674  Stl2
+      0675  PushTrue
+      0676  Stl3
+    L2:
+      0677  Ldl0
+      0678  InvokeSpecial 18 (atEnd) args=1 ret=1
+      067D  Inv
+      067E  Dup
+      067F  JPZ +23 -> L4 (0699)
+      0682  Pop
+      0683  Ldl0
+      0684  InvokeSpecial 19 (current) args=1 ret=1
+      0689  PushChar ']'
+      068C  NE
+      068D  Dup
+      068E  JPNZ +5 -> L3 (0696)
+      0691  Pop
+      0692  Ldl3
+      0693  JP +0 -> L3 (0696)
+    L3:
+      0696  JP +0 -> L4 (0699)
+    L4:
+      0699  JPZ +121 -> L10 (0715)
+      069C  PushFalse
+      069D  Stl3
+      069E  Ldl0
+      069F  InvokeSpecial 30 (readClassChar) args=1 ret=1
+      06A4  Stl4
+      06A5  Ldl0
+      06A6  InvokeSpecial 18 (atEnd) args=1 ret=1
+      06AB  Inv
+      06AC  Dup
+      06AD  JPZ +14 -> L5 (06BE)
+      06B0  Pop
+      06B1  Ldl0
+      06B2  InvokeSpecial 19 (current) args=1 ret=1
+      06B7  PushChar '-'
+      06BA  EQ
+      06BB  JP +0 -> L5 (06BE)
+    L5:
+      06BE  Dup
+      06BF  JPZ +17 -> L6 (06D3)
+      06C2  Pop
+      06C3  Ldl0
+      06C4  FieldGet 24 (_pos)
+      06C7  PushI8 1
+      06C9  Add
+      06CA  Ldl0
+      06CB  FieldGet 23 (_pattern)
+      06CE  StrLen
+      06CF  LT
+      06D0  JP +0 -> L6 (06D3)
+    L6:
+      06D3  Dup
+      06D4  JPZ +20 -> L7 (06EB)
+      06D7  Pop
+      06D8  Ldl0
+      06D9  FieldGet 23 (_pattern)
+      06DC  Ldl0
+      06DD  FieldGet 24 (_pos)
+      06E0  PushI8 1
+      06E2  Add
+      06E3  StrGet
+      06E4  PushChar ']'
+      06E7  NE
+      06E8  JP +0 -> L7 (06EB)
+    L7:
+      06EB  JPZ +29 -> L8 (070B)
+      06EE  Ldl0
+      06EF  Ldl0
+      06F0  FieldGet 24 (_pos)
+      06F3  PushI8 1
+      06F5  Add
+      06F6  FieldSet 24 (_pos)
+      06F9  Ldl0
+      06FA  InvokeSpecial 30 (readClassChar) args=1 ret=1
+      06FF  Stl5
+      0700  Ldl2
+      0701  Ldl4
+      0702  Ldl5
+      0703  InvokeSpecial 3 (addRange) args=3 ret=0
+      0708  JP +7 -> L9 (0712)
+    L8:
+      070B  Ldl2
+      070C  Ldl4
+      070D  InvokeSpecial 4 (addChar) args=2 ret=0
+    L9:
+      0712  JP -158 -> L2 (0677)
+    L10:
+      0715  Ldl0
+      0716  PushChar ']'
+      0719  InvokeSpecial 20 (expect) args=2 ret=0
+      071E  ObjNew 4 (surtr.text.Regex:Node)
+      0721  Dup
+      0722  PushI8 2
+      0724  InvokeSpecial 6 (ctor) args=2 ret=0
+      0729  StlS 6
+      072B  LdlS 6
+      072D  Ldl2
+      072E  FieldSet 7 (charClass)
+      0731  LdlS 6
+      0733  ReturnValue
+
+  [private] parseConcat(): surtr.text.Regex:Node
+    ; entry 26, locals 4, stack 3, code 030B..037E
+      030B  ObjNew 3 (surtr.collections.List:List<surtr.text.Regex:Node>)
+      030E  Dup
+      030F  PushI8 16
+      0311  InvokeSpecial 64 (ctor) args=2 ret=0
+      0316  Stl1
+    L0:
+      0317  Ldl0
+      0318  InvokeSpecial 18 (atEnd) args=1 ret=1
+      031D  Inv
+      031E  Dup
+      031F  JPZ +14 -> L1 (0330)
+      0322  Pop
+      0323  Ldl0
+      0324  InvokeSpecial 19 (current) args=1 ret=1
+      0329  PushChar '|'
+      032C  NE
+      032D  JP +0 -> L1 (0330)
+    L1:
+      0330  Dup
+      0331  JPZ +14 -> L2 (0342)
+      0334  Pop
+      0335  Ldl0
+      0336  InvokeSpecial 19 (current) args=1 ret=1
+      033B  PushChar ')'
+      033E  NE
+      033F  JP +0 -> L2 (0342)
+    L2:
+      0342  JPZ +15 -> L3 (0354)
+      0345  Ldl1
+      0346  Ldl0
+      0347  InvokeSpecial 23 (parseRepeat) args=1 ret=1
+      034C  InvokeSpecial 65 (add) args=2 ret=0
+      0351  JP -61 -> L0 (0317)
+    L3:
+      0354  Ldl1
+      0355  Stl2
+      0356  Ldl2
+      0357  FieldGet 4 (_length)
+      035A  PushI8 1
+      035C  JPNE +12 -> L4 (036B)
+      035F  Ldl1
+      0360  PushI8 0
+      0362  InvokeSpecial 66 (get) args=2 ret=1
+      0367  Cast 4 (surtr.text.Regex:Node)
+      036A  ReturnValue
+    L4:
+      036B  ObjNew 4 (surtr.text.Regex:Node)
+      036E  Dup
+      036F  PushI8 3
+      0371  InvokeSpecial 6 (ctor) args=2 ret=0
+      0376  Stl3
+      0377  Ldl3
+      0378  Ldl1
+      0379  FieldSet 8 (children)
+      037C  Ldl3
+      037D  ReturnValue
+
+  [private] parseEscape(): surtr.text.Regex:Node
+    ; entry 35, locals 3, stack 4, code 0775..0849
+      0775  Ldl0
+      0776  Ldl0
+      0777  FieldGet 24 (_pos)
+      077A  PushI8 1
+      077C  Add
+      077D  FieldSet 24 (_pos)
+      0780  Ldl0
+      0781  InvokeSpecial 18 (atEnd) args=1 ret=1
+      0786  JPZ +11 -> L0 (0794)
+      0789  ObjNew 2 (surtr.text.Regex:RegexParseException)
+      078C  Dup
+      078D  Ldc5
+      078E  InvokeSpecial 0 (ctor) args=2 ret=0
+      0793  Throw
+    L0:
+      0794  Ldl0
+      0795  InvokeSpecial 19 (current) args=1 ret=1
+      079A  Stl1
+      079B  Ldl1
+      079C  PushChar 'd'
+      079F  EQ
+      07A0  Dup
+      07A1  JPNZ +9 -> L1 (07AD)
+      07A4  Pop
+      07A5  Ldl1
+      07A6  PushChar 'D'
+      07A9  EQ
+      07AA  JP +0 -> L1 (07AD)
+    L1:
+      07AD  JPZ +29 -> L2 (07CD)
+      07B0  Ldl0
+      07B1  Ldl0
+      07B2  FieldGet 24 (_pos)
+      07B5  PushI8 1
+      07B7  Add
+      07B8  FieldSet 24 (_pos)
+      07BB  Ldl0
+      07BC  Ldl0
+      07BD  Ldl1
+      07BE  PushChar 'D'
+      07C1  EQ
+      07C2  InvokeSpecial 34 (digitClass) args=2 ret=1
+      07C7  InvokeSpecial 32 (classNode) args=2 ret=1
+      07CC  ReturnValue
+    L2:
+      07CD  Ldl1
+      07CE  PushChar 'w'
+      07D1  EQ
+      07D2  Dup
+      07D3  JPNZ +9 -> L3 (07DF)
+      07D6  Pop
+      07D7  Ldl1
+      07D8  PushChar 'W'
+      07DB  EQ
+      07DC  JP +0 -> L3 (07DF)
+    L3:
+      07DF  JPZ +29 -> L4 (07FF)
+      07E2  Ldl0
+      07E3  Ldl0
+      07E4  FieldGet 24 (_pos)
+      07E7  PushI8 1
+      07E9  Add
+      07EA  FieldSet 24 (_pos)
+      07ED  Ldl0
+      07EE  Ldl0
+      07EF  Ldl1
+      07F0  PushChar 'W'
+      07F3  EQ
+      07F4  InvokeSpecial 35 (wordClass) args=2 ret=1
+      07F9  InvokeSpecial 32 (classNode) args=2 ret=1
+      07FE  ReturnValue
+    L4:
+      07FF  Ldl1
+      0800  PushChar 's'
+      0803  EQ
+      0804  Dup
+      0805  JPNZ +9 -> L5 (0811)
+      0808  Pop
+      0809  Ldl1
+      080A  PushChar 'S'
+      080D  EQ
+      080E  JP +0 -> L5 (0811)
+    L5:
+      0811  JPZ +29 -> L6 (0831)
+      0814  Ldl0
+      0815  Ldl0
+      0816  FieldGet 24 (_pos)
+      0819  PushI8 1
+      081B  Add
+      081C  FieldSet 24 (_pos)
+      081F  Ldl0
+      0820  Ldl0
+      0821  Ldl1
+      0822  PushChar 'S'
+      0825  EQ
+      0826  InvokeSpecial 36 (spaceClass) args=2 ret=1
+      082B  InvokeSpecial 32 (classNode) args=2 ret=1
+      0830  ReturnValue
+    L6:
+      0831  ObjNew 4 (surtr.text.Regex:Node)
+      0834  Dup
+      0835  PushI8 0
+      0837  InvokeSpecial 6 (ctor) args=2 ret=0
+      083C  Stl2
+      083D  Ldl2
+      083E  Ldl0
+      083F  InvokeSpecial 33 (readEscapedLiteralChar) args=1 ret=1
+      0844  FieldSet 6 (ch)
+      0847  Ldl2
+      0848  ReturnValue
+
+  [private] parseGroup(): surtr.text.Regex:Node
+    ; entry 32, locals 4, stack 3, code 05EB..0634
+      05EB  Ldl0
+      05EC  Ldl0
+      05ED  FieldGet 24 (_pos)
+      05F0  PushI8 1
+      05F2  Add
+      05F3  FieldSet 24 (_pos)
+      05F6  Ldl0
+      05F7  Ldl0
+      05F8  FieldGet 25 (_groupCount)
+      05FB  PushI8 1
+      05FD  Add
+      05FE  FieldSet 25 (_groupCount)
+      0601  Ldl0
+      0602  FieldGet 25 (_groupCount)
+      0605  Stl1
+      0606  Ldl0
+      0607  InvokeSpecial 21 (parseAlt) args=1 ret=1
+      060C  Stl2
+      060D  Ldl0
+      060E  PushChar ')'
+      0611  InvokeSpecial 20 (expect) args=2 ret=0
+      0616  ObjNew 4 (surtr.text.Regex:Node)
+      0619  Dup
+      061A  PushI8 9
+      061C  InvokeSpecial 6 (ctor) args=2 ret=0
+      0621  Stl3
+      0622  Ldl3
+      0623  Ldl0
+      0624  Ldl2
+      0625  InvokeSpecial 24 (singleChild) args=2 ret=1
+      062A  FieldSet 8 (children)
+      062D  Ldl3
+      062E  Ldl1
+      062F  FieldSet 11 (groupIndex)
+      0632  Ldl3
+      0633  ReturnValue
+
+  [private] parseRepeat(): surtr.text.Regex:Node
+    ; entry 27, locals 6, stack 3, code 037E..0429
+      037E  Ldl0
+      037F  InvokeSpecial 27 (parseAtom) args=1 ret=1
+      0384  Stl1
+      0385  Ldl0
+      0386  InvokeSpecial 18 (atEnd) args=1 ret=1
+      038B  JPZ +2 -> L0 (0390)
+      038E  Ldl1
+      038F  ReturnValue
+    L0:
+      0390  Ldl0
+      0391  InvokeSpecial 19 (current) args=1 ret=1
+      0396  Stl2
+      0397  Ldl2
+      0398  PushChar '*'
+      039B  JPNE +36 -> L1 (03C2)
+      039E  Ldl0
+      039F  Ldl0
+      03A0  FieldGet 24 (_pos)
+      03A3  PushI8 1
+      03A5  Add
+      03A6  FieldSet 24 (_pos)
+      03A9  ObjNew 4 (surtr.text.Regex:Node)
+      03AC  Dup
+      03AD  PushI8 5
+      03AF  InvokeSpecial 6 (ctor) args=2 ret=0
+      03B4  Stl3
+      03B5  Ldl3
+      03B6  Ldl0
+      03B7  Ldl1
+      03B8  InvokeSpecial 24 (singleChild) args=2 ret=1
+      03BD  FieldSet 8 (children)
+      03C0  Ldl3
+      03C1  ReturnValue
+    L1:
+      03C2  Ldl2
+      03C3  PushChar '+'
+      03C6  JPNE +36 -> L2 (03ED)
+      03C9  Ldl0
+      03CA  Ldl0
+      03CB  FieldGet 24 (_pos)
+      03CE  PushI8 1
+      03D0  Add
+      03D1  FieldSet 24 (_pos)
+      03D4  ObjNew 4 (surtr.text.Regex:Node)
+      03D7  Dup
+      03D8  PushI8 6
+      03DA  InvokeSpecial 6 (ctor) args=2 ret=0
+      03DF  Stl4
+      03E0  Ldl4
+      03E1  Ldl0
+      03E2  Ldl1
+      03E3  InvokeSpecial 24 (singleChild) args=2 ret=1
+      03E8  FieldSet 8 (children)
+      03EB  Ldl4
+      03EC  ReturnValue
+    L2:
+      03ED  Ldl2
+      03EE  PushChar '?'
+      03F1  JPNE +36 -> L3 (0418)
+      03F4  Ldl0
+      03F5  Ldl0
+      03F6  FieldGet 24 (_pos)
+      03F9  PushI8 1
+      03FB  Add
+      03FC  FieldSet 24 (_pos)
+      03FF  ObjNew 4 (surtr.text.Regex:Node)
+      0402  Dup
+      0403  PushI8 7
+      0405  InvokeSpecial 6 (ctor) args=2 ret=0
+      040A  Stl5
+      040B  Ldl5
+      040C  Ldl0
+      040D  Ldl1
+      040E  InvokeSpecial 24 (singleChild) args=2 ret=1
+      0413  FieldSet 8 (children)
+      0416  Ldl5
+      0417  ReturnValue
+    L3:
+      0418  Ldl2
+      0419  PushChar '{'
+      041C  JPNE +8 -> L4 (0427)
+      041F  Ldl0
+      0420  Ldl1
+      0421  InvokeSpecial 25 (parseBoundedRepeat) args=2 ret=1
+      0426  ReturnValue
+    L4:
+      0427  Ldl1
+      0428  ReturnValue
+
+  [private] parseUnsignedInt(): int
+    ; entry 30, locals 2, stack 4, code 04CE..0542
+      04CE  Ldl0
+      04CF  InvokeSpecial 18 (atEnd) args=1 ret=1
+      04D4  Dup
+      04D5  JPNZ +16 -> L0 (04E8)
+      04D8  Pop
+      04D9  Ldl0
+      04DA  InvokeSpecial 19 (current) args=1 ret=1
+      04DF  CallLocalModule 60 (isDigit) args=1 ret=1
+      04E4  Inv
+      04E5  JP +0 -> L0 (04E8)
+    L0:
+      04E8  JPZ +22 -> L1 (0501)
+      04EB  ObjNew 2 (surtr.text.Regex:RegexParseException)
+      04EE  Dup
+      04EF  Ldc3
+      04F0  Ldl0
+      04F1  FieldGet 24 (_pos)
+      04F4  CallLocalModule 61 (intToString) args=1 ret=1
+      04F9  StrCat 2
+      04FB  InvokeSpecial 0 (ctor) args=2 ret=0
+      0500  Throw
+    L1:
+      0501  PushI8 0
+      0503  Stl1
+    L2:
+      0504  Ldl0
+      0505  InvokeSpecial 18 (atEnd) args=1 ret=1
+      050A  Inv
+      050B  Dup
+      050C  JPZ +15 -> L3 (051E)
+      050F  Pop
+      0510  Ldl0
+      0511  InvokeSpecial 19 (current) args=1 ret=1
+      0516  CallLocalModule 60 (isDigit) args=1 ret=1
+      051B  JP +0 -> L3 (051E)
+    L3:
+      051E  JPZ +31 -> L4 (0540)
+      0521  Ldl1
+      0522  PushI8 10
+      0524  Mul
+      0525  Ldl0
+      0526  InvokeSpecial 19 (current) args=1 ret=1
+      052B  CallLocalModule 59 (digitValue) args=1 ret=1
+      0530  Add
+      0531  Stl1
+      0532  Ldl0
+      0533  Ldl0
+      0534  FieldGet 24 (_pos)
+      0537  PushI8 1
+      0539  Add
+      053A  FieldSet 24 (_pos)
+      053D  JP -60 -> L2 (0504)
+    L4:
+      0540  Ldl1
+      0541  ReturnValue
+
+  [private] readClassChar(): char
+    ; entry 34, locals 2, stack 3, code 0734..0775
+      0734  Ldl0
+      0735  InvokeSpecial 18 (atEnd) args=1 ret=1
+      073A  JPZ +11 -> L0 (0748)
+      073D  ObjNew 2 (surtr.text.Regex:RegexParseException)
+      0740  Dup
+      0741  Ldc4
+      0742  InvokeSpecial 0 (ctor) args=2 ret=0
+      0747  Throw
+    L0:
+      0748  Ldl0
+      0749  InvokeSpecial 19 (current) args=1 ret=1
+      074E  Stl1
+      074F  Ldl1
+      0750  PushChar '\'
+      0753  JPNE +18 -> L1 (0768)
+      0756  Ldl0
+      0757  Ldl0
+      0758  FieldGet 24 (_pos)
+      075B  PushI8 1
+      075D  Add
+      075E  FieldSet 24 (_pos)
+      0761  Ldl0
+      0762  InvokeSpecial 33 (readEscapedLiteralChar) args=1 ret=1
+      0767  ReturnValue
+    L1:
+      0768  Ldl0
+      0769  Ldl0
+      076A  FieldGet 24 (_pos)
+      076D  PushI8 1
+      076F  Add
+      0770  FieldSet 24 (_pos)
+      0773  Ldl1
+      0774  ReturnValue
+
+  [private] readEscapedLiteralChar(): char
+    ; entry 37, locals 2, stack 3, code 085C..08A5
+      085C  Ldl0
+      085D  InvokeSpecial 18 (atEnd) args=1 ret=1
+      0862  JPZ +11 -> L0 (0870)
+      0865  ObjNew 2 (surtr.text.Regex:RegexParseException)
+      0868  Dup
+      0869  Ldc5
+      086A  InvokeSpecial 0 (ctor) args=2 ret=0
+      086F  Throw
+    L0:
+      0870  Ldl0
+      0871  InvokeSpecial 19 (current) args=1 ret=1
+      0876  Stl1
+      0877  Ldl0
+      0878  Ldl0
+      0879  FieldGet 24 (_pos)
+      087C  PushI8 1
+      087E  Add
+      087F  FieldSet 24 (_pos)
+      0882  Ldl1
+      0883  PushChar 'n'
+      0886  JPNE +4 -> L1 (088D)
+      0889  PushChar U+000A
+      088C  ReturnValue
+    L1:
+      088D  Ldl1
+      088E  PushChar 't'
+      0891  JPNE +4 -> L2 (0898)
+      0894  PushChar U+0009
+      0897  ReturnValue
+    L2:
+      0898  Ldl1
+      0899  PushChar 'r'
+      089C  JPNE +4 -> L3 (08A3)
+      089F  PushChar U+000D
+      08A2  ReturnValue
+    L3:
+      08A3  Ldl1
+      08A4  ReturnValue
+
+  [private] singleChild(node: surtr.text.Regex:Node): surtr.collections.List:List<surtr.text.Regex:Node>
+    ; entry 28, locals 3, stack 3, code 0429..043E
+      0429  ObjNew 3 (surtr.collections.List:List<surtr.text.Regex:Node>)
+      042C  Dup
+      042D  PushI8 16
+      042F  InvokeSpecial 64 (ctor) args=2 ret=0
+      0434  Stl2
+      0435  Ldl2
+      0436  Ldl1
+      0437  InvokeSpecial 65 (add) args=2 ret=0
+      043C  Ldl2
+      043D  ReturnValue
+
+  [private] spaceClass(negate: bool): surtr.text.Regex:CharClass
+    ; entry 40, locals 3, stack 3, code 08F8..0929
+      08F8  ObjNew 5 (surtr.text.Regex:CharClass)
+      08FB  Dup
+      08FC  Ldl1
+      08FD  InvokeSpecial 2 (ctor) args=2 ret=0
+      0902  Stl2
+      0903  Ldl2
+      0904  PushChar ' '
+      0907  InvokeSpecial 4 (addChar) args=2 ret=0
+      090C  Ldl2
+      090D  PushChar U+0009
+      0910  InvokeSpecial 4 (addChar) args=2 ret=0
+      0915  Ldl2
+      0916  PushChar U+000A
+      0919  InvokeSpecial 4 (addChar) args=2 ret=0
+      091E  Ldl2
+      091F  PushChar U+000D
+      0922  InvokeSpecial 4 (addChar) args=2 ret=0
+      0927  Ldl2
+      0928  ReturnValue
+
+  [private] wordClass(negate: bool): surtr.text.Regex:CharClass
+    ; entry 39, locals 3, stack 3, code 08BE..08F8
+      08BE  ObjNew 5 (surtr.text.Regex:CharClass)
+      08C1  Dup
+      08C2  Ldl1
+      08C3  InvokeSpecial 2 (ctor) args=2 ret=0
+      08C8  Stl2
+      08C9  Ldl2
+      08CA  PushChar 'a'
+      08CD  PushChar 'z'
+      08D0  InvokeSpecial 3 (addRange) args=3 ret=0
+      08D5  Ldl2
+      08D6  PushChar 'A'
+      08D9  PushChar 'Z'
+      08DC  InvokeSpecial 3 (addRange) args=3 ret=0
+      08E1  Ldl2
+      08E2  PushChar '0'
+      08E5  PushChar '9'
+      08E8  InvokeSpecial 3 (addRange) args=3 ret=0
+      08ED  Ldl2
+      08EE  PushChar '_'
+      08F1  InvokeSpecial 4 (addChar) args=2 ret=0
+      08F6  Ldl2
+      08F7  ReturnValue
+
+class Thread : surtr:object  [internal]
+  [public] field pc: int
+  [public] field pos: int
+  [public] field saves: int[]
+
+  [public] ctor (pc: int, pos: int, saves: int[]): void
+    ; entry 12, locals 4, stack 2, code 0180..0190
+      0180  Ldl0
+      0181  Ldl1
+      0182  FieldSet 17 (pc)
+      0185  Ldl0
+      0186  Ldl2
+      0187  FieldSet 18 (pos)
+      018A  Ldl0
+      018B  Ldl3
+      018C  FieldSet 19 (saves)
+      018F  ReturnVoid

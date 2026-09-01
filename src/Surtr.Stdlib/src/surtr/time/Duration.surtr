@@ -1,0 +1,54 @@
+// A span of time, wrapped as seconds so a signature can say "this is a duration" instead of "this
+// is a float that happens to measure one" - the same reasoning Angle.surtr gives for radians.
+public value class Duration : IComparable<Duration>, IEquatable<Duration>
+{
+    private let _seconds: float;
+
+    public constructor(seconds: float)
+    {
+        this._seconds = seconds;
+    }
+
+    @Pure
+    public totalSeconds: float
+    {
+        get { return this._seconds; }
+    }
+
+    @Pure
+    public totalMilliseconds: float
+    {
+        get { return this._seconds * 1000.0; }
+    }
+
+    @Pure
+    public totalMinutes: float
+    {
+        get { return this._seconds / 60.0; }
+    }
+
+    public static zero: Duration => Duration(0.0);
+
+    public static inline fun fromSeconds(seconds: float): Duration => Duration(seconds);
+    public static inline fun fromMilliseconds(milliseconds: float): Duration => Duration(milliseconds / 1000.0);
+    public static inline fun fromMinutes(minutes: float): Duration => Duration(minutes * 60.0);
+
+    @Pure
+    public override fun toString(): string => "$_seconds s";
+
+    operator+(a: Duration, b: Duration): Duration { return Duration(a._seconds + b._seconds); }
+    operator-(a: Duration, b: Duration): Duration { return Duration(a._seconds - b._seconds); }
+    // No commutative `operator*(scalar: float, a: Duration)`: Duration is a single-field value
+    // class, so it erases to the bare `float` it wraps (§2.9) - that overload and this one would
+    // both erase to the identical signature `op_*(FF)` and collide in the method table, exactly the
+    // case Angle.surtr's own comment documents.
+    operator*(a: Duration, scalar: float): Duration { return Duration(a._seconds * scalar); }
+    operator/(a: Duration, scalar: float): Duration { return Duration(a._seconds / scalar); }
+    operator-(a: Duration): Duration { return Duration(-a._seconds); }
+
+    inline operator==(a: Duration, b: Duration): bool { return a._seconds == b._seconds; }
+    inline operator<=>(a: Duration, b: Duration): int { return a._seconds < b._seconds ? -1 : (a._seconds > b._seconds ? 1 : 0); }
+
+    public inline fun equals(other: Duration): bool => _seconds == other._seconds;
+    public inline fun compareTo(other: Duration): int => this <=> other;
+}

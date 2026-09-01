@@ -70,6 +70,7 @@ it is core object-model machinery, not library content:
 | `Iterator` cursor | `Surtr.Core`'s `SurtrIteratorBuiltIns` |
 | `Math`'s trig/float operations (`sin`, `cos`, `sqrt`, `pow`, `log`, `floor`, `hypot`, …) | **this project**'s `Native/SurtrMathNative.cs`, bound to `surtr.math.Math`'s `native fun` declarations by link name |
 | `Profiler`'s `stopwatchTimestamp`, and `Debug`'s `debugPrint`/`debugDump`/`debugBreakpoint`/`debugStack`/`debugIsDebuggerAttached`, and `RuntimeInfo`'s native property getters | **this project**'s `Native/SurtrDiagnosticsNative.cs` |
+| `DateTime`'s current-time read (`currentUnixSeconds`) | **this project**'s `Native/SurtrTimeNative.cs` |
 
 `Math` and the diagnostics natives are the only members of that list that are *not* core
 object-model content — they need C# only because they call into the CLR (`System.Math`,
@@ -101,6 +102,7 @@ Every module is a file under `src/surtr/`; its dotted path is its location relat
 | `surtr.collections.Map` | `src/surtr/collections/Map.surtr` | `IReadOnlyMap<K,V>`/`IMap<K,V>`, `Map<K,V>` and `ReadOnlyMap<K,V>`, wrapping `{K: V}`. |
 | `surtr.collections.Sequence` | `src/surtr/collections/Sequence.surtr` | `Sequence<T>`, a lazy LINQ-style pipeline (`map`/`filter`/`take`/`zip`/…) built on generators, plus `IIterable<T>` extension methods (`forEach`, `toList`, `toSet`, `reduce`, …). |
 | `surtr.text.StringBuilder` | `src/surtr/text/StringBuilder.surtr` | The `StringBuilder` class. |
+| `surtr.text.Regex` | `src/surtr/text/Regex.surtr` | A real regex engine — literals, `.`, character classes (with `\d`/`\w`/`\s` shorthands), quantifiers `* + ? {n,m}`, alternation, capture groups, anchors. Not self-sufficient alone — see `StdlibModules.Text`'s doc comment for the `Collections`/`Core` it needs. |
 | `surtr.io.Enums` | `src/surtr/io/Enums.surtr` | `SeekOrigin`. |
 | `surtr.io.Stream` | `src/surtr/io/Stream.surtr` | The `IWritableStream`/`IReadableStream`/`ISeekableStream` interfaces, the abstract `Stream` class, and `ObjectDisposedException`/`EndOfStreamException`. |
 | `surtr.io.MemoryStream` | `src/surtr/io/MemoryStream.surtr` | `MemoryStream`, a `Stream` over an in-memory `bytes` buffer. |
@@ -113,6 +115,8 @@ Every module is a file under `src/surtr/`; its dotted path is its location relat
 | `surtr.diagnostics.Log` | `src/surtr/diagnostics/Log.surtr` | `LogLevel`, `LogSink`, `Logger`, and a default-logger module surface (`info`/`warn`/`error`/…). |
 | `surtr.diagnostics.Profiler` | `src/surtr/diagnostics/Profiler.surtr` | `Stopwatch`, `Profiler`/`ProfilerScope`/`ProfilerEntry`, over the native `stopwatchTimestamp`. |
 | `surtr.diagnostics.RuntimeInfo` | `src/surtr/diagnostics/RuntimeInfo.surtr` | `native let` properties (`Platform`, `EngineVersion`, `ProcessorCount`, …) over the host/CLR. |
+| `surtr.time.Duration` | `src/surtr/time/Duration.surtr` | The `Duration` value class — a span of time wrapped as seconds, with arithmetic and comparison. |
+| `surtr.time.DateTime` | `src/surtr/time/DateTime.surtr` | The `DateTime` value class — a point in time (Unix seconds, UTC), with `now()` over a native clock read and arithmetic against `Duration`. No calendar breakdown (year/month/day) — see the file's own header comment for why. |
 
 More modules can be added by dropping a `.surtr` file anywhere under `src/surtr/`; the build picks
 it up automatically. The dividing line to keep: if a member needs `unsafe`, a raw pointer or a VM
