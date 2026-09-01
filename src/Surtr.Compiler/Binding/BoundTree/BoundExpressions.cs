@@ -831,20 +831,35 @@ namespace Surtr.Compiler.Binding.BoundTree
     /// <summary>One arm of a switch expression.</summary>
     public sealed class BoundSwitchArm
     {
-        internal BoundSwitchArm(IReadOnlyList<BoundExpression> values, BoundExpression result)
+        internal BoundSwitchArm(
+            IReadOnlyList<BoundExpression> values,
+            BoundExpression result,
+            LocalSymbol? patternLocal = null,
+            BoundExpression? guard = null)
         {
             Values = values;
             Result = result;
+            PatternLocal = patternLocal;
+            Guard = guard;
         }
 
-        /// <summary>The values it matches, empty for the default arm.</summary>
+        /// <summary>The values it matches, empty for the default arm and for a pattern arm.</summary>
         public IReadOnlyList<BoundExpression> Values { get; }
 
         /// <summary>What it evaluates to.</summary>
         public BoundExpression Result { get; }
 
+        /// <summary>
+        /// The local a type-pattern value (<c>x is Dog -&gt; ...</c>) binds, narrowed to the tested
+        /// type and scoped to this arm alone. Null for an ordinary value arm.
+        /// </summary>
+        public LocalSymbol? PatternLocal { get; }
+
+        /// <summary>The pattern's optional <c>if</c> guard. Only ever set when <see cref="PatternLocal"/> is.</summary>
+        public BoundExpression? Guard { get; }
+
         /// <summary>Whether this is the arm nothing else matched.</summary>
-        public bool IsDefault => Values.Count == 0;
+        public bool IsDefault => Values.Count == 0 && PatternLocal is null;
     }
 
     /// <summary>A switch expression.</summary>

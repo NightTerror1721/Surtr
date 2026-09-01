@@ -275,7 +275,15 @@ namespace Surtr.Compiler.Binding
                         _assigned.UnionWith(before);
                         _reachable = true;
 
-                        foreach (var inner in @switch.Sections[i].Statements)
+                        var section = @switch.Sections[i];
+                        if (section.PatternLocal is not null)
+                        {
+                            _assigned.Add(section.PatternLocal);
+                            if (section.Guard is not null)
+                                Expression(section.Guard);
+                        }
+
+                        foreach (var inner in section.Statements)
                             Statement(inner);
 
                         // Running off any other section runs into the next one; running off the last
@@ -691,6 +699,13 @@ namespace Surtr.Compiler.Binding
                     {
                         foreach (var value in arm.Values)
                             Expression(value);
+
+                        if (arm.PatternLocal is not null)
+                        {
+                            _assigned.Add(arm.PatternLocal);
+                            if (arm.Guard is not null)
+                                Expression(arm.Guard);
+                        }
 
                         Expression(arm.Result);
 

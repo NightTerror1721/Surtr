@@ -39,42 +39,42 @@ enum SeekOrigin : surtr:Enum, surtr:IComparable<surtr.io.Enums:SeekOrigin>, surt
   case End = 2
 
   [private] static static-init cinit(): void
-    ; entry 10, locals 0, stack 1, code 00BB..00CB
-      00BB  PushI8 0
-      00BD  StaticFieldSet 0 (Begin)
-      00C0  PushI8 1
-      00C2  StaticFieldSet 1 (Current)
-      00C5  PushI8 2
-      00C7  StaticFieldSet 2 (End)
-      00CA  ReturnVoid
+    ; entry 10, locals 0, stack 1, code 00B2..00C2
+      00B2  PushI8 0
+      00B4  StaticFieldSet 0 (Begin)
+      00B7  PushI8 1
+      00B9  StaticFieldSet 1 (Current)
+      00BC  PushI8 2
+      00BE  StaticFieldSet 2 (End)
+      00C1  ReturnVoid
 
   @surtr:Pure
   @surtr:NoAlloc
   [public] compareTo(other: surtr.io.Enums:SeekOrigin): int
-    ; entry 6, locals 4, stack 3, code 008D..009B
-      008D  Ldl0
-      008E  Stl2
-      008F  Ldl1
-      0090  Stl3
-      0091  Ldl2
-      0092  Ldl3
-      0093  GT
-      0094  B2I
-      0095  Ldl2
-      0096  Ldl3
-      0097  LT
-      0098  B2I
-      0099  Sub
-      009A  ReturnValue
+    ; entry 6, locals 4, stack 3, code 0084..0092
+      0084  Ldl0
+      0085  Stl2
+      0086  Ldl1
+      0087  Stl3
+      0088  Ldl2
+      0089  Ldl3
+      008A  GT
+      008B  B2I
+      008C  Ldl2
+      008D  Ldl3
+      008E  LT
+      008F  B2I
+      0090  Sub
+      0091  ReturnValue
 
   [public] virtual compareTo(other: unknown): int
-    ; entry 8, locals 2, stack 2, code 00A9..00B3
-      00A9  Ldl0
-      00AA  Unbox
-      00AB  Ldl1
-      00AC  Unbox
-      00AD  InvokeSpecial 6 (compareTo) args=2 ret=1
-      00B2  ReturnValue
+    ; entry 8, locals 2, stack 2, code 00A0..00AA
+      00A0  Ldl0
+      00A1  Unbox
+      00A2  Ldl1
+      00A3  Unbox
+      00A4  InvokeSpecial 6 (compareTo) args=2 ret=1
+      00A9  ReturnValue
 
   @surtr:Pure
   @surtr:NoAlloc
@@ -95,11 +95,11 @@ enum SeekOrigin : surtr:Enum, surtr:IComparable<surtr.io.Enums:SeekOrigin>, surt
       0013  ReturnValue
 
   [public] virtual equals(other: unknown): bool
-    ; entry 9, locals 2, stack 2, code 00B3..00BB
-      00B3  Ldl0
-      00B4  Ldl1
-      00B5  InvokeVirtual 0 (equals) args=2 ret=1
-      00BA  ReturnValue
+    ; entry 9, locals 2, stack 2, code 00AA..00B2
+      00AA  Ldl0
+      00AB  Ldl1
+      00AC  InvokeVirtual 0 (equals) args=2 ret=1
+      00B1  ReturnValue
 
   @surtr:Pure
   @surtr:NoAlloc
@@ -112,69 +112,69 @@ enum SeekOrigin : surtr:Enum, surtr:IComparable<surtr.io.Enums:SeekOrigin>, surt
   @surtr:Pure
   @surtr:NoAlloc
   [public] static of(value: int): surtr.io.Enums:SeekOrigin
-    ; entry 4, locals 1, stack 2, code 004E..006F
-      004E  Ldl0
-      004F  PushI8 0
-      0051  JPNE +4 -> L0 (0058)
-      0054  StaticFieldGet 0 (Begin)
-      0057  ReturnValue
+    ; entry 4, locals 1, stack 2, code 004B..0069
+      004B  Ldl0
+      004C  PushI8 0
+      004E  JPNE +3 -> L0 (0054)
+      0051  PushI8 0
+      0053  ReturnValue
     L0:
-      0058  Ldl0
-      0059  PushI8 1
-      005B  JPNE +4 -> L1 (0062)
-      005E  StaticFieldGet 1 (Current)
-      0061  ReturnValue
+      0054  Ldl0
+      0055  PushI8 1
+      0057  JPNE +3 -> L1 (005D)
+      005A  PushI8 1
+      005C  ReturnValue
     L1:
-      0062  Ldl0
+      005D  Ldl0
+      005E  PushI8 2
+      0060  JPNE +3 -> L2 (0066)
       0063  PushI8 2
-      0065  JPNE +4 -> L2 (006C)
-      0068  StaticFieldGet 2 (End)
-      006B  ReturnValue
+      0065  ReturnValue
     L2:
-      006C  PushAbsent 1
-      006E  ReturnValue
+      0066  PushAbsent 1
+      0068  ReturnValue
 
   @surtr:Pure
   @surtr:NoAlloc
   [public] static of(name: string): surtr.io.Enums:SeekOrigin
-    ; entry 5, locals 1, stack 2, code 006F..008D
-      006F  Ldl0
-      0070  Ldc0
-      0071  JPStrNE +4 -> L0 (0078)
-      0074  StaticFieldGet 0 (Begin)
-      0077  ReturnValue
+    ; entry 5, locals 1, stack 2, code 0069..0084
+      0069  Ldl0
+      006A  Ldc0
+      006B  JPStrNE +3 -> L0 (0071)
+      006E  PushI8 0
+      0070  ReturnValue
     L0:
-      0078  Ldl0
-      0079  Ldc1
-      007A  JPStrNE +4 -> L1 (0081)
-      007D  StaticFieldGet 1 (Current)
-      0080  ReturnValue
+      0071  Ldl0
+      0072  Ldc1
+      0073  JPStrNE +3 -> L1 (0079)
+      0076  PushI8 1
+      0078  ReturnValue
     L1:
-      0081  Ldl0
-      0082  Ldc2
-      0083  JPStrNE +4 -> L2 (008A)
-      0086  StaticFieldGet 2 (End)
-      0089  ReturnValue
+      0079  Ldl0
+      007A  Ldc2
+      007B  JPStrNE +3 -> L2 (0081)
+      007E  PushI8 2
+      0080  ReturnValue
     L2:
-      008A  PushAbsent 1
-      008C  ReturnValue
+      0081  PushAbsent 1
+      0083  ReturnValue
 
   [public] static op_<=>(a: surtr.io.Enums:SeekOrigin, b: surtr.io.Enums:SeekOrigin): int
-    ; entry 7, locals 4, stack 3, code 009B..00A9
-      009B  Ldl0
-      009C  Stl2
-      009D  Ldl1
-      009E  Stl3
-      009F  Ldl2
-      00A0  Ldl3
-      00A1  GT
-      00A2  B2I
-      00A3  Ldl2
-      00A4  Ldl3
-      00A5  LT
-      00A6  B2I
-      00A7  Sub
-      00A8  ReturnValue
+    ; entry 7, locals 4, stack 3, code 0092..00A0
+      0092  Ldl0
+      0093  Stl2
+      0094  Ldl1
+      0095  Stl3
+      0096  Ldl2
+      0097  Ldl3
+      0098  GT
+      0099  B2I
+      009A  Ldl2
+      009B  Ldl3
+      009C  LT
+      009D  B2I
+      009E  Sub
+      009F  ReturnValue
 
   @surtr:Pure
   [public] virtual override toString(): string
@@ -210,9 +210,9 @@ enum SeekOrigin : surtr:Enum, surtr:IComparable<surtr.io.Enums:SeekOrigin>, surt
       003E  ReturnValue
 
   [public] static values(): surtr.io.Enums:SeekOrigin[]
-    ; entry 3, locals 0, stack 3, code 003F..004E
-      003F  StaticFieldGet 0 (Begin)
-      0042  StaticFieldGet 1 (Current)
-      0045  StaticFieldGet 2 (End)
-      0048  ArrPack 1 (surtr.io.Enums:SeekOrigin[]) count=3
-      004D  ReturnValue
+    ; entry 3, locals 0, stack 3, code 003F..004B
+      003F  PushI8 0
+      0041  PushI8 1
+      0043  PushI8 2
+      0045  ArrPack 1 (surtr.io.Enums:SeekOrigin[]) count=3
+      004A  ReturnValue

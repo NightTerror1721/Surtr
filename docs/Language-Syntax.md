@@ -1556,13 +1556,30 @@ over that enum into a compile error until it's updated, rather than the new case
 through an existing `else`. The statement form is unaffected by this — `switch` as a statement
 never requires a `default`, since it isn't required to produce a value.
 
-**Neither form does pattern matching beyond value/type equality** — no destructuring, no type
-patterns as a case in a value-`switch`. `catch (e: T)` (§9) already matches by declared exception
-type, which is as far as this goes for now; a `switch (x)` case is always compared to `x` by
-value. Building real pattern matching is a substantially bigger piece of compiler design than
-anything else in this document, and nothing here needs it yet — deferred until it's a concrete
-need rather than spec'd speculatively; adding case forms later is additive to the grammar already
-fixed here, not a breaking change to it.
+**A case can also be a type pattern**, written with the `is` operator already defined in §5.7 rather
+than new grammar: `case x is Dog:` in the statement form, `x is Dog -> ...` in the expression form.
+The label declares a new, read-only local (`x`) narrowed to the tested type and scoped to that
+section/arm alone — unlike an ordinary value section's locals, which stay visible in a later section
+for fallthrough (§4.4), a pattern's binding does not leak, the same way a `catch (e: T)` clause's
+exception local is scoped to its own clause and no other. An optional guard may follow, before the
+`:`/`->`: `case x is Dog if x.age > 2:` / `x is Dog if x.age > 2 -> ...`.
+
+A section/arm using a type pattern must have **exactly one label** — combining a pattern with a
+value label, or with another pattern, in the same section is rejected outright rather than guessed
+at. A guard is only legal on such a lone pattern label. **The expression form always needs an
+explicit `else` when any arm is a pattern**: unlike an enum, whose cases are fixed at its own
+declaration, the compiler cannot prove a set of type patterns covers every case, so the exhaustiveness
+check (above) does not attempt it and requires the fallback instead.
+
+Compiling a type-pattern switch costs nothing on a switch that has none: the moment any label is not
+foldable to an enum/integer constant, dispatch already falls back to a comparison chain rather than
+`Switch`/`SwitchLookup` — a type pattern is just one more thing that chain can test, via the same
+`InstanceOf`-based branch `if (x is T)` already compiles to. No opcode, VM change, or bytecode format
+change was needed.
+
+**Destructuring — tuples, value classes, arrays inside a pattern — remains deferred**, along with any
+attempt at exhaustiveness over a type hierarchy. Both are additive to the grammar fixed here, not a
+breaking change to it, and are left for a concrete need rather than speculated ahead of one.
 
 ### 4.4 Blocks and scoping
 
@@ -3721,9 +3738,10 @@ pieces that remain.
 Each of these was considered and deliberately left out, and each is **additive** — adding it later
 does not invalidate anything written against this document.
 
-- **Pattern matching** (§4.3) — type patterns in `switch` and destructuring. The narrowing that
-  lets `if (x is Dog)` (§5.7) make `x` a `Dog` inside the branch already exists (§5.1); what
-  remains deferred is the broader pattern surface it was going to arrive with.
+- ~~**Pattern matching**~~ **Built for type patterns** (§4.3) — `case x is Dog:` / `x is Dog -> ...`,
+  with an optional guard, reusing the `is` narrowing §5.1 already gives `if (x is Dog)`. What remains
+  deferred is destructuring a pattern's shape (tuples, value classes, arrays) and any attempt at
+  exhaustiveness over a type hierarchy — both still additive to what §4.3 fixes now.
 - **Declaration-site generic variance**, `out T` / `in T` (§6).
 - **Per-case enum bodies**, Java's anonymous-constant pattern (§2.4).
 - **Deeply immutable collections** (§5.4) — `let` is shallow, and a frozen collection would need

@@ -1,284 +1,946 @@
 module surtr.async.Scheduler
-  constants: 1   types: 3   fields: 3   methods: 14   modules: 0
+  constants: 1   types: 6   fields: 11   methods: 37   modules: 0
 
   type table:
-    #0  generator<float>[]
+    #0  generator<surtr.async.Scheduler:WaitInstruction>[]
     #1  float[]
-    #2  generator<float>
+    #2  surtr.async.Scheduler:WaitInstruction[]
+    #3  int[]
+    #4  surtr.async.Scheduler:WaitInstruction
+    #5  generator<surtr.async.Scheduler:WaitInstruction>
 
   field table:
-    #0  surtr.async.Scheduler:Scheduler._coroutines: generator<float>[]
+    #0  surtr.async.Scheduler:Scheduler._coroutines: generator<surtr.async.Scheduler:WaitInstruction>[]
     #1  surtr.async.Scheduler:Scheduler._remaining: float[]
-    #2  surtr.async.Scheduler:Scheduler._count: int
+    #2  surtr.async.Scheduler:Scheduler._pending: surtr.async.Scheduler:WaitInstruction[]
+    #3  surtr.async.Scheduler:Scheduler._indexToSlot: int[]
+    #4  surtr.async.Scheduler:Scheduler._count: int
+    #5  surtr.async.Scheduler:Scheduler._slotToIndex: int[]
+    #6  surtr.async.Scheduler:Scheduler._generation: int[]
+    #7  surtr.async.Scheduler:Scheduler._slotCount: int
+    #8  surtr.async.Scheduler:Scheduler._freeSlots: int[]
+    #9  surtr.async.Scheduler:Scheduler._freeCount: int
+    #10  surtr.async.Scheduler:Scheduler._onError: (surtr:Exception) -> void
 
   method table:
-    #0  surtr.async.Scheduler:Scheduler.ctor() -> void
-    #1  surtr.async.Scheduler:Scheduler.get_activeCount() -> int
-    #2  surtr.async.Scheduler:Scheduler.start(generator<float>) -> void
-    #3  surtr.async.Scheduler:Scheduler.update(float) -> void
-    #4  surtr.async.Scheduler:Scheduler.stopAll() -> void
-    #5  delay(float, () -> void) -> generator<float>
-    #6  $generator$delay$0(float, () -> void) -> void
-    #7  repeatEvery(float, () -> void) -> generator<float>
-    #8  $generator$repeatEvery$0(float, () -> void) -> void
-    #9  repeatTimes(float, int, () -> void) -> generator<float>
-    #10  $generator$repeatTimes$0(float, int, () -> void) -> void
-    #11  generator<>.moveNext() -> bool
-    #12  generator<>.get_current() -> T0
-    #13  generator<>.dispose() -> void
+    #0  surtr.async.Scheduler:CoroutineHandle.ctor(int, int) -> void
+    #1  surtr.async.Scheduler:CoroutineHandle.get_invalid() -> surtr.async.Scheduler:CoroutineHandle
+    #2  surtr.async.Scheduler:WaitInstruction.ctor(int, float, () -> bool, surtr.async.Scheduler:CoroutineHandle) -> void
+    #3  surtr.async.Scheduler:WaitInstruction.seconds(float) -> surtr.async.Scheduler:WaitInstruction
+    #4  surtr.async.Scheduler:WaitInstruction.untilCondition(() -> bool) -> surtr.async.Scheduler:WaitInstruction
+    #5  surtr.async.Scheduler:WaitInstruction.forCoroutine(surtr.async.Scheduler:CoroutineHandle) -> surtr.async.Scheduler:WaitInstruction
+    #6  surtr.async.Scheduler:WaitInstruction.get_kind() -> int
+    #7  surtr.async.Scheduler:WaitInstruction.get_seconds() -> float
+    #8  surtr.async.Scheduler:WaitInstruction.get_condition() -> () -> bool
+    #9  surtr.async.Scheduler:WaitInstruction.get_target() -> surtr.async.Scheduler:CoroutineHandle
+    #10  surtr.async.Scheduler:Scheduler.ctor() -> void
+    #11  surtr.async.Scheduler:Scheduler.get_activeCount() -> int
+    #12  surtr.async.Scheduler:Scheduler.onError((surtr:Exception) -> void) -> void
+    #13  surtr.async.Scheduler:Scheduler.start(generator<surtr.async.Scheduler:WaitInstruction>) -> surtr.async.Scheduler:CoroutineHandle
+    #14  surtr.async.Scheduler:Scheduler.stop(surtr.async.Scheduler:CoroutineHandle) -> void
+    #15  surtr.async.Scheduler:Scheduler.isAlive(surtr.async.Scheduler:CoroutineHandle) -> bool
+    #16  surtr.async.Scheduler:Scheduler.update(float) -> void
+    #17  surtr.async.Scheduler:Scheduler.stopAll() -> void
+    #18  surtr.async.Scheduler:Scheduler.isReady(int, float) -> bool
+    #19  surtr.async.Scheduler:Scheduler.allocateSlot() -> int
+    #20  surtr.async.Scheduler:Scheduler.resolveHandle(surtr.async.Scheduler:CoroutineHandle) -> int
+    #21  surtr.async.Scheduler:Scheduler.removeAt(int) -> void
+    #22  waitSeconds(float) -> surtr.async.Scheduler:WaitInstruction
+    #23  waitUntil(() -> bool) -> surtr.async.Scheduler:WaitInstruction
+    #24  waitForCoroutine(surtr.async.Scheduler:CoroutineHandle) -> surtr.async.Scheduler:WaitInstruction
+    #25  delay(float, () -> void) -> generator<surtr.async.Scheduler:WaitInstruction>
+    #26  $generator$delay$0(float, () -> void) -> void
+    #27  repeatEvery(float, () -> void) -> generator<surtr.async.Scheduler:WaitInstruction>
+    #28  $generator$repeatEvery$0(float, () -> void) -> void
+    #29  repeatTimes(float, int, () -> void) -> generator<surtr.async.Scheduler:WaitInstruction>
+    #30  $generator$repeatTimes$0(float, int, () -> void) -> void
+    #31  $lambda$seconds$0() -> bool
+    #32  $lambda$forCoroutine$0() -> bool
+    #33  $lambda$ctor$0(surtr:Exception) -> void
+    #34  generator<>.dispose() -> void
+    #35  generator<>.moveNext() -> bool
+    #36  generator<>.get_current() -> T0
 
 [private] static $generator$delay$0(seconds: float, action: () -> void): void
-  ; entry 1, locals 2, stack 1, code 0009..0010
-    0009  Ldl0
-    000A  Yield
-    000B  Ldl1
-    000C  InvokeClosure args=0 ret=0
-    000F  ReturnVoid
+  ; entry 4, locals 2, stack 5, code 0024..0034
+    0024  Ldl0
+    0025  CallLocalModule 22 (waitSeconds) args=1 ret=1
+    002A  BoxValue 4 (surtr.async.Scheduler:WaitInstruction) x5
+    002E  Yield
+    002F  Ldl1
+    0030  InvokeClosure args=0 ret=0
+    0033  ReturnVoid
 
 [private] static $generator$repeatEvery$0(interval: float, action: () -> void): void
-  ; entry 3, locals 2, stack 1, code 0019..0023
+  ; entry 6, locals 2, stack 5, code 003D..0050
   L0:
-    0019  Ldl1
-    001A  InvokeClosure args=0 ret=0
-    001D  Ldl0
-    001E  Yield
-    001F  JP -9 -> L0 (0019)
-    0022  ReturnVoid
+    003D  Ldl1
+    003E  InvokeClosure args=0 ret=0
+    0041  Ldl0
+    0042  CallLocalModule 22 (waitSeconds) args=1 ret=1
+    0047  BoxValue 4 (surtr.async.Scheduler:WaitInstruction) x5
+    004B  Yield
+    004C  JP -18 -> L0 (003D)
+    004F  ReturnVoid
 
 [private] static $generator$repeatTimes$0(interval: float, times: int, action: () -> void): void
-  ; entry 5, locals 4, stack 2, code 002D..0042
-    002D  PushI8 0
-    002F  Stl3
-    0030  Ldl3
-    0031  Ldl1
-    0032  JPGE +12 -> L1 (0041)
+  ; entry 8, locals 4, stack 5, code 005A..0078
+    005A  PushI8 0
+    005C  Stl3
+    005D  Ldl3
+    005E  Ldl1
+    005F  JPGE +21 -> L1 (0077)
   L0:
-    0035  Ldl2
-    0036  InvokeClosure args=0 ret=0
-    0039  Ldl0
-    003A  Yield
-    003B  ForRangeNextLT 3 1 -> L0 (0035)
+    0062  Ldl2
+    0063  InvokeClosure args=0 ret=0
+    0066  Ldl0
+    0067  CallLocalModule 22 (waitSeconds) args=1 ret=1
+    006C  BoxValue 4 (surtr.async.Scheduler:WaitInstruction) x5
+    0070  Yield
+    0071  ForRangeNextLT 3 1 -> L0 (0062)
   L1:
-    0041  ReturnVoid
+    0077  ReturnVoid
 
-[public] static delay(seconds: float, action: () -> void): generator<float>
-  ; entry 0, locals 2, stack 2, code 0000..0009
+[private] static $lambda$ctor$0(e: surtr:Exception): void
+  ; entry 11, locals 1, stack 0, code 007C..007D
+    007C  ReturnVoid
+
+[private] static $lambda$forCoroutine$0(): bool
+  ; entry 10, locals 0, stack 1, code 007A..007C
+    007A  PushFalse
+    007B  ReturnValue
+
+[private] static $lambda$seconds$0(): bool
+  ; entry 9, locals 0, stack 1, code 0078..007A
+    0078  PushFalse
+    0079  ReturnValue
+
+[public] static delay(seconds: float, action: () -> void): generator<surtr.async.Scheduler:WaitInstruction>
+  ; entry 3, locals 2, stack 2, code 001B..0024
+    001B  Ldl0
+    001C  Ldl1
+    001D  GenNew 26 ($generator$delay$0)  5 (generator<surtr.async.Scheduler:WaitInstruction>) args=2
+    0023  ReturnValue
+
+[public] static repeatEvery(interval: float, action: () -> void): generator<surtr.async.Scheduler:WaitInstruction>
+  ; entry 5, locals 2, stack 2, code 0034..003D
+    0034  Ldl0
+    0035  Ldl1
+    0036  GenNew 28 ($generator$repeatEvery$0)  5 (generator<surtr.async.Scheduler:WaitInstruction>) args=2
+    003C  ReturnValue
+
+[public] static repeatTimes(interval: float, times: int, action: () -> void): generator<surtr.async.Scheduler:WaitInstruction>
+  ; entry 7, locals 3, stack 3, code 0050..005A
+    0050  Ldl0
+    0051  Ldl1
+    0052  Ldl2
+    0053  GenNew 30 ($generator$repeatTimes$0)  5 (generator<surtr.async.Scheduler:WaitInstruction>) args=3
+    0059  ReturnValue
+
+[public] static waitForCoroutine(handle: surtr.async.Scheduler:CoroutineHandle): surtr.async.Scheduler:WaitInstruction
+  ; entry 2, locals 2, stack 5, code 0010..001B
+    0010  LoadValueLocal 0 x2
+    0014  InvokeStatic 5 (forCoroutine) args=2 ret=1
+    0019  ReturnValues 5
+
+[public] static waitSeconds(t: float): surtr.async.Scheduler:WaitInstruction
+  ; entry 0, locals 1, stack 5, code 0000..0008
     0000  Ldl0
-    0001  Ldl1
-    0002  GenNew 6 ($generator$delay$0)  2 (generator<float>) args=2
-    0008  ReturnValue
+    0001  InvokeStatic 3 (seconds) args=1 ret=1
+    0006  ReturnValues 5
 
-[public] static repeatEvery(interval: float, action: () -> void): generator<float>
-  ; entry 2, locals 2, stack 2, code 0010..0019
-    0010  Ldl0
-    0011  Ldl1
-    0012  GenNew 8 ($generator$repeatEvery$0)  2 (generator<float>) args=2
-    0018  ReturnValue
+[public] static waitUntil(pred: () -> bool): surtr.async.Scheduler:WaitInstruction
+  ; entry 1, locals 1, stack 5, code 0008..0010
+    0008  Ldl0
+    0009  InvokeStatic 4 (untilCondition) args=1 ret=1
+    000E  ReturnValues 5
 
-[public] static repeatTimes(interval: float, times: int, action: () -> void): generator<float>
-  ; entry 4, locals 3, stack 3, code 0023..002D
-    0023  Ldl0
-    0024  Ldl1
-    0025  Ldl2
-    0026  GenNew 10 ($generator$repeatTimes$0)  2 (generator<float>) args=3
-    002C  ReturnValue
+sealed class CoroutineHandle : surtr:ValueType  [public]
+  [public] readonly field generation: int
+  [public] readonly field slot: int
+
+  [public] static property invalid: surtr.async.Scheduler:CoroutineHandle { get; }
+    get:
+      ; entry 13, locals 2, stack 2, code 007E..0088
+        007E  PushI8 -1
+        0080  Stl0
+        0081  PushI8 -1
+        0083  Stl1
+        0084  Ldl0
+        0085  Ldl1
+        0086  ReturnValues 2
+
+  [public] ctor (slot: int, generation: int): void
+    ; entry 12, locals 4, stack 0, code 007D..007E
+      007D  ReturnVoid
 
 class Scheduler : surtr:object  [public]
-  [private] field _coroutines: generator<float>[]
+  [private] field _coroutines: generator<surtr.async.Scheduler:WaitInstruction>[]
   [private] field _count: int
+  [private] field _freeCount: int
+  [private] field _freeSlots: int[]
+  [private] field _generation: int[]
+  [private] field _indexToSlot: int[]
+  [private] field _onError: (surtr:Exception) -> void
+  [private] field _pending: surtr.async.Scheduler:WaitInstruction[]
   [private] field _remaining: float[]
+  [private] field _slotCount: int
+  [private] field _slotToIndex: int[]
 
   [public] property activeCount: int { get; }
     get:
-      ; entry 7, locals 1, stack 1, code 005F..0064
-        005F  Ldl0
-        0060  FieldGet 2 (_count)
-        0063  ReturnValue
+      ; entry 23, locals 1, stack 1, code 0184..0189
+        0184  Ldl0
+        0185  FieldGet 4 (_count)
+        0188  ReturnValue
+
+  [private] allocateSlot(): int
+    ; entry 31, locals 6, stack 4, code 0408..04A2
+      0408  Ldl0
+      0409  FieldGet 9 (_freeCount)
+      040C  PushI8 0
+      040E  JPLE +21 -> L0 (0426)
+      0411  Ldl0
+      0412  Ldl0
+      0413  FieldGet 9 (_freeCount)
+      0416  PushI8 1
+      0418  Sub
+      0419  FieldSet 9 (_freeCount)
+      041C  Ldl0
+      041D  FieldGet 8 (_freeSlots)
+      0420  Ldl0
+      0421  FieldGet 9 (_freeCount)
+      0424  ArrGet
+      0425  ReturnValue
+    L0:
+      0426  Ldl0
+      0427  FieldGet 7 (_slotCount)
+      042A  Ldl0
+      042B  FieldGet 5 (_slotToIndex)
+      042E  ArrLen
+      042F  JPNE +78 -> L5 (0480)
+      0432  Ldl0
+      0433  FieldGet 7 (_slotCount)
+      0436  PushI8 0
+      0438  EQ
+      0439  JPZ +5 -> L1 (0441)
+      043C  PushI8 4
+      043E  JP +7 -> L2 (0448)
+    L1:
+      0441  Ldl0
+      0442  FieldGet 7 (_slotCount)
+      0445  PushI8 2
+      0447  Mul
+    L2:
+      0448  Stl1
+      0449  Ldl1
+      044A  ArrNew 3 (int[])
+      044D  Stl2
+      044E  Ldl1
+      044F  ArrNew 3 (int[])
+      0452  Stl3
+      0453  PushI8 0
+      0455  Stl4
+    L3:
+      0456  Ldl4
+      0457  Ldl0
+      0458  FieldGet 7 (_slotCount)
+      045B  JPGE +24 -> L4 (0476)
+      045E  Ldl2
+      045F  Ldl4
+      0460  Ldl0
+      0461  FieldGet 5 (_slotToIndex)
+      0464  Ldl4
+      0465  ArrGet
+      0466  ArrSet
+      0467  Ldl3
+      0468  Ldl4
+      0469  Ldl0
+      046A  FieldGet 6 (_generation)
+      046D  Ldl4
+      046E  ArrGet
+      046F  ArrSet
+      0470  IncLocal 4 by 1
+      0473  JP -32 -> L3 (0456)
+    L4:
+      0476  Ldl0
+      0477  Ldl2
+      0478  FieldSet 5 (_slotToIndex)
+      047B  Ldl0
+      047C  Ldl3
+      047D  FieldSet 6 (_generation)
+    L5:
+      0480  Ldl0
+      0481  FieldGet 7 (_slotCount)
+      0484  Stl5
+      0485  Ldl0
+      0486  FieldGet 5 (_slotToIndex)
+      0489  Ldl5
+      048A  PushI8 -1
+      048C  ArrSet
+      048D  Ldl0
+      048E  FieldGet 6 (_generation)
+      0491  Ldl5
+      0492  PushI8 0
+      0494  ArrSet
+      0495  Ldl0
+      0496  Ldl0
+      0497  FieldGet 7 (_slotCount)
+      049A  PushI8 1
+      049C  Add
+      049D  FieldSet 7 (_slotCount)
+      04A0  Ldl5
+      04A1  ReturnValue
 
   [public] ctor (): void
-    ; entry 6, locals 1, stack 2, code 0042..005F
-      0042  Ldl0
-      0043  ArrNewX 0 (generator<float>[]) size=4
-      004A  FieldSet 0 (_coroutines)
-      004D  Ldl0
-      004E  ArrNewX 1 (float[]) size=4
-      0055  FieldSet 1 (_remaining)
-      0058  Ldl0
-      0059  PushI8 0
-      005B  FieldSet 2 (_count)
-      005E  ReturnVoid
+    ; entry 22, locals 1, stack 2, code 011D..0184
+      011D  Ldl0
+      011E  ArrNewX 0 (generator<surtr.async.Scheduler:WaitInstruction>[]) size=4
+      0125  FieldSet 0 (_coroutines)
+      0128  Ldl0
+      0129  ArrNewX 1 (float[]) size=4
+      0130  FieldSet 1 (_remaining)
+      0133  Ldl0
+      0134  ArrNewX 2 (surtr.async.Scheduler:WaitInstruction[]) size=4
+      013B  FieldSet 2 (_pending)
+      013E  Ldl0
+      013F  ArrNewX 3 (int[]) size=4
+      0146  FieldSet 3 (_indexToSlot)
+      0149  Ldl0
+      014A  PushI8 0
+      014C  FieldSet 4 (_count)
+      014F  Ldl0
+      0150  ArrNewX 3 (int[]) size=4
+      0157  FieldSet 5 (_slotToIndex)
+      015A  Ldl0
+      015B  ArrNewX 3 (int[]) size=4
+      0162  FieldSet 6 (_generation)
+      0165  Ldl0
+      0166  PushI8 0
+      0168  FieldSet 7 (_slotCount)
+      016B  Ldl0
+      016C  ArrNewX 3 (int[]) size=4
+      0173  FieldSet 8 (_freeSlots)
+      0176  Ldl0
+      0177  PushI8 0
+      0179  FieldSet 9 (_freeCount)
+      017C  Ldl0
+      017D  NewFunction 33 ($lambda$ctor$0)
+      0180  FieldSet 10 (_onError)
+      0183  ReturnVoid
 
-  [public] start(coroutine: generator<float>): void
-    ; entry 8, locals 6, stack 4, code 0064..00DE
-      0064  Ldl0
-      0065  FieldGet 2 (_count)
-      0068  Ldl0
-      0069  FieldGet 0 (_coroutines)
-      006C  ArrLen
-      006D  JPNE +78 -> L4 (00BE)
-      0070  Ldl0
-      0071  FieldGet 2 (_count)
-      0074  PushI8 0
-      0076  EQ
-      0077  JPZ +5 -> L0 (007F)
-      007A  PushI8 4
-      007C  JP +7 -> L1 (0086)
+  [public] isAlive(handle: surtr.async.Scheduler:CoroutineHandle): bool
+    ; entry 27, locals 3, stack 3, code 02A6..02B4
+      02A6  Ldl0
+      02A7  LoadValueLocal 1 x2
+      02AB  InvokeSpecial 20 (resolveHandle) args=3 ret=1
+      02B0  PushI8 0
+      02B2  GE
+      02B3  ReturnValue
+
+  [private] isReady(i: int, deltaTime: float): bool
+    ; entry 30, locals 35, stack 6, code 0389..0408
+      0389  Ldl0
+      038A  FieldGet 2 (_pending)
+      038D  Ldl1
+      038E  ArrGet
+      038F  UnboxValue 5
+      0391  StoreValueLocal 4 x5
+      0395  LoadValueLocal 4 x5
+      0399  StoreValueLocal 9 x5
+      039D  LoadLocalField 9+0
+      03A2  Stl3
+      03A3  Ldl3
+      03A4  PushI8 0
+      03A6  JPNE +28 -> L1 (03C5)
+      03A9  Ldl0
+      03AA  FieldGet 1 (_remaining)
+      03AD  Ldl1
+      03AE  ArrGet
+      03AF  Ldl2
+      03B0  FSub
+      03B1  StlS 14
+      03B3  LdlS 14
+      03B5  Ldc0
+      03B6  JPFLE +10 -> L0 (03C3)
+      03B9  Ldl0
+      03BA  FieldGet 1 (_remaining)
+      03BD  Ldl1
+      03BE  LdlS 14
+      03C0  ArrSet
+      03C1  PushFalse
+      03C2  ReturnValue
     L0:
-      007F  Ldl0
-      0080  FieldGet 2 (_count)
-      0083  PushI8 2
-      0085  Mul
+      03C3  PushTrue
+      03C4  ReturnValue
     L1:
-      0086  Stl2
-      0087  Ldl2
-      0088  ArrNew 0 (generator<float>[])
-      008B  Stl3
-      008C  Ldl2
-      008D  ArrNew 1 (float[])
-      0090  Stl4
-      0091  PushI8 0
-      0093  Stl5
+      03C5  Ldl3
+      03C6  PushI8 1
+      03C8  JPNE +29 -> L2 (03E8)
+      03CB  Ldl0
+      03CC  FieldGet 2 (_pending)
+      03CF  Ldl1
+      03D0  ArrGet
+      03D1  UnboxValue 5
+      03D3  StoreValueLocal 15 x5
+      03D7  LoadValueLocal 15 x5
+      03DB  StoreValueLocal 20 x5
+      03DF  LoadLocalField 20+2
+      03E4  InvokeClosure args=0 ret=1
+      03E7  ReturnValue
     L2:
-      0094  Ldl5
-      0095  Ldl0
-      0096  FieldGet 2 (_count)
-      0099  JPGE +24 -> L3 (00B4)
-      009C  Ldl3
-      009D  Ldl5
-      009E  Ldl0
-      009F  FieldGet 0 (_coroutines)
-      00A2  Ldl5
-      00A3  ArrGet
-      00A4  ArrSet
-      00A5  Ldl4
-      00A6  Ldl5
-      00A7  Ldl0
-      00A8  FieldGet 1 (_remaining)
-      00AB  Ldl5
-      00AC  ArrGet
-      00AD  ArrSet
-      00AE  IncLocal 5 by 1
-      00B1  JP -32 -> L2 (0094)
+      03E8  Ldl0
+      03E9  Ldl0
+      03EA  FieldGet 2 (_pending)
+      03ED  Ldl1
+      03EE  ArrGet
+      03EF  UnboxValue 5
+      03F1  StoreValueLocal 25 x5
+      03F5  LoadValueLocal 25 x5
+      03F9  StoreValueLocal 30 x5
+      03FD  LoadValueLocal 33 x2
+      0401  InvokeSpecial 15 (isAlive) args=3 ret=1
+      0406  Inv
+      0407  ReturnValue
+
+  [public] onError(handler: (surtr:Exception) -> void): void
+    ; entry 24, locals 2, stack 2, code 0189..018F
+      0189  Ldl0
+      018A  Ldl1
+      018B  FieldSet 10 (_onError)
+      018E  ReturnVoid
+
+  [private] removeAt(i: int): void
+    ; entry 33, locals 8, stack 7, code 04E2..05B8
+      04E2  Ldl0
+      04E3  FieldGet 3 (_indexToSlot)
+      04E6  Ldl1
+      04E7  ArrGet
+      04E8  Stl2
+      04E9  Ldl0
+      04EA  FieldGet 5 (_slotToIndex)
+      04ED  Ldl2
+      04EE  PushI8 -1
+      04F0  ArrSet
+      04F1  Ldl0
+      04F2  FieldGet 6 (_generation)
+      04F5  Ldl2
+      04F6  Ldl0
+      04F7  FieldGet 6 (_generation)
+      04FA  Ldl2
+      04FB  ArrGet
+      04FC  PushI8 1
+      04FE  Add
+      04FF  ArrSet
+      0500  Ldl0
+      0501  FieldGet 9 (_freeCount)
+      0504  Ldl0
+      0505  FieldGet 8 (_freeSlots)
+      0508  ArrLen
+      0509  JPNE +59 -> L4 (0547)
+      050C  Ldl0
+      050D  FieldGet 9 (_freeCount)
+      0510  PushI8 0
+      0512  EQ
+      0513  JPZ +5 -> L0 (051B)
+      0516  PushI8 4
+      0518  JP +7 -> L1 (0522)
+    L0:
+      051B  Ldl0
+      051C  FieldGet 9 (_freeCount)
+      051F  PushI8 2
+      0521  Mul
+    L1:
+      0522  Stl3
+      0523  Ldl3
+      0524  ArrNew 3 (int[])
+      0527  Stl4
+      0528  PushI8 0
+      052A  Stl5
+    L2:
+      052B  Ldl5
+      052C  Ldl0
+      052D  FieldGet 9 (_freeCount)
+      0530  JPGE +15 -> L3 (0542)
+      0533  Ldl4
+      0534  Ldl5
+      0535  Ldl0
+      0536  FieldGet 8 (_freeSlots)
+      0539  Ldl5
+      053A  ArrGet
+      053B  ArrSet
+      053C  IncLocal 5 by 1
+      053F  JP -23 -> L2 (052B)
     L3:
-      00B4  Ldl0
-      00B5  Ldl3
-      00B6  FieldSet 0 (_coroutines)
-      00B9  Ldl0
-      00BA  Ldl4
-      00BB  FieldSet 1 (_remaining)
+      0542  Ldl0
+      0543  Ldl4
+      0544  FieldSet 8 (_freeSlots)
     L4:
-      00BE  Ldl0
-      00BF  FieldGet 0 (_coroutines)
-      00C2  Ldl0
-      00C3  FieldGet 2 (_count)
-      00C6  Ldl1
-      00C7  ArrSet
-      00C8  Ldl0
-      00C9  FieldGet 1 (_remaining)
-      00CC  Ldl0
-      00CD  FieldGet 2 (_count)
-      00D0  Ldc0
-      00D1  ArrSet
-      00D2  Ldl0
-      00D3  Ldl0
-      00D4  FieldGet 2 (_count)
-      00D7  PushI8 1
-      00D9  Add
-      00DA  FieldSet 2 (_count)
-      00DD  ReturnVoid
+      0547  Ldl0
+      0548  FieldGet 8 (_freeSlots)
+      054B  Ldl0
+      054C  FieldGet 9 (_freeCount)
+      054F  Ldl2
+      0550  ArrSet
+      0551  Ldl0
+      0552  Ldl0
+      0553  FieldGet 9 (_freeCount)
+      0556  PushI8 1
+      0558  Add
+      0559  FieldSet 9 (_freeCount)
+      055C  Ldl0
+      055D  FieldGet 4 (_count)
+      0560  PushI8 1
+      0562  Sub
+      0563  StlS 6
+      0565  Ldl1
+      0566  LdlS 6
+      0568  JPEQ +70 -> L5 (05B1)
+      056B  Ldl0
+      056C  FieldGet 0 (_coroutines)
+      056F  Ldl1
+      0570  Ldl0
+      0571  FieldGet 0 (_coroutines)
+      0574  LdlS 6
+      0576  ArrGet
+      0577  ArrSet
+      0578  Ldl0
+      0579  FieldGet 1 (_remaining)
+      057C  Ldl1
+      057D  Ldl0
+      057E  FieldGet 1 (_remaining)
+      0581  LdlS 6
+      0583  ArrGet
+      0584  ArrSet
+      0585  Ldl0
+      0586  FieldGet 2 (_pending)
+      0589  Ldl1
+      058A  Ldl0
+      058B  FieldGet 2 (_pending)
+      058E  LdlS 6
+      0590  ArrGet
+      0591  UnboxValue 5
+      0593  BoxValue 4 (surtr.async.Scheduler:WaitInstruction) x5
+      0597  ArrSet
+      0598  Ldl0
+      0599  FieldGet 3 (_indexToSlot)
+      059C  LdlS 6
+      059E  ArrGet
+      059F  StlS 7
+      05A1  Ldl0
+      05A2  FieldGet 3 (_indexToSlot)
+      05A5  Ldl1
+      05A6  LdlS 7
+      05A8  ArrSet
+      05A9  Ldl0
+      05AA  FieldGet 5 (_slotToIndex)
+      05AD  LdlS 7
+      05AF  Ldl1
+      05B0  ArrSet
+    L5:
+      05B1  Ldl0
+      05B2  LdlS 6
+      05B4  FieldSet 4 (_count)
+      05B7  ReturnVoid
+
+  [private] resolveHandle(handle: surtr.async.Scheduler:CoroutineHandle): int
+    ; entry 32, locals 3, stack 2, code 04A2..04E2
+      04A2  LoadLocalField 1+0
+      04A7  PushI8 0
+      04A9  LT
+      04AA  Dup
+      04AB  JPNZ +14 -> L0 (04BC)
+      04AE  Pop
+      04AF  LoadLocalField 1+0
+      04B4  Ldl0
+      04B5  FieldGet 7 (_slotCount)
+      04B8  GE
+      04B9  JP +0 -> L0 (04BC)
+    L0:
+      04BC  JPZ +3 -> L1 (04C2)
+      04BF  PushI8 -1
+      04C1  ReturnValue
+    L1:
+      04C2  Ldl0
+      04C3  FieldGet 6 (_generation)
+      04C6  LoadLocalField 1+0
+      04CB  ArrGet
+      04CC  LoadLocalField 1+1
+      04D1  JPEQ +3 -> L2 (04D7)
+      04D4  PushI8 -1
+      04D6  ReturnValue
+    L2:
+      04D7  Ldl0
+      04D8  FieldGet 5 (_slotToIndex)
+      04DB  LoadLocalField 1+0
+      04E0  ArrGet
+      04E1  ReturnValue
+
+  [public] start(coroutine: generator<surtr.async.Scheduler:WaitInstruction>): surtr.async.Scheduler:CoroutineHandle
+    ; entry 25, locals 12, stack 7, code 018F..0281
+      018F  Ldl0
+      0190  FieldGet 4 (_count)
+      0193  Ldl0
+      0194  FieldGet 0 (_coroutines)
+      0197  ArrLen
+      0198  JPNE +135 -> L4 (0222)
+      019B  Ldl0
+      019C  FieldGet 4 (_count)
+      019F  PushI8 0
+      01A1  EQ
+      01A2  JPZ +5 -> L0 (01AA)
+      01A5  PushI8 4
+      01A7  JP +7 -> L1 (01B1)
+    L0:
+      01AA  Ldl0
+      01AB  FieldGet 4 (_count)
+      01AE  PushI8 2
+      01B0  Mul
+    L1:
+      01B1  Stl2
+      01B2  Ldl2
+      01B3  ArrNew 0 (generator<surtr.async.Scheduler:WaitInstruction>[])
+      01B6  Stl3
+      01B7  Ldl2
+      01B8  ArrNew 1 (float[])
+      01BB  Stl4
+      01BC  Ldl2
+      01BD  ArrNew 2 (surtr.async.Scheduler:WaitInstruction[])
+      01C0  Stl5
+      01C1  Ldl2
+      01C2  ArrNew 3 (int[])
+      01C5  StlS 6
+      01C7  PushI8 0
+      01C9  StlS 7
+    L2:
+      01CB  LdlS 7
+      01CD  Ldl0
+      01CE  FieldGet 4 (_count)
+      01D1  JPGE +57 -> L3 (020D)
+      01D4  Ldl3
+      01D5  LdlS 7
+      01D7  Ldl0
+      01D8  FieldGet 0 (_coroutines)
+      01DB  LdlS 7
+      01DD  ArrGet
+      01DE  ArrSet
+      01DF  Ldl4
+      01E0  LdlS 7
+      01E2  Ldl0
+      01E3  FieldGet 1 (_remaining)
+      01E6  LdlS 7
+      01E8  ArrGet
+      01E9  ArrSet
+      01EA  Ldl5
+      01EB  LdlS 7
+      01ED  Ldl0
+      01EE  FieldGet 2 (_pending)
+      01F1  LdlS 7
+      01F3  ArrGet
+      01F4  UnboxValue 5
+      01F6  BoxValue 4 (surtr.async.Scheduler:WaitInstruction) x5
+      01FA  ArrSet
+      01FB  LdlS 6
+      01FD  LdlS 7
+      01FF  Ldl0
+      0200  FieldGet 3 (_indexToSlot)
+      0203  LdlS 7
+      0205  ArrGet
+      0206  ArrSet
+      0207  IncLocal 7 by 1
+      020A  JP -66 -> L2 (01CB)
+    L3:
+      020D  Ldl0
+      020E  Ldl3
+      020F  FieldSet 0 (_coroutines)
+      0212  Ldl0
+      0213  Ldl4
+      0214  FieldSet 1 (_remaining)
+      0217  Ldl0
+      0218  Ldl5
+      0219  FieldSet 2 (_pending)
+      021C  Ldl0
+      021D  LdlS 6
+      021F  FieldSet 3 (_indexToSlot)
+    L4:
+      0222  Ldl0
+      0223  InvokeSpecial 19 (allocateSlot) args=1 ret=1
+      0228  StlS 8
+      022A  Ldl0
+      022B  FieldGet 4 (_count)
+      022E  StlS 9
+      0230  Ldl0
+      0231  FieldGet 0 (_coroutines)
+      0234  LdlS 9
+      0236  Ldl1
+      0237  ArrSet
+      0238  Ldl0
+      0239  FieldGet 1 (_remaining)
+      023C  LdlS 9
+      023E  Ldc0
+      023F  ArrSet
+      0240  Ldl0
+      0241  FieldGet 2 (_pending)
+      0244  LdlS 9
+      0246  Ldc0
+      0247  InvokeStatic 3 (seconds) args=1 ret=1
+      024C  BoxValue 4 (surtr.async.Scheduler:WaitInstruction) x5
+      0250  ArrSet
+      0251  Ldl0
+      0252  FieldGet 3 (_indexToSlot)
+      0255  LdlS 9
+      0257  LdlS 8
+      0259  ArrSet
+      025A  Ldl0
+      025B  FieldGet 5 (_slotToIndex)
+      025E  LdlS 8
+      0260  LdlS 9
+      0262  ArrSet
+      0263  Ldl0
+      0264  Ldl0
+      0265  FieldGet 4 (_count)
+      0268  PushI8 1
+      026A  Add
+      026B  FieldSet 4 (_count)
+      026E  LdlS 8
+      0270  StlS 10
+      0272  Ldl0
+      0273  FieldGet 6 (_generation)
+      0276  LdlS 8
+      0278  ArrGet
+      0279  StlS 11
+      027B  LdlS 10
+      027D  LdlS 11
+      027F  ReturnValues 2
+
+  [public] stop(handle: surtr.async.Scheduler:CoroutineHandle): void
+    ; entry 26, locals 4, stack 3, code 0281..02A6
+      0281  Ldl0
+      0282  LoadValueLocal 1 x2
+      0286  InvokeSpecial 20 (resolveHandle) args=3 ret=1
+      028B  Stl3
+      028C  Ldl3
+      028D  PushI8 0
+      028F  JPGE +1 -> L0 (0293)
+      0292  ReturnVoid
+    L0:
+      0293  Ldl0
+      0294  FieldGet 0 (_coroutines)
+      0297  Ldl3
+      0298  ArrGet
+      0299  InvokeVirtual 34 (dispose) args=1 ret=0
+      029E  Ldl0
+      029F  Ldl3
+      02A0  InvokeSpecial 21 (removeAt) args=2 ret=0
+      02A5  ReturnVoid
 
   [public] stopAll(): void
-    ; entry 10, locals 2, stack 2, code 0154..0177
-      0154  PushI8 0
-      0156  Stl1
+    ; entry 29, locals 1, stack 2, code 0368..0389
     L0:
-      0157  Ldl1
-      0158  Ldl0
-      0159  FieldGet 2 (_count)
-      015C  JPGE +17 -> L1 (0170)
-      015F  Ldl0
-      0160  FieldGet 0 (_coroutines)
-      0163  Ldl1
-      0164  ArrGet
-      0165  InvokeVirtual 13 (dispose) args=1 ret=0
-      016A  IncLocal 1 by 1
-      016D  JP -25 -> L0 (0157)
+      0368  Ldl0
+      0369  FieldGet 4 (_count)
+      036C  PushI8 0
+      036E  JPLE +23 -> L1 (0388)
+      0371  Ldl0
+      0372  FieldGet 0 (_coroutines)
+      0375  PushI8 0
+      0377  ArrGet
+      0378  InvokeVirtual 34 (dispose) args=1 ret=0
+      037D  Ldl0
+      037E  PushI8 0
+      0380  InvokeSpecial 21 (removeAt) args=2 ret=0
+      0385  JP -32 -> L0 (0368)
     L1:
-      0170  Ldl0
-      0171  PushI8 0
-      0173  FieldSet 2 (_count)
-      0176  ReturnVoid
+      0388  ReturnVoid
 
   [public] update(deltaTime: float): void
-    ; entry 9, locals 5, stack 4, code 00DE..0154
-      00DE  PushI8 0
-      00E0  Stl2
+    ; entry 28, locals 31, stack 7, code 02B4..0368
+      02B4  PushI8 0
+      02B6  Stl2
     L0:
-      00E1  Ldl2
-      00E2  Ldl0
-      00E3  FieldGet 2 (_count)
-      00E6  JPGE +106 -> L4 (0153)
-      00E9  Ldl0
-      00EA  FieldGet 1 (_remaining)
-      00ED  Ldl2
-      00EE  ArrGet
-      00EF  Ldl1
-      00F0  FSub
-      00F1  Stl3
-      00F2  Ldl3
-      00F3  Ldc0
-      00F4  JPFLE +13 -> L1 (0104)
-      00F7  Ldl0
-      00F8  FieldGet 1 (_remaining)
-      00FB  Ldl2
-      00FC  Ldl3
-      00FD  ArrSet
-      00FE  IncLocal 2 by 1
-      0101  JP -35 -> L0 (00E1)
+      02B7  Ldl2
+      02B8  Ldl0
+      02B9  FieldGet 4 (_count)
+      02BC  JPGE +168 -> L6 (0367)
+      02BF  Ldl0
+      02C0  Ldl2
+      02C1  Ldl1
+      02C2  InvokeSpecial 18 (isReady) args=3 ret=1
+      02C7  Inv
+      02C8  JPZ +6 -> L1 (02D1)
+      02CB  IncLocal 2 by 1
+      02CE  JP -26 -> L0 (02B7)
     L1:
-      0104  Ldl0
-      0105  FieldGet 0 (_coroutines)
-      0108  Ldl2
-      0109  ArrGet
-      010A  Stl4
-      010B  Ldl4
-      010C  InvokeVirtual 11 (moveNext) args=1 ret=1
-      0111  JPZ +19 -> L2 (0127)
-      0114  Ldl0
-      0115  FieldGet 1 (_remaining)
-      0118  Ldl2
-      0119  Ldl4
-      011A  InvokeVirtual 12 (get_current) args=1 ret=1
-      011F  UnboxDynamic
-      0120  ArrSet
-      0121  IncLocal 2 by 1
-      0124  JP +41 -> L3 (0150)
+      02D1  PushFalse
+      02D2  Stl3
+      02D3  PushFalse
+      02D4  Stl4
+    ; try_0 begin
+      02D5  Ldl0
+      02D6  FieldGet 0 (_coroutines)
+      02D9  Ldl2
+      02DA  ArrGet
+      02DB  InvokeVirtual 35 (moveNext) args=1 ret=1
+      02E0  Stl4
+    ; try_0 end
+      02E1  JP +14 -> L2 (02F2)
+    ; catch_0 (surtr:Exception)
+      02E4  Stl5
+      02E5  PushTrue
+      02E6  Stl3
+      02E7  Ldl0
+      02E8  FieldGet 10 (_onError)
+      02EB  Ldl5
+      02EC  InvokeClosure args=1 ret=0
+      02EF  JP +0 -> L2 (02F2)
     L2:
-      0127  Ldl0
-      0128  Ldl0
-      0129  FieldGet 2 (_count)
-      012C  PushI8 1
-      012E  Sub
-      012F  FieldSet 2 (_count)
-      0132  Ldl0
-      0133  FieldGet 0 (_coroutines)
-      0136  Ldl2
-      0137  Ldl0
-      0138  FieldGet 0 (_coroutines)
-      013B  Ldl0
-      013C  FieldGet 2 (_count)
-      013F  ArrGet
-      0140  ArrSet
-      0141  Ldl0
-      0142  FieldGet 1 (_remaining)
-      0145  Ldl2
-      0146  Ldl0
-      0147  FieldGet 1 (_remaining)
-      014A  Ldl0
-      014B  FieldGet 2 (_count)
-      014E  ArrGet
-      014F  ArrSet
+      02F2  Ldl3
+      02F3  Dup
+      02F4  JPNZ +6 -> L3 (02FD)
+      02F7  Pop
+      02F8  Ldl4
+      02F9  Inv
+      02FA  JP +0 -> L3 (02FD)
     L3:
-      0150  JP -114 -> L0 (00E1)
+      02FD  JPZ +10 -> L4 (030A)
+      0300  Ldl0
+      0301  Ldl2
+      0302  InvokeSpecial 21 (removeAt) args=2 ret=0
+      0307  JP -83 -> L0 (02B7)
     L4:
-      0153  ReturnVoid
+      030A  Ldl0
+      030B  FieldGet 0 (_coroutines)
+      030E  Ldl2
+      030F  ArrGet
+      0310  InvokeVirtual 36 (get_current) args=1 ret=1
+      0315  Cast 4 (surtr.async.Scheduler:WaitInstruction)
+      0318  UnboxValue 5
+      031A  StoreValueLocal 6 x5
+      031E  Ldl0
+      031F  FieldGet 2 (_pending)
+      0322  Ldl2
+      0323  LoadValueLocal 6 x5
+      0327  BoxValue 4 (surtr.async.Scheduler:WaitInstruction) x5
+      032B  ArrSet
+      032C  LoadValueLocal 6 x5
+      0330  StoreValueLocal 11 x5
+      0334  LoadValueLocal 11 x5
+      0338  StoreValueLocal 16 x5
+      033C  LoadLocalField 16+0
+      0341  PushI8 0
+      0343  JPNE +27 -> L5 (0361)
+      0346  Ldl0
+      0347  FieldGet 1 (_remaining)
+      034A  Ldl2
+      034B  LoadValueLocal 6 x5
+      034F  StoreValueLocal 21 x5
+      0353  LoadValueLocal 21 x5
+      0357  StoreValueLocal 26 x5
+      035B  LoadLocalField 26+1
+      0360  ArrSet
+    L5:
+      0361  IncLocal 2 by 1
+      0364  JP -176 -> L0 (02B7)
+    L6:
+      0367  ReturnVoid
+    handler [02D5, 02E1) -> 02E4  catch surtr:Exception
+
+sealed class WaitInstruction : surtr:ValueType  [public]
+  [private] readonly field _condition: () -> bool
+  [private] readonly field _kind: int
+  [private] readonly field _seconds: float
+  [private] readonly field _target: surtr.async.Scheduler:CoroutineHandle
+
+  [public] property condition: () -> bool { get; }
+    get:
+      ; entry 20, locals 6, stack 5, code 0101..010F
+        0101  LoadValueLocal 0 x5
+        0105  StoreValueLocal 1 x5
+        0109  LoadLocalField 1+2
+        010E  ReturnValue
+
+  [public] property kind: int { get; }
+    get:
+      ; entry 18, locals 6, stack 5, code 00E5..00F3
+        00E5  LoadValueLocal 0 x5
+        00E9  StoreValueLocal 1 x5
+        00ED  LoadLocalField 1+0
+        00F2  ReturnValue
+
+  [public] property seconds: float { get; }
+    get:
+      ; entry 19, locals 6, stack 5, code 00F3..0101
+        00F3  LoadValueLocal 0 x5
+        00F7  StoreValueLocal 1 x5
+        00FB  LoadLocalField 1+1
+        0100  ReturnValue
+
+  [public] property target: surtr.async.Scheduler:CoroutineHandle { get; }
+    get:
+      ; entry 21, locals 6, stack 5, code 010F..011D
+        010F  LoadValueLocal 0 x5
+        0113  StoreValueLocal 1 x5
+        0117  LoadValueLocal 4 x2
+        011B  ReturnValues 2
+
+  [private] ctor (kind: int, seconds: float, condition: () -> bool, target: surtr.async.Scheduler:CoroutineHandle): void
+    ; entry 14, locals 10, stack 0, code 0088..0089
+      0088  ReturnVoid
+
+  [public] static forCoroutine(handle: surtr.async.Scheduler:CoroutineHandle): surtr.async.Scheduler:WaitInstruction
+    ; entry 17, locals 7, stack 5, code 00CB..00E5
+      00CB  PushI8 2
+      00CD  Stl2
+      00CE  Ldc0
+      00CF  Stl3
+      00D0  NewFunction 32 ($lambda$forCoroutine$0)
+      00D3  Stl4
+      00D4  LoadValueLocal 0 x2
+      00D8  StoreValueLocal 5 x2
+      00DC  Ldl2
+      00DD  Ldl3
+      00DE  Ldl4
+      00DF  LoadValueLocal 5 x2
+      00E3  ReturnValues 5
+
+  [public] static seconds(t: float): surtr.async.Scheduler:WaitInstruction
+    ; entry 15, locals 8, stack 5, code 0089..00AB
+      0089  PushI8 0
+      008B  Stl1
+      008C  Ldl0
+      008D  Stl2
+      008E  NewFunction 31 ($lambda$seconds$0)
+      0091  Stl3
+      0092  PushI8 -1
+      0094  StlS 6
+      0096  PushI8 -1
+      0098  StlS 7
+      009A  LdlS 6
+      009C  LdlS 7
+      009E  StoreValueLocal 4 x2
+      00A2  Ldl1
+      00A3  Ldl2
+      00A4  Ldl3
+      00A5  LoadValueLocal 4 x2
+      00A9  ReturnValues 5
+
+  [public] static untilCondition(pred: () -> bool): surtr.async.Scheduler:WaitInstruction
+    ; entry 16, locals 8, stack 5, code 00AB..00CB
+      00AB  PushI8 1
+      00AD  Stl1
+      00AE  Ldc0
+      00AF  Stl2
+      00B0  Ldl0
+      00B1  Stl3
+      00B2  PushI8 -1
+      00B4  StlS 6
+      00B6  PushI8 -1
+      00B8  StlS 7
+      00BA  LdlS 6
+      00BC  LdlS 7
+      00BE  StoreValueLocal 4 x2
+      00C2  Ldl1
+      00C3  Ldl2
+      00C4  Ldl3
+      00C5  LoadValueLocal 4 x2
+      00C9  ReturnValues 5

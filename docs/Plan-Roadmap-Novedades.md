@@ -24,8 +24,9 @@ para que nadie vuelva a proponer desde cero lo que ya existe:
   `src/Surtr.Stdlib/src/surtr/async/Scheduler.surtr` tiene `Scheduler.start`/`update`/`stopAll` y
   las recetas `delay`/`repeatEvery`/`repeatTimes` sobre `generator<float>`, con el protocolo
   "`yield segundos`" ya funcionando. `docs/Plan-Revision-Stdlib.md` lo registra como su propio P1,
-  ya implementado. Lo que falta es la orquestación más fina que `docs/Informe-Corutinas-Asincronas.md`
-  identifica (§1 más abajo), no el mecanismo base.
+  ya implementado. Lo que faltaba era la orquestación más fina que
+  `docs/Informe-Corutinas-Asincronas.md` identifica (§1 más abajo) — **ya implementada también**, ver
+  nota de Fase 1 debajo.
 
 También existe, en `docs/Plan-Revision-Stdlib.md`, una propuesta **P3 — JSON** ya evaluada por ese
 documento (coste medio-alto, riesgo medio, sin implementar por falta de tiempo) que es exactamente
@@ -33,6 +34,15 @@ la base de la propuesta 6 de este plan: se referencia en vez de reabrirla desde 
 `Signal<T>`/`EventEmitter<T>` (P2 de ese mismo documento) es un complemento natural de varias
 propuestas de aquí (workers, red) pero **queda fuera de este plan** — ya está scoped allí y no es
 una de las doce propuestas originales.
+
+**Fase 1 (propuestas 1 y 5) ya está implementada.** El vocabulario de espera y cancelación de la
+propuesta 1 (`WaitInstruction`/`CoroutineHandle`, `Scheduler.stop`/`isAlive`/`onError`,
+`waitUntil`/`waitForCoroutine`) está en `src/Surtr.Stdlib/src/surtr/async/Scheduler.surtr`, sin tocar
+`Surtr.Core` — exactamente como preveía este documento. Los patrones de tipo de la propuesta 5
+(`case x is Dog:` / `x is Dog -> ...`, con guard opcional) están en el compilador
+(`Syntax/Parser.Statements.cs`/`Parser.Expressions.cs`, `Binding/BodyBinder.Statements.cs`/
+`BodyBinder.Expressions.cs`, `CodeGen/MethodBodyEmitter.cs`), sin tocar opcodes ni el formato de
+bytecode — ver `docs/Language-Syntax.md` §4.3. El destructuring dentro de un patrón sigue diferido.
 
 ---
 

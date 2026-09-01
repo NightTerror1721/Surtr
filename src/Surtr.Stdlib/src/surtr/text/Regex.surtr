@@ -28,30 +28,36 @@ import surtr.text.StringBuilder;
 
 // ── Opcodes for the compiled instruction list ───────────────────────────────────────────────────
 
-const OpChar: int = 0;
-const OpAny: int = 1;
-const OpClass: int = 2;
-const OpJmp: int = 3;
-const OpSplit: int = 4;
-const OpSave: int = 5;
-const OpMatch: int = 6;
-const OpAnchorStart: int = 7;
-const OpAnchorEnd: int = 8;
+enum OpCode
+{
+    Char = 0,
+    Any = 1,
+    Class = 2,
+    Jmp = 3,
+    Split = 4,
+    Save = 5,
+    Match = 6,
+    AnchorStart = 7,
+    AnchorEnd = 8,
+}
 
 // ── AST node kinds ──────────────────────────────────────────────────────────────────────────────
 
-const NodeLiteral: int = 0;
-const NodeAny: int = 1;
-const NodeClass: int = 2;
-const NodeConcat: int = 3;
-const NodeAlt: int = 4;
-const NodeStar: int = 5;
-const NodePlus: int = 6;
-const NodeOpt: int = 7;
-const NodeRepeat: int = 8;
-const NodeGroup: int = 9;
-const NodeAnchorStart: int = 10;
-const NodeAnchorEnd: int = 11;
+enum NodeKind
+{
+    Literal = 0,
+    Any = 1,
+    Class = 2,
+    Concat = 3,
+    Alt = 4,
+    Star = 5,
+    Plus = 6,
+    Opt = 7,
+    Repeat = 8,
+    Group = 9,
+    AnchorStart = 10,
+    AnchorEnd = 11,
+}
 
 class RegexParseException : Exception
 {
@@ -103,7 +109,7 @@ class CharClass
 // instruction list exists), so the dispatch a hierarchy would buy is not worth the extra types.
 class Node
 {
-    public var kind: int;
+    public var kind: NodeKind;
     public var ch: char;
     public var charClass: CharClass?;
     public var children: List<Node>?;
@@ -111,7 +117,7 @@ class Node
     public var repeatMax: int;
     public var groupIndex: int;
 
-    public constructor(kind: int)
+    public constructor(kind: NodeKind)
     {
         this.kind = kind;
         this.ch = ' ';
@@ -127,13 +133,13 @@ class Node
 // backpatch its target once the code it jumps over has been emitted.
 class Instr
 {
-    public var op: int;
+    public var op: OpCode;
     public var a: int;
     public var b: int;
     public var ch: char;
     public var classIndex: int;
 
-    public constructor(op: int)
+    public constructor(op: OpCode)
     {
         this.op = op;
         this.a = 0;
@@ -248,7 +254,7 @@ class RegexParser
             branches.add(parseConcat());
         }
 
-        let node = Node(NodeAlt);
+        let node = Node(NodeKind.Alt);
         node.children = branches;
         return node;
     }
@@ -263,7 +269,7 @@ class RegexParser
         if (items.length == 1)
             return items.get(0);
 
-        let node = Node(NodeConcat);
+        let node = Node(NodeKind.Concat);
         node.children = items;
         return node;
     }
@@ -276,9 +282,9 @@ class RegexParser
             return atom;
 
         let c = current();
-        if (c == '*') { _pos = _pos + 1; let n = Node(NodeStar); n.children = singleChild(atom); return n; }
-        if (c == '+') { _pos = _pos + 1; let n = Node(NodePlus); n.children = singleChild(atom); return n; }
-        if (c == '?') { _pos = _pos + 1; let n = Node(NodeOpt); n.children = singleChild(atom); return n; }
+        if (c == '*') { _pos = _pos + 1; let n = Node(NodeKind.Star); n.children = singleChild(atom); return n; }
+        if (c == '+') { _pos = _pos + 1; let n = Node(NodeKind.Plus); n.children = singleChild(atom); return n; }
+        if (c == '?') { _pos = _pos + 1; let n = Node(NodeKind.Opt); n.children = singleChild(atom); return n; }
         if (c == '{') return parseBoundedRepeat(atom);
         return atom;
     }
@@ -304,7 +310,7 @@ class RegexParser
 
         expect('}');
 
-        let node = Node(NodeRepeat);
+        let node = Node(NodeKind.Repeat);
         node.children = singleChild(atom);
         node.repeatMin = min;
         node.repeatMax = max;
@@ -330,15 +336,15 @@ class RegexParser
     {
         let c = current();
 
-        if (c == '.') { _pos = _pos + 1; return Node(NodeAny); }
-        if (c == '^') { _pos = _pos + 1; return Node(NodeAnchorStart); }
-        if (c == '$') { _pos = _pos + 1; return Node(NodeAnchorEnd); }
+        if (c == '.') { _pos = _pos + 1; return Node(NodeKind.Any); }
+        if (c == '^') { _pos = _pos + 1; return Node(NodeKind.AnchorStart); }
+        if (c == '$') { _pos = _pos + 1; return Node(NodeKind.AnchorEnd); }
         if (c == '(') return parseGroup();
         if (c == '[') return parseClass();
         if (c == '\\') return parseEscape();
 
         _pos = _pos + 1;
-        let node = Node(NodeLiteral);
+        let node = Node(NodeKind.Literal);
         node.ch = c;
         return node;
     }
@@ -352,7 +358,7 @@ class RegexParser
         let inner = parseAlt();
         expect(')');
 
-        let node = Node(NodeGroup);
+        let node = Node(NodeKind.Group);
         node.children = singleChild(inner);
         node.groupIndex = index;
         return node;
@@ -383,7 +389,7 @@ class RegexParser
         }
         expect(']');
 
-        let node = Node(NodeClass);
+        let node = Node(NodeKind.Class);
         node.charClass = charClass;
         return node;
     }
@@ -415,14 +421,14 @@ class RegexParser
         if (c == 'w' || c == 'W') { _pos = _pos + 1; return classNode(wordClass(c == 'W')); }
         if (c == 's' || c == 'S') { _pos = _pos + 1; return classNode(spaceClass(c == 'S')); }
 
-        let node = Node(NodeLiteral);
+        let node = Node(NodeKind.Literal);
         node.ch = readEscapedLiteralChar();
         return node;
     }
 
     private fun classNode(charClass: CharClass): Node
     {
-        let node = Node(NodeClass);
+        let node = Node(NodeKind.Class);
         node.charClass = charClass;
         return node;
     }
@@ -471,19 +477,22 @@ class RegexParser
     }
 }
 
-private fun digitValue(c: char): int
+private static const fun digitValue(c: char): int
 {
-    if (c == '0') return 0;
-    if (c == '1') return 1;
-    if (c == '2') return 2;
-    if (c == '3') return 3;
-    if (c == '4') return 4;
-    if (c == '5') return 5;
-    if (c == '6') return 6;
-    if (c == '7') return 7;
-    if (c == '8') return 8;
-    if (c == '9') return 9;
-    return -1;
+    switch (c)
+    {
+        case '0': return 0;
+        case '1': return 1;
+        case '2': return 2;
+        case '3': return 3;
+        case '4': return 4;
+        case '5': return 5;
+        case '6': return 6;
+        case '7': return 7;
+        case '8': return 8;
+        case '9': return 9;
+        default: return -1;
+    }
 }
 
 private fun isDigit(c: char): bool => digitValue(c) >= 0;
@@ -525,7 +534,7 @@ public class Regex
             instructions.add(saveInstr(0));
             emitNode(root, instructions, classes);
             instructions.add(saveInstr(1));
-            instructions.add(Instr(OpMatch));
+            instructions.add(Instr(OpCode.Match));
 
             return Result<Regex, string>.ok(Regex(instructions, classes, parser.groupCount));
         }
@@ -537,30 +546,30 @@ public class Regex
 
     private static fun saveInstr(slot: int): Instr
     {
-        let instr = Instr(OpSave);
+        let instr = Instr(OpCode.Save);
         instr.a = slot;
         return instr;
     }
 
     private static fun emitNode(node: Node, prog: List<Instr>, classes: List<CharClass>): void
     {
-        if (node.kind == NodeLiteral) { emitChar(node.ch, prog); return; }
-        if (node.kind == NodeAny) { prog.add(Instr(OpAny)); return; }
-        if (node.kind == NodeAnchorStart) { prog.add(Instr(OpAnchorStart)); return; }
-        if (node.kind == NodeAnchorEnd) { prog.add(Instr(OpAnchorEnd)); return; }
-        if (node.kind == NodeClass) { emitClass(node.charClass!!, prog, classes); return; }
-        if (node.kind == NodeConcat) { emitConcat(node.children!!, prog, classes); return; }
-        if (node.kind == NodeAlt) { emitAlt(node.children!!, prog, classes); return; }
-        if (node.kind == NodeGroup) { emitGroup(node, prog, classes); return; }
-        if (node.kind == NodeStar) { emitStar(node.children!!.get(0), prog, classes); return; }
-        if (node.kind == NodePlus) { emitPlus(node.children!!.get(0), prog, classes); return; }
-        if (node.kind == NodeOpt) { emitOpt(node.children!!.get(0), prog, classes); return; }
-        if (node.kind == NodeRepeat) { emitRepeat(node, prog, classes); return; }
+        if (node.kind == NodeKind.Literal) { emitChar(node.ch, prog); return; }
+        if (node.kind == NodeKind.Any) { prog.add(Instr(OpCode.Any)); return; }
+        if (node.kind == NodeKind.AnchorStart) { prog.add(Instr(OpCode.AnchorStart)); return; }
+        if (node.kind == NodeKind.AnchorEnd) { prog.add(Instr(OpCode.AnchorEnd)); return; }
+        if (node.kind == NodeKind.Class) { emitClass(node.charClass!!, prog, classes); return; }
+        if (node.kind == NodeKind.Concat) { emitConcat(node.children!!, prog, classes); return; }
+        if (node.kind == NodeKind.Alt) { emitAlt(node.children!!, prog, classes); return; }
+        if (node.kind == NodeKind.Group) { emitGroup(node, prog, classes); return; }
+        if (node.kind == NodeKind.Star) { emitStar(node.children!!.get(0), prog, classes); return; }
+        if (node.kind == NodeKind.Plus) { emitPlus(node.children!!.get(0), prog, classes); return; }
+        if (node.kind == NodeKind.Opt) { emitOpt(node.children!!.get(0), prog, classes); return; }
+        if (node.kind == NodeKind.Repeat) { emitRepeat(node, prog, classes); return; }
     }
 
     private static fun emitChar(c: char, prog: List<Instr>): void
     {
-        let instr = Instr(OpChar);
+        let instr = Instr(OpCode.Char);
         instr.ch = c;
         prog.add(instr);
     }
@@ -569,7 +578,7 @@ public class Regex
     {
         let index = classes.length;
         classes.add(charClass);
-        let instr = Instr(OpClass);
+        let instr = Instr(OpCode.Class);
         instr.classIndex = index;
         prog.add(instr);
     }
@@ -605,14 +614,14 @@ public class Regex
         for (var i = 0; i < branches.length - 1; i++)
         {
             let splitAt = prog.length;
-            prog.add(Instr(OpSplit));
+            prog.add(Instr(OpCode.Split));
 
             let split = prog.get(splitAt);
             split.a = prog.length;
             emitNode(branches.get(i), prog, classes);
 
             let jumpAt = prog.length;
-            prog.add(Instr(OpJmp));
+            prog.add(Instr(OpCode.Jmp));
             jumpsToPatch.add(jumpAt);
 
             split.b = prog.length;
@@ -632,12 +641,12 @@ public class Regex
     private static fun emitStar(child: Node, prog: List<Instr>, classes: List<CharClass>): void
     {
         let l1 = prog.length;
-        prog.add(Instr(OpSplit));
+        prog.add(Instr(OpCode.Split));
         let split = prog.get(l1);
         split.a = prog.length;
 
         emitNode(child, prog, classes);
-        let jmp = Instr(OpJmp);
+        let jmp = Instr(OpCode.Jmp);
         jmp.a = l1;
         prog.add(jmp);
 
@@ -652,7 +661,7 @@ public class Regex
         let l1 = prog.length;
         emitNode(child, prog, classes);
 
-        let split = Instr(OpSplit);
+        let split = Instr(OpCode.Split);
         split.a = l1;
         prog.add(split);
         split.b = prog.length;
@@ -664,7 +673,7 @@ public class Regex
     private static fun emitOpt(child: Node, prog: List<Instr>, classes: List<CharClass>): void
     {
         let splitAt = prog.length;
-        prog.add(Instr(OpSplit));
+        prog.add(Instr(OpCode.Split));
         let split = prog.get(splitAt);
         split.a = prog.length;
 
@@ -771,40 +780,40 @@ public class Regex
             let instr = _instructions.get(pc);
             var ok = true;
 
-            if (instr.op == OpChar)
+            if (instr.op == OpCode.Char)
             {
                 if (pos < text.length && text.charAt(pos) == instr.ch) { pos = pos + 1; pc = pc + 1; }
                 else ok = false;
             }
-            else if (instr.op == OpAny)
+            else if (instr.op == OpCode.Any)
             {
                 if (pos < text.length) { pos = pos + 1; pc = pc + 1; }
                 else ok = false;
             }
-            else if (instr.op == OpClass)
+            else if (instr.op == OpCode.Class)
             {
                 if (pos < text.length && _classes.get(instr.classIndex).matches(text.charAt(pos))) { pos = pos + 1; pc = pc + 1; }
                 else ok = false;
             }
-            else if (instr.op == OpJmp)
+            else if (instr.op == OpCode.Jmp)
             {
                 pc = instr.a;
             }
-            else if (instr.op == OpSplit)
+            else if (instr.op == OpCode.Split)
             {
                 backtrack.push(Thread(instr.b, pos, copyOfInts(saves)));
                 pc = instr.a;
             }
-            else if (instr.op == OpSave)
+            else if (instr.op == OpCode.Save)
             {
                 saves[instr.a] = pos;
                 pc = pc + 1;
             }
-            else if (instr.op == OpAnchorStart)
+            else if (instr.op == OpCode.AnchorStart)
             {
                 if (pos == 0) pc = pc + 1; else ok = false;
             }
-            else if (instr.op == OpAnchorEnd)
+            else if (instr.op == OpCode.AnchorEnd)
             {
                 if (pos == text.length) pc = pc + 1; else ok = false;
             }

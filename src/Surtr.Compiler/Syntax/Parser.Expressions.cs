@@ -1232,9 +1232,10 @@ namespace Surtr.Compiler.Syntax
                     while (reader.Match(TokenType.Comma));
                 }
 
+                ExpressionSyntax? guard = reader.Match(TokenType.KeywordIf) ? ParseExpression() : null;
                 reader.Expect(TokenType.Arrow, "'->' in the switch arm");
                 ExpressionSyntax armResult = ParseExpression();
-                arms.Add(new SwitchExpressionArmSyntax(SpanFrom(armStart), values, armResult));
+                arms.Add(new SwitchExpressionArmSyntax(SpanFrom(armStart), values, guard, armResult));
 
                 if (!reader.Match(TokenType.Comma))
                 {

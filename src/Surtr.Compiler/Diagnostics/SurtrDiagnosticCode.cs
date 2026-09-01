@@ -749,6 +749,13 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         CannotIndexConstruction = 3101,
 
+        /// <summary>
+        /// A <c>switch</c> section/arm combines a type pattern (<c>x is Dog</c>) with another
+        /// label, or an <c>if</c> guard is attached where there is no single type-pattern label to
+        /// attach it to (§4.3). A pattern label must stand alone in its section/arm.
+        /// </summary>
+        InvalidSwitchPattern = 3102,
+
         #endregion
 
         #region Code generation — 4xxx

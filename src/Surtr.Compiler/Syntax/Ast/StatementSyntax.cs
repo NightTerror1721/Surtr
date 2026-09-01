@@ -235,6 +235,13 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>The values labelling this section. Empty means <c>default</c>.</summary>
         public IReadOnlyList<ExpressionSyntax> Labels { get; }
 
+        /// <summary>
+        /// One optional <c>if</c> guard per entry in <see cref="Labels"/>, parallel by index (a
+        /// <c>case x is Dog if x.age &gt; 2:</c> line). Only ever non-null on a single-label,
+        /// type-pattern section - the binder rejects any other placement.
+        /// </summary>
+        public IReadOnlyList<ExpressionSyntax?> Guards { get; }
+
         /// <summary>The statements in this section.</summary>
         public IReadOnlyList<StatementSyntax> Statements { get; }
 
@@ -244,11 +251,17 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>Initializes a switch section.</summary>
         /// <param name="span">The source the section covers.</param>
         /// <param name="labels">The values labelling it, or an empty list for <c>default</c>.</param>
+        /// <param name="guards">One optional guard per label, parallel to <paramref name="labels"/>.</param>
         /// <param name="statements">The statements in this section.</param>
-        public SwitchSectionSyntax(SourceSpan span, IReadOnlyList<ExpressionSyntax> labels, IReadOnlyList<StatementSyntax> statements)
+        public SwitchSectionSyntax(
+            SourceSpan span,
+            IReadOnlyList<ExpressionSyntax> labels,
+            IReadOnlyList<ExpressionSyntax?> guards,
+            IReadOnlyList<StatementSyntax> statements)
             : base(span)
         {
             Labels = labels;
+            Guards = guards;
             Statements = statements;
         }
     }

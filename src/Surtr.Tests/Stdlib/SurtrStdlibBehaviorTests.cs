@@ -2263,6 +2263,157 @@ namespace Surtr.Tests.Stdlib
             Assert.Equal(5, Int(runtime, "run"));
         }
 
+        // ── Fase 1 (docs/Plan-Roadmap-Novedades.md, propuesta 1): wait vocabulary + cancellation ──
+
+        /// <summary>
+        /// A `CoroutineHandle` names a slot, not an array position. Stopping the coroutine at
+        /// position 0 swap-moves the last active coroutine into that position - the handle for the
+        /// moved coroutine has to keep resolving to wherever it now lives.
+        /// </summary>
+        [Fact]
+        public void ACoroutineHandleSurvivesASwapRemovalMovingItToAnotherPosition()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.async.Scheduler;\n"
+                    + "fun run(): bool {\n"
+                    + "  let s = Scheduler();\n"
+                    + "  let a = s.start(delay(10.0, () => {}));\n"
+                    + "  let b = s.start(delay(10.0, () => {}));\n"
+                    + "  let c = s.start(delay(10.0, () => {}));\n"
+                    + "  s.update(0.0);\n"
+                    + "  if (s.activeCount != 3) return false;\n"
+                    + "  s.stop(a);\n"
+                    + "  if (s.activeCount != 2) return false;\n"
+                    + "  if (s.isAlive(a)) return false;\n"
+                    + "  if (!s.isAlive(b)) return false;\n"
+                    + "  if (!s.isAlive(c)) return false;\n"
+                    + "  s.stop(c);\n"
+                    + "  if (s.activeCount != 1) return false;\n"
+                    + "  if (s.isAlive(c)) return false;\n"
+                    + "  return s.isAlive(b);\n"
+                    + "}\n",
+                "async/Scheduler.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void SchedulerStopRunsTheStoppedCoroutinesFinallyWithoutTouchingOthers()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.async.Scheduler;\n"
+                    + "var finallyRan: bool = false;\n"
+                    + "var otherRan: bool = false;\n"
+                    + "generator watched(): WaitInstruction {\n"
+                    + "  try { yield waitSeconds(10.0); } finally { finallyRan = true; }\n"
+                    + "}\n"
+                    + "generator other(): WaitInstruction {\n"
+                    + "  yield waitSeconds(10.0);\n"
+                    + "  otherRan = true;\n"
+                    + "}\n"
+                    + "fun run(): bool {\n"
+                    + "  let s = Scheduler();\n"
+                    + "  let h = s.start(watched());\n"
+                    + "  s.start(other());\n"
+                    + "  s.update(0.0);\n"
+                    + "  if (finallyRan) return false;\n"
+                    + "  s.stop(h);\n"
+                    + "  if (!finallyRan) return false;\n"
+                    + "  if (otherRan) return false;\n"
+                    + "  return s.activeCount == 1;\n"
+                    + "}\n",
+                "async/Scheduler.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void WaitForCoroutineResumesOnlyAfterTheAwaitedCoroutineFinishes()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.async.Scheduler;\n"
+                    + "var bRan: bool = false;\n"
+                    + "generator childC(): WaitInstruction { yield waitSeconds(1.0); }\n"
+                    + "generator parentC(target: CoroutineHandle): WaitInstruction {\n"
+                    + "  yield waitForCoroutine(target);\n"
+                    + "  bRan = true;\n"
+                    + "}\n"
+                    + "fun run(): bool {\n"
+                    + "  let s = Scheduler();\n"
+                    + "  let childHandle = s.start(childC());\n"
+                    + "  s.start(parentC(childHandle));\n"
+                    + "  s.update(0.0);\n"
+                    + "  if (bRan) return false;\n"
+                    + "  if (s.activeCount != 2) return false;\n"
+                    + "  s.update(0.5);\n"
+                    + "  if (bRan) return false;\n"
+                    + "  s.update(0.6);\n"
+                    + "  if (!bRan) return false;\n"
+                    + "  return s.activeCount == 0;\n"
+                    + "}\n",
+                "async/Scheduler.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void AFailingCoroutineIsIsolatedAndReportedThroughOnError()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.async.Scheduler;\n"
+                    + "var otherTicks: int = 0;\n"
+                    + "var caught: string = \"\";\n"
+                    + "generator broken(): WaitInstruction {\n"
+                    + "  yield waitSeconds(0.0);\n"
+                    + "  throw InvalidOperationException(\"boom\");\n"
+                    + "}\n"
+                    + "generator healthy(): WaitInstruction {\n"
+                    + "  while (true) { otherTicks = otherTicks + 1; yield waitSeconds(1.0); }\n"
+                    + "}\n"
+                    + "fun run(): bool {\n"
+                    + "  let s = Scheduler();\n"
+                    + "  s.onError((e: Exception) => { caught = e.message; });\n"
+                    + "  s.start(broken());\n"
+                    + "  s.start(healthy());\n"
+                    + "  s.update(0.0);\n"
+                    + "  if (s.activeCount != 2) return false;\n"
+                    + "  s.update(0.1);\n"
+                    + "  if (s.activeCount != 1) return false;\n"
+                    + "  if (caught != \"boom\") return false;\n"
+                    + "  return otherTicks == 1;\n"
+                    + "}\n",
+                "async/Scheduler.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void WaitUntilResumesOnlyOnceTheConditionBecomesTrue()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.async.Scheduler;\n"
+                    + "var ready: bool = false;\n"
+                    + "var resumed: bool = false;\n"
+                    + "generator waiter(): WaitInstruction {\n"
+                    + "  yield waitUntil(() => ready);\n"
+                    + "  resumed = true;\n"
+                    + "}\n"
+                    + "fun run(): bool {\n"
+                    + "  let s = Scheduler();\n"
+                    + "  s.start(waiter());\n"
+                    + "  s.update(0.1);\n"
+                    + "  if (resumed) return false;\n"
+                    + "  s.update(0.1);\n"
+                    + "  if (resumed) return false;\n"
+                    + "  ready = true;\n"
+                    + "  s.update(0.1);\n"
+                    + "  return resumed;\n"
+                    + "}\n",
+                "async/Scheduler.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
         // ── Fase 8: surtr.io.File ──────────────────────────────────────────────────
 
         [Fact]

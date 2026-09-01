@@ -118,7 +118,7 @@ namespace Surtr.Compiler.Binding
                             var inner = new BoundStatement[section.Statements.Count];
                             for (int j = 0; j < inner.Length; j++)
                                 inner[j] = RewriteStatement(section.Statements[j]);
-                            sections[i] = new BoundSwitchSection(section.Labels, inner);
+                            sections[i] = new BoundSwitchSection(section.Labels, inner, section.PatternLocal, section.Guard);
                         }
 
                         return new BoundSwitchStatement(@switch.Syntax, RewriteExpression(@switch.Subject), sections);

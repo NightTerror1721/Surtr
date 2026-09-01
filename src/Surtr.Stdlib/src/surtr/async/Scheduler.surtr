@@ -4,95 +4,330 @@
 // to what a game loop actually wants a coroutine *for* - running a sequence of timed steps without
 // blocking the frame, Unity's `StartCoroutine`/`WaitForSeconds` being the direct precedent.
 //
-// The protocol is deliberately the simplest one that works: a scheduled coroutine is a
-// `generator<float>`, and every `yield <seconds>` is "pause for at least this many seconds of
-// `update(deltaTime)` time before resuming". `yield 0.0` resumes on the very next `update()` call -
-// "wait one frame". The coroutine returning (falling off the end, or an explicit `return;`) retires
-// it from the scheduler with no special call needed.
+// docs/Plan-Roadmap-Novedades.md's Fase 1/propuesta 1 (docs/Informe-Corutinas-Asincronas.md §2.7)
+// identified what a plain "yield seconds" scheduler still lacked: waiting on a condition instead of
+// a clock, waiting on *another* coroutine finishing (not just composing them structurally), stable
+// per-coroutine cancellation, and an explicit error policy. All four close here, still entirely in
+// Surtr - no change to Surtr.Core, no new opcode.
 //
-// Stored as `generator<float>[]` directly (B12, docs/Plan-Revision-Stdlib.md §6.3d, fixed): earlier
-// sessions worked around a parser gap that rejected `generator<T>` nested inside another type's own
-// `<...>` - `array<generator<float>>(n)` failed to parse, "Expected an expression, found
-// KeywordGenerator" - by storing `unknown[]` and casting back on every read. The lookahead that
-// disambiguates a generic call from a chain of comparisons did not know `generator` could appear
-// mid-scan; it does now, so the array can name its real element type.
+// The protocol is `generator<WaitInstruction>` rather than the old bare `generator<float>`:
+// `WaitInstruction` is a closed, tagged union (§below) of the three things a scheduled coroutine can
+// wait on. `yield waitSeconds(t)` is the old `yield t;` spelled explicitly; `yield waitUntil(pred)`
+// polls a condition once per `update()`; `yield waitForCoroutine(handle)` blocks until another
+// scheduled coroutine finishes or is stopped. This is a breaking change to the element type of every
+// coroutine this module hands to a `Scheduler` - deliberate, per the roadmap's own note that the
+// protocol change "toca todo el código que ya usa delay/repeatEvery/repeatTimes"; `delay`/
+// `repeatEvery`/`repeatTimes` below are updated in place and keep their old public signatures
+// (`seconds: float`), so nothing outside this module has to change.
 //
-// Backed by two parallel arrays with swap-removal: a scheduler's iteration order across coroutines
-// is never meaningful (each one only cares about its own wait timer), so an O(1) swap-with-last on
-// completion costs nothing a shifting removal would have bought.
+// Cancellation needs a handle that survives *other* coroutines finishing. The array is still
+// swap-removal compacted (§below), which invalidates a plain index - so `start()` no longer hands
+// back a raw slot, it hands back a `CoroutineHandle {slot, generation}` resolved through a small
+// slot map (the "generational index" pattern): a coroutine's position in the compacted arrays can
+// move, but its slot id cannot, and the slot's generation is bumped every time it is freed, so a
+// stale handle into a reused slot resolves to "not alive" instead of someone else's coroutine.
+//
+// Error policy mirrors Unity's (docs/Informe-Corutinas-Asincronas.md §3, "Errores"): an exception
+// inside one coroutine's `moveNext()` retires only that coroutine and never stops `update()` from
+// advancing the rest. By default the failure is swallowed (isolated, not silently lost - it simply
+// has nowhere configured to go); a host that wants to know registers `onError(handler)`.
+public value class CoroutineHandle
+{
+    public let slot: int;
+    public let generation: int;
+
+    public constructor(slot: int, generation: int)
+    {
+        this.slot = slot;
+        this.generation = generation;
+    }
+
+    public static invalid: CoroutineHandle => CoroutineHandle(-1, -1);
+}
+
+/// What a scheduled coroutine is waiting on - a closed union of the three vocabularies a
+/// `Scheduler` understands, tagged by `kind` (0 = seconds, 1 = until a condition, 2 = until another
+/// coroutine finishes). Built only through `waitSeconds`/`waitUntil`/`waitForCoroutine` (or the
+/// equally-named static factories here), the same private-constructor-plus-named-factories shape
+/// `Result<T, E>` already uses, so a caller can never construct an instruction whose fields
+/// disagree with its own tag.
+public value class WaitInstruction
+{
+    private let _kind: int;
+    private let _seconds: float;
+    private let _condition: () -> bool;
+    private let _target: CoroutineHandle;
+
+    private constructor(kind: int, seconds: float, condition: () -> bool, target: CoroutineHandle)
+    {
+        this._kind = kind;
+        this._seconds = seconds;
+        this._condition = condition;
+        this._target = target;
+    }
+
+    // §5.1: a closure type has no surface syntax for "nullable" (`() -> T?` nullifies the return,
+    // and `(...)?` around it parses as a nullable 1-tuple, not a nullable closure) - so the two
+    // kinds that carry no real predicate store a never-called no-op instead of null.
+    public static fun seconds(t: float): WaitInstruction =>
+        WaitInstruction(0, t, () => false, CoroutineHandle(-1, -1));
+
+    public static fun untilCondition(pred: () -> bool): WaitInstruction =>
+        WaitInstruction(1, 0.0, pred, CoroutineHandle(-1, -1));
+
+    public static fun forCoroutine(handle: CoroutineHandle): WaitInstruction =>
+        WaitInstruction(2, 0.0, () => false, handle);
+
+    public inline kind: int => _kind;
+    public inline seconds: float => _seconds;
+    public inline condition: () -> bool => _condition;
+    public inline target: CoroutineHandle => _target;
+}
+
+/// Waits `t` seconds of `update(deltaTime)` time before resuming. `yield waitSeconds(0.0);` resumes
+/// on the very next `update()` call - "wait one frame".
+public fun waitSeconds(t: float): WaitInstruction => WaitInstruction.seconds(t);
+
+/// Resumes the first `update()` call where `pred()` returns `true`. Polled once per tick, like
+/// Unity's `WaitUntil`.
+public fun waitUntil(pred: () -> bool): WaitInstruction => WaitInstruction.untilCondition(pred);
+
+/// Resumes once the coroutine `handle` refers to has finished (normally, by failing, or by being
+/// `stop()`ped) - structured waiting on another scheduled coroutine rather than on a clock.
+public fun waitForCoroutine(handle: CoroutineHandle): WaitInstruction => WaitInstruction.forCoroutine(handle);
+
 public class Scheduler
 {
-    private var _coroutines: generator<float>[];
-    private var _remaining: float[];
+    private var _coroutines: generator<WaitInstruction>[];
+    private var _remaining: float[];      // authoritative only while _pending[i].kind == 0
+    private var _pending: WaitInstruction[];
+    private var _indexToSlot: int[];
     private var _count: int;
+
+    // The slot map: a `CoroutineHandle` names a slot, never an array position directly, so it
+    // stays valid across the swap-removals below moving other coroutines around.
+    private var _slotToIndex: int[];      // slot -> current array position, or -1 if not active
+    private var _generation: int[];       // bumped every time a slot is freed
+    private var _slotCount: int;
+    private var _freeSlots: int[];
+    private var _freeCount: int;
+
+    private var _onError: (Exception) -> void;
 
     public constructor()
     {
-        this._coroutines = array<generator<float>>(4);
+        this._coroutines = array<generator<WaitInstruction>>(4);
         this._remaining = array<float>(4);
+        this._pending = array<WaitInstruction>(4);
+        this._indexToSlot = array<int>(4);
         this._count = 0;
+
+        this._slotToIndex = array<int>(4);
+        this._generation = array<int>(4);
+        this._slotCount = 0;
+        this._freeSlots = array<int>(4);
+        this._freeCount = 0;
+
+        this._onError = (e: Exception) => {};
     }
 
     public inline activeCount: int => _count;
 
-    /// Registers `coroutine`, ready to run on the next `update()` call.
-    public fun start(coroutine: generator<float>): void
+    /// Registers a handler invoked whenever a scheduled coroutine's `moveNext()` throws. Only the
+    /// failing coroutine is retired; every other scheduled coroutine keeps running. With no handler
+    /// registered, a failure is isolated silently (matching Unity: one broken coroutine never
+    /// contaminates the rest).
+    public fun onError(handler: (Exception) -> void): void
+    {
+        this._onError = handler;
+    }
+
+    /// Registers `coroutine`, ready to run on the next `update()` call. The returned handle stays
+    /// valid for `stop()`/`isAlive()`/`waitForCoroutine()` regardless of how many other coroutines
+    /// start or finish afterward.
+    public fun start(coroutine: generator<WaitInstruction>): CoroutineHandle
     {
         if (_count == _coroutines.length)
         {
             let newCapacity = _count == 0 ? 4 : _count * 2;
-            var newCoroutines = array<generator<float>>(newCapacity);
+            var newCoroutines = array<generator<WaitInstruction>>(newCapacity);
             var newRemaining = array<float>(newCapacity);
+            var newPending = array<WaitInstruction>(newCapacity);
+            var newIndexToSlot = array<int>(newCapacity);
             for (var i = 0; i < _count; i++)
             {
                 newCoroutines[i] = _coroutines[i];
                 newRemaining[i] = _remaining[i];
+                newPending[i] = _pending[i];
+                newIndexToSlot[i] = _indexToSlot[i];
             }
             _coroutines = newCoroutines;
             _remaining = newRemaining;
+            _pending = newPending;
+            _indexToSlot = newIndexToSlot;
         }
 
-        _coroutines[_count] = coroutine;
-        _remaining[_count] = 0.0;
+        let slot = allocateSlot();
+        let index = _count;
+        _coroutines[index] = coroutine;
+        _remaining[index] = 0.0;
+        _pending[index] = WaitInstruction.seconds(0.0);
+        _indexToSlot[index] = slot;
+        _slotToIndex[slot] = index;
         _count = _count + 1;
+
+        return CoroutineHandle(slot, _generation[slot]);
     }
 
-    /// Advances every scheduled coroutine by `deltaTime` seconds, resuming each whose wait has
-    /// elapsed. Call once per frame with the frame's delta time.
+    /// Stops and disposes the coroutine `handle` refers to, running its pending `finally` blocks.
+    /// Does nothing if `handle` no longer refers to a live coroutine (already finished, failed, or
+    /// already stopped).
+    public fun stop(handle: CoroutineHandle): void
+    {
+        let index = resolveHandle(handle);
+        if (index < 0) return;
+        _coroutines[index].dispose();
+        removeAt(index);
+    }
+
+    /// Whether `handle` still refers to a scheduled, not-yet-finished coroutine.
+    public fun isAlive(handle: CoroutineHandle): bool => resolveHandle(handle) >= 0;
+
+    /// Advances every scheduled coroutine by `deltaTime` seconds, resuming each whose wait is over.
+    /// Call once per frame with the frame's delta time.
     public fun update(deltaTime: float): void
     {
         var i = 0;
         while (i < _count)
         {
-            let left = _remaining[i] - deltaTime;
-            if (left > 0.0)
+            if (!isReady(i, deltaTime))
             {
-                _remaining[i] = left;
                 i += 1;
                 continue;
             }
 
-            let coroutine = _coroutines[i];
-            if (coroutine.moveNext())
+            var threw = false;
+            var moved = false;
+            try
             {
-                _remaining[i] = coroutine.current;
-                i += 1;
+                moved = _coroutines[i].moveNext();
             }
-            else
+            catch (e: Exception)
             {
-                _count = _count - 1;
-                _coroutines[i] = _coroutines[_count];
-                _remaining[i] = _remaining[_count];
+                threw = true;
+                _onError(e);
             }
+
+            if (threw || !moved)
+            {
+                removeAt(i);
+                continue;
+            }
+
+            let next = _coroutines[i].current;
+            _pending[i] = next;
+            if (next.kind == 0) _remaining[i] = next.seconds;
+            i += 1;
         }
     }
 
     /// Stops and disposes every scheduled coroutine, running their pending `finally` blocks.
     public fun stopAll(): void
     {
-        for (var i = 0; i < _count; i++)
-            _coroutines[i].dispose();
-        _count = 0;
+        while (_count > 0)
+        {
+            _coroutines[0].dispose();
+            removeAt(0);
+        }
+    }
+
+    private fun isReady(i: int, deltaTime: float): bool
+    {
+        let kind = _pending[i].kind;
+        if (kind == 0)
+        {
+            let left = _remaining[i] - deltaTime;
+            if (left > 0.0)
+            {
+                _remaining[i] = left;
+                return false;
+            }
+            return true;
+        }
+
+        if (kind == 1) return _pending[i].condition();
+        return !isAlive(_pending[i].target);
+    }
+
+    private fun allocateSlot(): int
+    {
+        if (_freeCount > 0)
+        {
+            _freeCount -= 1;
+            return _freeSlots[_freeCount];
+        }
+
+        if (_slotCount == _slotToIndex.length)
+        {
+            let newCapacity = _slotCount == 0 ? 4 : _slotCount * 2;
+            var newSlotToIndex = array<int>(newCapacity);
+            var newGeneration = array<int>(newCapacity);
+            for (var i = 0; i < _slotCount; i++)
+            {
+                newSlotToIndex[i] = _slotToIndex[i];
+                newGeneration[i] = _generation[i];
+            }
+            _slotToIndex = newSlotToIndex;
+            _generation = newGeneration;
+        }
+
+        let slot = _slotCount;
+        _slotToIndex[slot] = -1;
+        _generation[slot] = 0;
+        _slotCount += 1;
+        return slot;
+    }
+
+    private fun resolveHandle(handle: CoroutineHandle): int
+    {
+        if (handle.slot < 0 || handle.slot >= _slotCount) return -1;
+        if (_generation[handle.slot] != handle.generation) return -1;
+        return _slotToIndex[handle.slot];
+    }
+
+    /// Removes the coroutine at array position `i` - already finished, failed, or explicitly
+    /// stopped, so whatever unwind it needed already ran. Frees its slot for reuse (bumping the
+    /// generation, so any handle still pointing at it resolves to "not alive") and, unless `i` was
+    /// the last active entry, swap-moves the last one into its place, keeping the slot map in sync
+    /// with where that moved coroutine now lives.
+    private fun removeAt(i: int): void
+    {
+        let freedSlot = _indexToSlot[i];
+        _slotToIndex[freedSlot] = -1;
+        _generation[freedSlot] = _generation[freedSlot] + 1;
+
+        if (_freeCount == _freeSlots.length)
+        {
+            let newCapacity = _freeCount == 0 ? 4 : _freeCount * 2;
+            var newFreeSlots = array<int>(newCapacity);
+            for (var j = 0; j < _freeCount; j++)
+                newFreeSlots[j] = _freeSlots[j];
+            _freeSlots = newFreeSlots;
+        }
+        _freeSlots[_freeCount] = freedSlot;
+        _freeCount += 1;
+
+        let last = _count - 1;
+        if (i != last)
+        {
+            _coroutines[i] = _coroutines[last];
+            _remaining[i] = _remaining[last];
+            _pending[i] = _pending[last];
+            let movedSlot = _indexToSlot[last];
+            _indexToSlot[i] = movedSlot;
+            _slotToIndex[movedSlot] = i;
+        }
+        _count = last;
     }
 }
 
@@ -100,30 +335,30 @@ public class Scheduler
 // script reaches for immediately: run something once after a delay, or repeatedly on an interval.
 
 /// Waits `seconds`, then runs `action` once.
-public generator delay(seconds: float, action: () -> void): float
+public generator delay(seconds: float, action: () -> void): WaitInstruction
 {
-    yield seconds;
+    yield waitSeconds(seconds);
     action();
 }
 
 /// Runs `action`, then waits `interval` seconds, forever. Register with `Scheduler.start()`; call
-/// `Scheduler.stopAll()` (or let the scheduler itself be dropped) to end it - it never returns on
-/// its own.
-public generator repeatEvery(interval: float, action: () -> void): float
+/// `Scheduler.stop()`/`Scheduler.stopAll()` (or let the scheduler itself be dropped) to end it - it
+/// never returns on its own.
+public generator repeatEvery(interval: float, action: () -> void): WaitInstruction
 {
     while (true)
     {
         action();
-        yield interval;
+        yield waitSeconds(interval);
     }
 }
 
 /// Runs `action` immediately and then `times - 1` more times, `interval` seconds apart.
-public generator repeatTimes(interval: float, times: int, action: () -> void): float
+public generator repeatTimes(interval: float, times: int, action: () -> void): WaitInstruction
 {
     for (var i = 0; i < times; i++)
     {
         action();
-        yield interval;
+        yield waitSeconds(interval);
     }
 }

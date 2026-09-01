@@ -1718,6 +1718,48 @@ var runtime = Run(
             Assert.False(Call(runtime, "run").AsBool);
         }
 
+        /// <summary>
+        /// A multi-field enum's case read is a whole block, not a literal: comparing it against a
+        /// value that came from a local (not from another case read) must still compare structurally
+        /// and not mistake the int <c>value</c> slot for the whole value.
+        /// </summary>
+        [Fact]
+        public void AMultiFieldEnumCaseReadComparedAgainstALocalComparesStructurally()
+        {
+            var runtime = Run(
+                "enum Suit {\n"
+                    + "  Hearts(\"h\"), Spades(\"s\");\n"
+                    + "  public let glyph: string;\n"
+                    + "  private constructor(glyph: string) { this.glyph = glyph; }\n"
+                    + "}\n"
+                    + "fun same(): bool { let s: Suit = Suit.Hearts; return s == Suit.Hearts; }\n"
+                    + "fun different(): bool { let s: Suit = Suit.Spades; return s == Suit.Hearts; }\n");
+
+            Assert.True(Call(runtime, "same").AsBool);
+            Assert.False(Call(runtime, "different").AsBool);
+        }
+
+        /// <summary>
+        /// Same guard as <see cref="AMultiFieldEnumCaseReadComparedAgainstALocalComparesStructurally"/>,
+        /// with the other side coming out of a class field instead of a local.
+        /// </summary>
+        [Fact]
+        public void AMultiFieldEnumCaseReadComparedAgainstAClassFieldComparesStructurally()
+        {
+            var runtime = Run(
+                "enum Suit {\n"
+                    + "  Hearts(\"h\"), Spades(\"s\");\n"
+                    + "  public let glyph: string;\n"
+                    + "  private constructor(glyph: string) { this.glyph = glyph; }\n"
+                    + "}\n"
+                    + "class Box { public let suit: Suit; public constructor(suit: Suit) { this.suit = suit; } }\n"
+                    + "fun same(): bool { return Box(Suit.Hearts).suit == Suit.Hearts; }\n"
+                    + "fun different(): bool { return Box(Suit.Spades).suit == Suit.Hearts; }\n");
+
+            Assert.True(Call(runtime, "same").AsBool);
+            Assert.False(Call(runtime, "different").AsBool);
+        }
+
         [Fact]
         public void ASwitchOverAnEnumMatchesByCase()
         {
@@ -1746,6 +1788,140 @@ var runtime = Run(
                     + "fun run(): int { return rank(Suit.Spades); }");
 
             Assert.Equal(4, Int(runtime, "run"));
+        }
+
+        // ── Fase 1 (docs/Plan-Roadmap-Novedades.md, propuesta 5): type patterns in switch ────────
+
+        /// <summary>
+        /// A type-pattern section dispatches by the subject's dynamic class, in section order (a
+        /// more specific guarded pattern before the bare one for the same type), and the guard
+        /// reads the pattern's own narrowed local - not the original, wider-typed subject.
+        /// </summary>
+        [Fact]
+        public void ASwitchStatementDispatchesByTypePatternAndEvaluatesTheGuardOnTheNarrowedLocal()
+        {
+            var runtime = Run(
+                "class Shape {}\n"
+                    + "class Circle : Shape { public let radius: float; public constructor(radius: float) { this.radius = radius; } }\n"
+                    + "class Square : Shape { public let side: float; public constructor(side: float) { this.side = side; } }\n"
+                    + "fun describe(s: Shape): string {\n"
+                    + "  switch (s) {\n"
+                    + "    case c is Circle if c.radius > 10.0: return \"big circle\";\n"
+                    + "    case c is Circle: return \"circle\";\n"
+                    + "    case sq is Square: return \"square:${sq.side}\";\n"
+                    + "    default: return \"other\";\n"
+                    + "  }\n"
+                    + "}\n"
+                    + "fun runBig(): string { return describe(Circle(20.0)); }\n"
+                    + "fun runSmall(): string { return describe(Circle(1.0)); }\n"
+                    + "fun runSquare(): string { return describe(Square(5.0)); }\n"
+                    + "fun runOther(): string { return describe(Shape()); }\n");
+
+            Assert.Equal("big circle", Text(runtime, "runBig"));
+            Assert.Equal("circle", Text(runtime, "runSmall"));
+            Assert.Equal("square:5", Text(runtime, "runSquare"));
+            Assert.Equal("other", Text(runtime, "runOther"));
+        }
+
+        /// <summary>
+        /// The expression form's arms work exactly the same way, and a plain value label can share a
+        /// switch with type-pattern arms - each tested in source order until one matches.
+        /// </summary>
+        [Fact]
+        public void ASwitchExpressionMixesAnOrdinaryValueArmWithTypePatternArms()
+        {
+            var runtime = Run(
+                "class Shape {}\n"
+                    + "class Circle : Shape { public let radius: float; public constructor(radius: float) { this.radius = radius; } }\n"
+                    + "class Square : Shape {}\n"
+                    + "fun describe(s: Shape, marker: Circle): string {\n"
+                    + "  return switch (s) {\n"
+                    + "    marker -> \"origin\",\n"
+                    + "    c is Circle -> \"circle\",\n"
+                    + "    sq is Square -> \"square\",\n"
+                    + "    else -> \"other\",\n"
+                    + "  };\n"
+                    + "}\n"
+                    + "fun runOrigin(): string { let m = Circle(0.0); return describe(m, m); }\n"
+                    + "fun runOtherCircle(): string { let m = Circle(0.0); return describe(Circle(5.0), m); }\n");
+
+            Assert.Equal("origin", Text(runtime, "runOrigin"));
+            Assert.Equal("circle", Text(runtime, "runOtherCircle"));
+        }
+
+        /// <summary>A pattern whose guard fails falls through to the next test, not to the default.</summary>
+        [Fact]
+        public void AFailedGuardFallsThroughToTheNextPatternRatherThanTheDefault()
+        {
+            var runtime = Run(
+                "class Shape {}\n"
+                    + "class Circle : Shape { public let radius: float; public constructor(radius: float) { this.radius = radius; } }\n"
+                    + "fun describe(s: Shape): string {\n"
+                    + "  switch (s) {\n"
+                    + "    case c is Circle if c.radius > 10.0: return \"big\";\n"
+                    + "    case c is Circle: return \"small\";\n"
+                    + "    default: return \"other\";\n"
+                    + "  }\n"
+                    + "}\n"
+                    + "fun run(): string { return describe(Circle(1.0)); }\n");
+
+            Assert.Equal("small", Text(runtime, "run"));
+        }
+
+        /// <summary>
+        /// A type pattern's set of matching values is never provably closed, so - unlike an enum -
+        /// an expression switch that uses one always needs an explicit <c>else</c>.
+        /// </summary>
+        [Fact]
+        public void ASwitchExpressionWithATypePatternArmNeedsAnElse()
+        {
+            using var compilation = Reject(
+                "class Shape {}\n"
+                    + "class Circle : Shape {}\n"
+                    + "fun run(): string { let s = Circle(); return switch (s) { c is Circle -> \"circle\", }; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.SwitchNotExhaustive);
+        }
+
+        /// <summary>Combining a type pattern with another label in the same section is rejected, not silently mis-bound.</summary>
+        [Fact]
+        public void ASwitchSectionCannotCombineATypePatternWithAnotherLabel()
+        {
+            using var compilation = Reject(
+                "class Shape {}\n"
+                    + "class Circle : Shape {}\n"
+                    + "fun run(): string {\n"
+                    + "  let s = Circle();\n"
+                    + "  let other = Circle();\n"
+                    + "  switch (s) { case c is Circle: case other: return \"x\"; default: return \"y\"; }\n"
+                    + "  return \"z\";\n"
+                    + "}");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidSwitchPattern);
+        }
+
+        /// <summary>
+        /// Unlike an ordinary value section's locals - visible in every later section, for
+        /// fallthrough - a type pattern's binding is scoped to its own section alone, the same as a
+        /// <c>catch</c> clause's exception local is scoped to its own clause.
+        /// </summary>
+        [Fact]
+        public void ATypePatternLocalIsNotVisibleInAnotherSection()
+        {
+            using var compilation = Reject(
+                "class Shape {}\n"
+                    + "class Circle : Shape {}\n"
+                    + "class Square : Shape {}\n"
+                    + "fun run(s: Shape): string {\n"
+                    + "  switch (s) {\n"
+                    + "    case c is Circle: break;\n"
+                    + "    case sq is Square: return c.toString();\n"
+                    + "    default: break;\n"
+                    + "  }\n"
+                    + "  return \"\";\n"
+                    + "}");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.UnresolvedName);
         }
 
         /// <summary>

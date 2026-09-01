@@ -797,6 +797,41 @@ namespace Surtr.Tests.Compiler.Syntax
             Assert.True(expression.Arms[2].IsElse);
         }
 
+        // ---- Fase 1 (docs/Plan-Roadmap-Novedades.md, propuesta 5): type patterns in switch -----
+
+        [Fact]
+        public void SwitchStatementParsesATypePatternLabel()
+        {
+            SwitchStatementSyntax statement = Assert.IsType<SwitchStatementSyntax>(
+                ParseStatement("switch (shape) { case c is Circle: big(c); break; default: other(); }"));
+
+            Assert.Single(statement.Sections[0].Labels);
+            var test = Assert.IsType<TypeTestExpressionSyntax>(statement.Sections[0].Labels[0]);
+            Assert.IsType<IdentifierExpressionSyntax>(test.Operand);
+            Assert.Null(statement.Sections[0].Guards[0]);
+        }
+
+        [Fact]
+        public void SwitchStatementParsesATypePatternLabelWithAGuard()
+        {
+            SwitchStatementSyntax statement = Assert.IsType<SwitchStatementSyntax>(
+                ParseStatement("switch (shape) { case c is Circle if c.radius > 10.0: big(c); break; }"));
+
+            Assert.NotNull(statement.Sections[0].Guards[0]);
+        }
+
+        [Fact]
+        public void SwitchExpressionParsesATypePatternArmWithAGuard()
+        {
+            SwitchExpressionSyntax expression = Assert.IsType<SwitchExpressionSyntax>(
+                ParseExpression("switch (shape) { c is Circle if c.radius > 10.0 -> \"big\", else -> \"other\", }"));
+
+            var test = Assert.IsType<TypeTestExpressionSyntax>(Assert.Single(expression.Arms[0].Values));
+            Assert.IsType<IdentifierExpressionSyntax>(test.Operand);
+            Assert.NotNull(expression.Arms[0].Guard);
+            Assert.Null(expression.Arms[1].Guard);
+        }
+
         [Fact]
         public void TryCatchFinallyParses()
         {

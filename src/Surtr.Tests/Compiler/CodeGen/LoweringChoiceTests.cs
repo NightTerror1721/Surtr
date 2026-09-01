@@ -1614,6 +1614,34 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         /// <summary>
+        /// Fase 1 (docs/Plan-Roadmap-Novedades.md, propuesta 5): a switch with a type-pattern
+        /// section never engages <see cref="SurtrCodeEmitter.SwitchOn"/> - it always compiles to a
+        /// chain of <c>JPInstanceOf</c> tests, since mixing a type test into a jump table buys
+        /// nothing at this scale. A plain, pattern-free enum switch in the same file is unaffected
+        /// (still a table, asserted by <see cref="ASwitchOverABareEnumCompilesToAJumpTable"/> above).
+        /// </summary>
+        [Fact]
+        public void ASwitchWithATypePatternCompilesToAnInstanceOfChainNeverATable()
+        {
+            string code = Disassemble(
+                "class Shape {}\n"
+                + "class Circle : Shape {}\n"
+                + "class Square : Shape {}\n"
+                + "fun run(s: Shape): int {\n"
+                + "  switch (s) {\n"
+                + "    case c is Circle: return 1;\n"
+                + "    case sq is Square: return 2;\n"
+                + "    default: return 0;\n"
+                + "  }\n"
+                + "}\n");
+
+            Assert.Equal(0, Count(code, "Switch"));
+            Assert.Equal(0, Count(code, "SwitchLookup"));
+            Assert.True(Count(code, "JPInstanceOf") >= 2,
+                "A type-pattern switch must dispatch through JPInstanceOf, one test per pattern section:\n" + code);
+        }
+
+        /// <summary>
         /// §2.3ter: the synthesized <c>operator&lt;=&gt;</c> is <c>forceinline</c>, so a relational
         /// over an enum splices it — the body of <c>run</c> contains no call at all.
         /// </summary>

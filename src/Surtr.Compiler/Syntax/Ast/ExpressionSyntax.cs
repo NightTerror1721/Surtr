@@ -550,6 +550,13 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>The values this arm matches. Empty means it is the <c>else</c> arm.</summary>
         public IReadOnlyList<ExpressionSyntax> Values { get; }
 
+        /// <summary>
+        /// The optional <c>if</c> guard (<c>x is Dog if x.age &gt; 2 -&gt; ...</c>). Only ever
+        /// non-null when <see cref="Values"/> holds exactly one type-pattern value - the binder
+        /// rejects any other placement.
+        /// </summary>
+        public ExpressionSyntax? Guard { get; }
+
         /// <summary>The arm's result.</summary>
         public ExpressionSyntax Result { get; }
 
@@ -559,11 +566,14 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>Initializes a switch-expression arm.</summary>
         /// <param name="span">The source the arm covers.</param>
         /// <param name="values">The values matched, or an empty list for <c>else</c>.</param>
+        /// <param name="guard">The optional <c>if</c> guard.</param>
         /// <param name="result">The arm's result.</param>
-        public SwitchExpressionArmSyntax(SourceSpan span, IReadOnlyList<ExpressionSyntax> values, ExpressionSyntax result)
+        public SwitchExpressionArmSyntax(
+            SourceSpan span, IReadOnlyList<ExpressionSyntax> values, ExpressionSyntax? guard, ExpressionSyntax result)
             : base(span)
         {
             Values = values;
+            Guard = guard;
             Result = result;
         }
     }

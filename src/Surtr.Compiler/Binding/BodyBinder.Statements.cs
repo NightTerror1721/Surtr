@@ -7,6 +7,7 @@ using Surtr.Compiler.Syntax;
 using Surtr.Compiler.Syntax.Ast;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Surtr.Compiler.Binding
 {
@@ -650,13 +651,33 @@ namespace Surtr.Compiler.Binding
 
             for (int i = 0; i < sections.Length; i++)
             {
-                var labels = new BoundExpression[syntax.Sections[i].Labels.Count];
-                for (int l = 0; l < labels.Length; l++)
-                    labels[l] = BindConverted(syntax.Sections[i].Labels[l], subject.Type);
+                var sectionSyntax = syntax.Sections[i];
 
-                var statements = new BoundStatement[syntax.Sections[i].Statements.Count];
+                if (TryGetSwitchPattern(sectionSyntax.Labels, sectionSyntax.Guards, out var patternTest, out var guardSyntax))
+                {
+                    var patternScope = PushScope();
+                    var patternLocal = BindSwitchPatternLocal(patternTest);
+                    var guard = guardSyntax is null ? null : BindConverted(guardSyntax, _factory.Bool);
+
+                    var patternStatements = new BoundStatement[sectionSyntax.Statements.Count];
+                    for (int s = 0; s < patternStatements.Length; s++)
+                        patternStatements[s] = BindStatement(sectionSyntax.Statements[s]);
+                    PopScope(patternScope);
+
+                    sections[i] = new BoundSwitchSection(
+                        Array.Empty<BoundExpression>(), patternStatements, patternLocal, guard);
+                    continue;
+                }
+
+                ReportMisplacedSwitchGuards(sectionSyntax.Labels, sectionSyntax.Guards);
+
+                var labels = new BoundExpression[sectionSyntax.Labels.Count];
+                for (int l = 0; l < labels.Length; l++)
+                    labels[l] = BindConverted(sectionSyntax.Labels[l], subject.Type);
+
+                var statements = new BoundStatement[sectionSyntax.Statements.Count];
                 for (int s = 0; s < statements.Length; s++)
-                    statements[s] = BindStatement(syntax.Sections[i].Statements[s]);
+                    statements[s] = BindStatement(sectionSyntax.Statements[s]);
 
                 sections[i] = new BoundSwitchSection(labels, statements);
             }
@@ -665,6 +686,75 @@ namespace Surtr.Compiler.Binding
             PopScope(previous);
 
             return new BoundSwitchStatement(syntax, subject, sections);
+        }
+
+        /// <summary>
+        /// Recognizes a single-label section/arm whose one label is a type pattern (<c>x is Dog</c>,
+        /// already an ordinary <see cref="TypeTestExpressionSyntax"/> per §5.7) with a bare
+        /// identifier operand - the shape a `case`/arm needs to introduce a narrowed binding.
+        /// </summary>
+        private static bool TryGetSwitchPattern(
+            IReadOnlyList<ExpressionSyntax> labels,
+            IReadOnlyList<ExpressionSyntax?> guards,
+            [NotNullWhen(true)] out TypeTestExpressionSyntax? test,
+            out ExpressionSyntax? guard)
+        {
+            test = null;
+            guard = null;
+
+            if (labels.Count != 1 || labels[0] is not TypeTestExpressionSyntax
+                {
+                    Operand: IdentifierExpressionSyntax
+                } candidate)
+            {
+                return false;
+            }
+
+            test = candidate;
+            guard = guards.Count > 0 ? guards[0] : null;
+            return true;
+        }
+
+        /// <summary>Declares the local a switch type-pattern binds, narrowed to the tested type.</summary>
+        private LocalSymbol BindSwitchPatternLocal(TypeTestExpressionSyntax test)
+        {
+            var name = ((IdentifierExpressionSyntax)test.Operand).Name;
+            var testedType = _resolver.Resolve(test.TargetType, _typeScope, _sourceName);
+            return DeclareLocal(name, testedType, isReadOnly: true, test.Span);
+        }
+
+        /// <summary>
+        /// A switch guard is only meaningful attached to a lone type-pattern label; anything else
+        /// (a guard on a value label, or on one label of a multi-label section) is refused with a
+        /// clear diagnostic rather than silently ignored or mis-bound as a value comparison.
+        /// </summary>
+        private void ReportMisplacedSwitchGuards(IReadOnlyList<ExpressionSyntax> labels, IReadOnlyList<ExpressionSyntax?> guards)
+        {
+            for (int i = 0; i < guards.Count; i++)
+            {
+                if (guards[i] is null)
+                    continue;
+
+                Report(
+                    SurtrDiagnosticCode.InvalidSwitchPattern,
+                    guards[i]!.Span,
+                    "A switch guard ('if <expr>') is only allowed on a section with a single type-pattern label ('case x is T if <expr>:').");
+            }
+
+            if (labels.Count > 1)
+            {
+                foreach (var label in labels)
+                {
+                    if (label is TypeTestExpressionSyntax { Operand: IdentifierExpressionSyntax })
+                    {
+                        Report(
+                            SurtrDiagnosticCode.InvalidSwitchPattern,
+                            label.Span,
+                            "A switch section combining a type pattern with another label is not supported; give the pattern its own 'case'.");
+                        break;
+                    }
+                }
+            }
         }
 
         private BoundStatement BindTry(TryStatementSyntax syntax)

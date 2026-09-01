@@ -144,7 +144,8 @@ namespace Surtr.Compiler.Binding
                                 sectionWrites);
 
                             Kill(parent, sectionWrites);
-                            sections[i] = new BoundSwitchSection(section.Labels, ((BoundBlockStatement)body).Statements);
+                            sections[i] = new BoundSwitchSection(
+                                section.Labels, ((BoundBlockStatement)body).Statements, section.PatternLocal, section.Guard);
                         }
 
                         _available = parent;

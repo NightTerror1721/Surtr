@@ -331,8 +331,11 @@ namespace Surtr.Compiler.Syntax
             {
                 SourceLocation sectionStart = reader.CurrentLocation;
                 List<ExpressionSyntax> labels = new List<ExpressionSyntax>();
+                List<ExpressionSyntax?> guards = new List<ExpressionSyntax?>();
 
-                // Several `case` labels may share one body, which is how §4.3 groups them.
+                // Several `case` labels may share one body, which is how §4.3 groups them. A type
+                // pattern (`x is Dog`, already an ordinary `TypeTestExpressionSyntax` label - see
+                // ParseBinary's `is` handling) may carry its own `if` guard right before the ':'.
                 while (reader.Check(TokenType.KeywordCase) || reader.Check(TokenType.KeywordDefault))
                 {
                     if (reader.Match(TokenType.KeywordDefault))
@@ -343,6 +346,7 @@ namespace Surtr.Compiler.Syntax
 
                     reader.Advance();
                     labels.Add(ParseExpression());
+                    guards.Add(reader.Match(TokenType.KeywordIf) ? ParseExpression() : null);
                     reader.Expect(TokenType.Colon, "':' after the case label");
                 }
 
@@ -353,7 +357,7 @@ namespace Surtr.Compiler.Syntax
                     statements.Add(ParseStatement());
                 }
 
-                sections.Add(new SwitchSectionSyntax(SpanFrom(sectionStart), labels, statements));
+                sections.Add(new SwitchSectionSyntax(SpanFrom(sectionStart), labels, guards, statements));
             }
 
             reader.Expect(TokenType.RightBrace, "'}' to close the switch body");

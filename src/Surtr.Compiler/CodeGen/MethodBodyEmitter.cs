@@ -1694,18 +1694,27 @@ namespace Surtr.Compiler.CodeGen
             var end = Code.NewLabel();
             var bodies = new SurtrLabel[@switch.Sections.Count];
             var labels = new List<BoundExpression>[@switch.Sections.Count];
+            var patternLocals = new LocalSymbol?[@switch.Sections.Count];
+            var guards = new BoundExpression?[@switch.Sections.Count];
             SurtrLabel? fallback = null;
+            bool hasPattern = false;
 
             for (int i = 0; i < bodies.Length; i++)
             {
                 bodies[i] = Code.NewLabel();
                 labels[i] = new List<BoundExpression>(@switch.Sections[i].Labels);
+                patternLocals[i] = @switch.Sections[i].PatternLocal;
+                guards[i] = @switch.Sections[i].Guard;
+                hasPattern |= patternLocals[i] is not null;
 
                 if (@switch.Sections[i].IsDefault)
                     fallback = bodies[i];
             }
 
-            EmitDispatch(@switch.Subject.Type, subject, bodies, labels, fallback ?? end);
+            if (hasPattern)
+                EmitPatternDispatch(@switch.Subject.Type, subject, bodies, labels, patternLocals, guards, fallback ?? end);
+            else
+                EmitDispatch(@switch.Subject.Type, subject, bodies, labels, fallback ?? end);
 
             // A section runs to its own end: �4.3 makes fall-through explicit, so nothing here
             // continues into the next one. `break` leaves the switch; `continue` looks past it to
@@ -1787,6 +1796,95 @@ namespace Surtr.Compiler.CodeGen
             }
 
             Code.Jump(fallback);
+        }
+
+        /// <summary>
+        /// Emits whatever gets control from a saved subject to the arm that matches it, for a
+        /// switch where at least one target is a type pattern (<c>case x is Dog:</c>). Never reached
+        /// unless <c>EmitSwitchStatement</c>/<c>EmitSwitchExpression</c> found a pattern target, so
+        /// an ordinary all-value switch keeps going through <see cref="EmitDispatch"/> untouched -
+        /// this always compiles to a sequential chain of tests, never <c>Switch</c>/<c>SwitchLookup</c>,
+        /// since mixing a type test into a jump table buys nothing at this scale.
+        /// </summary>
+        private void EmitPatternDispatch(
+            TypeSymbol subjectType,
+            SurtrLocal subject,
+            SurtrLabel[] targets,
+            IReadOnlyList<BoundExpression>[] labels,
+            LocalSymbol?[] patternLocals,
+            BoundExpression?[] guards,
+            SurtrLabel fallback)
+        {
+            var family = TypeCodeOf(subjectType);
+            bool multiFieldEnum = subjectType.NonNullable is NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum } enumType
+                && ValueTypeLayout.IsMultiField(enumType);
+
+            for (int i = 0; i < targets.Length; i++)
+            {
+                if (patternLocals[i] is LocalSymbol patternLocal)
+                {
+                    // `JumpIfInstanceOf` jumps when the test is true; the false path is an explicit
+                    // fall-through past an unconditional jump to the next test, mirroring how a
+                    // plain `x is T` condition already branches (`EmitConditionalJump`).
+                    var isInstance = Code.NewLabel();
+                    var next = Code.NewLabel();
+
+                    EmitLoadLocal(subject);
+                    Code.JumpIfInstanceOf(Descriptors.Emit(patternLocal.Type.NonNullable), isInstance);
+                    Code.Jump(next);
+                    Code.MarkLabel(isInstance);
+
+                    // The instance-of test already proved this narrows cleanly, so the cast below
+                    // cannot trap - it exists to give the pattern's local its own, narrower slot.
+                    EmitLoadLocal(subject);
+                    EmitCastToReferenceType(patternLocal.Type);
+                    EmitStoreLocal(Declare(patternLocal));
+
+                    if (guards[i] is BoundExpression guard)
+                    {
+                        Expression(guard);
+                        Code.JumpIfFalse(next);
+                    }
+
+                    Code.Jump(targets[i]);
+                    Code.MarkLabel(next);
+                    continue;
+                }
+
+                foreach (var label in labels[i])
+                {
+                    if (multiFieldEnum)
+                    {
+                        // Both sides of the comparison reduce to the `value` slot.
+                        EmitEnumValueOf(subject, subjectType);
+                        var labelTemp = DeclareTemp("$label", label.Type);
+                        Expression(label);
+                        EmitStoreLocal(labelTemp);
+                        EmitEnumValueOf(labelTemp, label.Type);
+                        Code.JumpIfCompare(SurtrComparison.Equal, SurtrValueTypeCode.Integer, targets[i]);
+                    }
+                    else
+                    {
+                        EmitLoadLocal(subject);
+                        Expression(label);
+                        Code.JumpIfCompare(SurtrComparison.Equal, family, targets[i]);
+                    }
+                }
+            }
+
+            Code.Jump(fallback);
+        }
+
+        /// <summary>
+        /// Casts an already-loaded reference on top of the stack down to <paramref name="target"/>,
+        /// the same emission <see cref="ConversionKind.ExplicitReference"/> uses - including the
+        /// multi-field value class/enum unbox <c>CastTo</c> alone does not do.
+        /// </summary>
+        private void EmitCastToReferenceType(TypeSymbol target)
+        {
+            Code.CastTo(Descriptors.Emit(target.NonNullable));
+            if (TryMultiSlotWidth(target, out _))
+                UnpackIfMultiSlot(target);
         }
 
         /// <summary>Pushes the first slot of an enum value in a local range - its synthetic <c>value</c> field.</summary>
@@ -4183,6 +4281,21 @@ namespace Surtr.Compiler.CodeGen
 
         private void EmitFieldRead(BoundFieldExpression field)
         {
+            // An enum case is a static, read-only field holding the value its static initializer
+            // built. For a bare or @Flags enum that value is the whole case, so a read folds to
+            // the literal the compiler already knows (§2.4) instead of a StaticFieldGet. A
+            // multi-field enum's case is a real block whose user fields matter - folding its case
+            // read to the int would make `Suit.Hearts == aMultiFieldValue` compare the int against
+            // the whole block, so those keep the field read.
+            if (field.Field.IsStatic
+                && field.Field.EnumValue is not null
+                && field.Field.Type.NonNullable.TypeKind == TypeSymbolKind.Enum
+                && !ValueTypeLayout.IsMultiField((NamedTypeSymbol)field.Field.Type.NonNullable))
+            {
+                EmitLiteral(new BoundLiteralExpression(field.Syntax, field.Field.Type, (long)field.Field.EnumValue.Value));
+                return;
+            }
+
             var info = Field(field.Field);
 
             if (field.Field.IsStatic)
@@ -6793,12 +6906,18 @@ namespace Surtr.Compiler.CodeGen
             var end = Code.NewLabel();
             var arms = new SurtrLabel[@switch.Arms.Count];
             var labels = new List<BoundExpression>[@switch.Arms.Count];
+            var patternLocals = new LocalSymbol?[@switch.Arms.Count];
+            var guards = new BoundExpression?[@switch.Arms.Count];
             SurtrLabel? fallback = null;
+            bool hasPattern = false;
 
             for (int i = 0; i < arms.Length; i++)
             {
                 arms[i] = Code.NewLabel();
                 labels[i] = new List<BoundExpression>(@switch.Arms[i].Values);
+                patternLocals[i] = @switch.Arms[i].PatternLocal;
+                guards[i] = @switch.Arms[i].Guard;
+                hasPattern |= patternLocals[i] is not null;
 
                 if (@switch.Arms[i].IsDefault)
                     fallback = arms[i];
@@ -6808,7 +6927,9 @@ namespace Surtr.Compiler.CodeGen
             // non-nullable enum (�4.3), so the last arm is what is left over once the others have
             // been tested � and testing it as well would be comparing against the only value the
             // subject can still be. This is the whole point of checking exhaustiveness: the form
-            // that needs no fallback is the form the check exists to allow.
+            // that needs no fallback is the form the check exists to allow. A pattern arm always
+            // forces an explicit `else` (no type-pattern coverage check exists), so this path is
+            // never reached with `hasPattern` true.
             if (fallback is null)
             {
                 if (arms.Length == 0)
@@ -6818,7 +6939,10 @@ namespace Surtr.Compiler.CodeGen
                 labels[arms.Length - 1].Clear();
             }
 
-            EmitDispatch(@switch.Subject.Type, subject, arms, labels, fallback.Value);
+            if (hasPattern)
+                EmitPatternDispatch(@switch.Subject.Type, subject, arms, labels, patternLocals, guards, fallback.Value);
+            else
+                EmitDispatch(@switch.Subject.Type, subject, arms, labels, fallback.Value);
 
             // Every arm produces one value, so they all have to leave the stack at the same depth �
             // which is exactly what the emitter checks when the label joins them.

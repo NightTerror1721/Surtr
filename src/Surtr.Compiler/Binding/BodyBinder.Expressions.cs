@@ -5226,20 +5226,39 @@ namespace Surtr.Compiler.Binding
 
             for (int i = 0; i < arms.Length; i++)
             {
-                var values = new BoundExpression[syntax.Arms[i].Values.Count];
-                for (int v = 0; v < values.Length; v++)
-                    values[v] = BindConverted(syntax.Arms[i].Values[v], subject.Type);
+                var armSyntax = syntax.Arms[i];
+                var singleGuard = new[] { armSyntax.Guard };
 
-                var armResult = BindExpression(syntax.Arms[i].Result, expected);
-                arms[i] = new BoundSwitchArm(values, armResult);
+                if (TryGetSwitchPattern(armSyntax.Values, singleGuard, out var patternTest, out var guardSyntax))
+                {
+                    var patternScope = PushScope();
+                    var patternLocal = BindSwitchPatternLocal(patternTest);
+                    var guard = guardSyntax is null ? null : BindConverted(guardSyntax, _factory.Bool);
+                    var patternArmResult = BindExpression(armSyntax.Result, expected);
+                    PopScope(patternScope);
+
+                    arms[i] = new BoundSwitchArm(Array.Empty<BoundExpression>(), patternArmResult, patternLocal, guard);
+                }
+                else
+                {
+                    if (armSyntax.Guard is not null)
+                        ReportMisplacedSwitchGuards(armSyntax.Values, singleGuard);
+
+                    var values = new BoundExpression[armSyntax.Values.Count];
+                    for (int v = 0; v < values.Length; v++)
+                        values[v] = BindConverted(armSyntax.Values[v], subject.Type);
+
+                    var armResult = BindExpression(armSyntax.Result, expected);
+                    arms[i] = new BoundSwitchArm(values, armResult);
+                }
 
                 if (result is null)
                 {
-                    result = armResult.Type;
+                    result = arms[i].Result.Type;
                     continue;
                 }
 
-                var common = CommonType(result, armResult.Type, syntax.Arms[i].Result, "the switch arms");
+                var common = CommonType(result, arms[i].Result.Type, armSyntax.Result, "the switch arms");
                 if (common is null)
                     return Error(syntax);
 
@@ -5252,7 +5271,9 @@ namespace Surtr.Compiler.Binding
             {
                 arms[i] = new BoundSwitchArm(
                     arms[i].Values,
-                    Convert(arms[i].Result, result, syntax.Arms[i].Result.Span));
+                    Convert(arms[i].Result, result, syntax.Arms[i].Result.Span),
+                    arms[i].PatternLocal,
+                    arms[i].Guard);
             }
 
             CheckExhaustive(syntax, subject, arms);
@@ -5272,10 +5293,27 @@ namespace Surtr.Compiler.Binding
         /// </remarks>
         private void CheckExhaustive(SwitchExpressionSyntax syntax, BoundExpression subject, IReadOnlyList<BoundSwitchArm> arms)
         {
+            bool hasPatternArm = false;
             foreach (var arm in arms)
             {
                 if (arm.IsDefault)
                     return;
+
+                hasPatternArm |= arm.PatternLocal is not null;
+            }
+
+            // A type-pattern arm's set of matching values is never something the binder can prove
+            // closed (it would need to reason about every subtype of the tested type), so it always
+            // needs an `else` - the same requirement any other open-ended subject already gets below,
+            // just without attempting enum-style coverage first, which does not apply here.
+            if (hasPatternArm)
+            {
+                Report(
+                    SurtrDiagnosticCode.SwitchNotExhaustive,
+                    syntax.Span,
+                    "This switch uses a type pattern, which the compiler cannot verify covers every case; add an 'else' arm.");
+
+                return;
             }
 
             // Everything else has an open set of values, so it needs an `else` to say what a switch

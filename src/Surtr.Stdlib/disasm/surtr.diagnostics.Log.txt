@@ -123,14 +123,14 @@ module surtr.diagnostics.Log
     0068  ReturnVoid
 
 [private] static static-init minit(): void
-  ; entry 11, locals 0, stack 4, code 0069..007A
+  ; entry 11, locals 0, stack 4, code 0069..0079
     0069  ObjNew 3 (surtr.diagnostics.Log:Logger)
     006C  Dup
     006D  Ldc8
-    006E  StaticFieldGet 0 (Trace)
-    0071  InvokeSpecial 9 (ctor) args=3 ret=0
-    0076  StaticFieldSet 9 (_default)
-    0079  ReturnVoid
+    006E  PushI8 0
+    0070  InvokeSpecial 9 (ctor) args=3 ret=0
+    0075  StaticFieldSet 9 (_default)
+    0078  ReturnVoid
 
 [public] static setDefaultLogger(logger: surtr.diagnostics.Log:Logger): void
   ; entry 1, locals 1, stack 1, code 0004..0009
@@ -185,249 +185,249 @@ enum LogLevel : surtr:Enum, surtr:IComparable<surtr.diagnostics.Log:LogLevel>, s
   case Fatal = 5
 
   [private] static static-init cinit(): void
-    ; entry 22, locals 0, stack 1, code 0192..01B1
-      0192  PushI8 0
-      0194  StaticFieldSet 0 (Trace)
-      0197  PushI8 1
-      0199  StaticFieldSet 1 (Debug)
-      019C  PushI8 2
-      019E  StaticFieldSet 2 (Info)
-      01A1  PushI8 3
-      01A3  StaticFieldSet 3 (Warning)
-      01A6  PushI8 4
-      01A8  StaticFieldSet 4 (Error)
-      01AB  PushI8 5
-      01AD  StaticFieldSet 5 (Fatal)
-      01B0  ReturnVoid
+    ; entry 22, locals 0, stack 1, code 017F..019E
+      017F  PushI8 0
+      0181  StaticFieldSet 0 (Trace)
+      0184  PushI8 1
+      0186  StaticFieldSet 1 (Debug)
+      0189  PushI8 2
+      018B  StaticFieldSet 2 (Info)
+      018E  PushI8 3
+      0190  StaticFieldSet 3 (Warning)
+      0193  PushI8 4
+      0195  StaticFieldSet 4 (Error)
+      0198  PushI8 5
+      019A  StaticFieldSet 5 (Fatal)
+      019D  ReturnVoid
 
   @surtr:Pure
   @surtr:NoAlloc
   [public] compareTo(other: surtr.diagnostics.Log:LogLevel): int
-    ; entry 18, locals 4, stack 3, code 0164..0172
-      0164  Ldl0
-      0165  Stl2
-      0166  Ldl1
-      0167  Stl3
-      0168  Ldl2
-      0169  Ldl3
-      016A  GT
-      016B  B2I
-      016C  Ldl2
-      016D  Ldl3
-      016E  LT
-      016F  B2I
-      0170  Sub
-      0171  ReturnValue
+    ; entry 18, locals 4, stack 3, code 0151..015F
+      0151  Ldl0
+      0152  Stl2
+      0153  Ldl1
+      0154  Stl3
+      0155  Ldl2
+      0156  Ldl3
+      0157  GT
+      0158  B2I
+      0159  Ldl2
+      015A  Ldl3
+      015B  LT
+      015C  B2I
+      015D  Sub
+      015E  ReturnValue
 
   [public] virtual compareTo(other: unknown): int
-    ; entry 20, locals 2, stack 2, code 0180..018A
-      0180  Ldl0
-      0181  Unbox
-      0182  Ldl1
-      0183  Unbox
-      0184  InvokeSpecial 6 (compareTo) args=2 ret=1
-      0189  ReturnValue
+    ; entry 20, locals 2, stack 2, code 016D..0177
+      016D  Ldl0
+      016E  Unbox
+      016F  Ldl1
+      0170  Unbox
+      0171  InvokeSpecial 6 (compareTo) args=2 ret=1
+      0176  ReturnValue
 
   @surtr:Pure
   @surtr:NoAlloc
   [public] virtual override equals(other: surtr:object): bool
-    ; entry 12, locals 2, stack 2, code 007A..008E
-      007A  Ldl1
-      007B  InstanceOf 0 (surtr.diagnostics.Log:LogLevel)
-      007E  Dup
-      007F  JPZ +11 -> L0 (008D)
-      0082  Pop
-      0083  Ldl0
-      0084  Unbox
-      0085  Ldl1
-      0086  Cast 0 (surtr.diagnostics.Log:LogLevel)
-      0089  EQ
-      008A  JP +0 -> L0 (008D)
+    ; entry 12, locals 2, stack 2, code 0079..008D
+      0079  Ldl1
+      007A  InstanceOf 0 (surtr.diagnostics.Log:LogLevel)
+      007D  Dup
+      007E  JPZ +11 -> L0 (008C)
+      0081  Pop
+      0082  Ldl0
+      0083  Unbox
+      0084  Ldl1
+      0085  Cast 0 (surtr.diagnostics.Log:LogLevel)
+      0088  EQ
+      0089  JP +0 -> L0 (008C)
     L0:
-      008D  ReturnValue
+      008C  ReturnValue
 
   [public] virtual equals(other: unknown): bool
-    ; entry 21, locals 2, stack 2, code 018A..0192
-      018A  Ldl0
-      018B  Ldl1
-      018C  InvokeVirtual 0 (equals) args=2 ret=1
-      0191  ReturnValue
+    ; entry 21, locals 2, stack 2, code 0177..017F
+      0177  Ldl0
+      0178  Ldl1
+      0179  InvokeVirtual 0 (equals) args=2 ret=1
+      017E  ReturnValue
 
   @surtr:Pure
   @surtr:NoAlloc
   [public] virtual override hashCode(): int
-    ; entry 13, locals 1, stack 1, code 008E..0091
-      008E  Ldl0
-      008F  Unbox
-      0090  ReturnValue
+    ; entry 13, locals 1, stack 1, code 008D..0090
+      008D  Ldl0
+      008E  Unbox
+      008F  ReturnValue
 
   @surtr:Pure
   @surtr:NoAlloc
   [public] static of(value: int): surtr.diagnostics.Log:LogLevel
-    ; entry 16, locals 1, stack 2, code 00EC..012B
-      00EC  Ldl0
-      00ED  PushI8 0
-      00EF  JPNE +4 -> L0 (00F6)
-      00F2  StaticFieldGet 0 (Trace)
-      00F5  ReturnValue
+    ; entry 16, locals 1, stack 2, code 00E5..011E
+      00E5  Ldl0
+      00E6  PushI8 0
+      00E8  JPNE +3 -> L0 (00EE)
+      00EB  PushI8 0
+      00ED  ReturnValue
     L0:
-      00F6  Ldl0
-      00F7  PushI8 1
-      00F9  JPNE +4 -> L1 (0100)
-      00FC  StaticFieldGet 1 (Debug)
-      00FF  ReturnValue
+      00EE  Ldl0
+      00EF  PushI8 1
+      00F1  JPNE +3 -> L1 (00F7)
+      00F4  PushI8 1
+      00F6  ReturnValue
     L1:
-      0100  Ldl0
-      0101  PushI8 2
-      0103  JPNE +4 -> L2 (010A)
-      0106  StaticFieldGet 2 (Info)
-      0109  ReturnValue
+      00F7  Ldl0
+      00F8  PushI8 2
+      00FA  JPNE +3 -> L2 (0100)
+      00FD  PushI8 2
+      00FF  ReturnValue
     L2:
-      010A  Ldl0
-      010B  PushI8 3
-      010D  JPNE +4 -> L3 (0114)
-      0110  StaticFieldGet 3 (Warning)
-      0113  ReturnValue
+      0100  Ldl0
+      0101  PushI8 3
+      0103  JPNE +3 -> L3 (0109)
+      0106  PushI8 3
+      0108  ReturnValue
     L3:
-      0114  Ldl0
-      0115  PushI8 4
-      0117  JPNE +4 -> L4 (011E)
-      011A  StaticFieldGet 4 (Error)
-      011D  ReturnValue
+      0109  Ldl0
+      010A  PushI8 4
+      010C  JPNE +3 -> L4 (0112)
+      010F  PushI8 4
+      0111  ReturnValue
     L4:
-      011E  Ldl0
-      011F  PushI8 5
-      0121  JPNE +4 -> L5 (0128)
-      0124  StaticFieldGet 5 (Fatal)
-      0127  ReturnValue
+      0112  Ldl0
+      0113  PushI8 5
+      0115  JPNE +3 -> L5 (011B)
+      0118  PushI8 5
+      011A  ReturnValue
     L5:
-      0128  PushAbsent 1
-      012A  ReturnValue
+      011B  PushAbsent 1
+      011D  ReturnValue
 
   @surtr:Pure
   @surtr:NoAlloc
   [public] static of(name: string): surtr.diagnostics.Log:LogLevel
-    ; entry 17, locals 1, stack 2, code 012B..0164
-      012B  Ldl0
-      012C  Ldc0
-      012D  JPStrNE +4 -> L0 (0134)
-      0130  StaticFieldGet 0 (Trace)
-      0133  ReturnValue
+    ; entry 17, locals 1, stack 2, code 011E..0151
+      011E  Ldl0
+      011F  Ldc0
+      0120  JPStrNE +3 -> L0 (0126)
+      0123  PushI8 0
+      0125  ReturnValue
     L0:
-      0134  Ldl0
-      0135  Ldc1
-      0136  JPStrNE +4 -> L1 (013D)
-      0139  StaticFieldGet 1 (Debug)
-      013C  ReturnValue
+      0126  Ldl0
+      0127  Ldc1
+      0128  JPStrNE +3 -> L1 (012E)
+      012B  PushI8 1
+      012D  ReturnValue
     L1:
-      013D  Ldl0
-      013E  Ldc2
-      013F  JPStrNE +4 -> L2 (0146)
-      0142  StaticFieldGet 2 (Info)
-      0145  ReturnValue
+      012E  Ldl0
+      012F  Ldc2
+      0130  JPStrNE +3 -> L2 (0136)
+      0133  PushI8 2
+      0135  ReturnValue
     L2:
-      0146  Ldl0
-      0147  Ldc3
-      0148  JPStrNE +4 -> L3 (014F)
-      014B  StaticFieldGet 3 (Warning)
-      014E  ReturnValue
+      0136  Ldl0
+      0137  Ldc3
+      0138  JPStrNE +3 -> L3 (013E)
+      013B  PushI8 3
+      013D  ReturnValue
     L3:
-      014F  Ldl0
-      0150  Ldc4
-      0151  JPStrNE +4 -> L4 (0158)
-      0154  StaticFieldGet 4 (Error)
-      0157  ReturnValue
+      013E  Ldl0
+      013F  Ldc4
+      0140  JPStrNE +3 -> L4 (0146)
+      0143  PushI8 4
+      0145  ReturnValue
     L4:
-      0158  Ldl0
-      0159  Ldc5
-      015A  JPStrNE +4 -> L5 (0161)
-      015D  StaticFieldGet 5 (Fatal)
-      0160  ReturnValue
+      0146  Ldl0
+      0147  Ldc5
+      0148  JPStrNE +3 -> L5 (014E)
+      014B  PushI8 5
+      014D  ReturnValue
     L5:
-      0161  PushAbsent 1
-      0163  ReturnValue
+      014E  PushAbsent 1
+      0150  ReturnValue
 
   [public] static op_<=>(a: surtr.diagnostics.Log:LogLevel, b: surtr.diagnostics.Log:LogLevel): int
-    ; entry 19, locals 4, stack 3, code 0172..0180
-      0172  Ldl0
-      0173  Stl2
-      0174  Ldl1
-      0175  Stl3
-      0176  Ldl2
-      0177  Ldl3
-      0178  GT
-      0179  B2I
-      017A  Ldl2
-      017B  Ldl3
-      017C  LT
-      017D  B2I
-      017E  Sub
-      017F  ReturnValue
+    ; entry 19, locals 4, stack 3, code 015F..016D
+      015F  Ldl0
+      0160  Stl2
+      0161  Ldl1
+      0162  Stl3
+      0163  Ldl2
+      0164  Ldl3
+      0165  GT
+      0166  B2I
+      0167  Ldl2
+      0168  Ldl3
+      0169  LT
+      016A  B2I
+      016B  Sub
+      016C  ReturnValue
 
   @surtr:Pure
   [public] virtual override toString(): string
-    ; entry 14, locals 1, stack 3, code 0091..00D4
-      0091  Ldl0
-      0092  Unbox
-      0093  PushI8 0
-      0095  JPNE +2 -> L0 (009A)
-      0098  Ldc0
-      0099  ReturnValue
+    ; entry 14, locals 1, stack 3, code 0090..00D3
+      0090  Ldl0
+      0091  Unbox
+      0092  PushI8 0
+      0094  JPNE +2 -> L0 (0099)
+      0097  Ldc0
+      0098  ReturnValue
     L0:
-      009A  Ldl0
-      009B  Unbox
-      009C  PushI8 1
-      009E  JPNE +2 -> L1 (00A3)
-      00A1  Ldc1
-      00A2  ReturnValue
+      0099  Ldl0
+      009A  Unbox
+      009B  PushI8 1
+      009D  JPNE +2 -> L1 (00A2)
+      00A0  Ldc1
+      00A1  ReturnValue
     L1:
-      00A3  Ldl0
-      00A4  Unbox
-      00A5  PushI8 2
-      00A7  JPNE +2 -> L2 (00AC)
-      00AA  Ldc2
-      00AB  ReturnValue
+      00A2  Ldl0
+      00A3  Unbox
+      00A4  PushI8 2
+      00A6  JPNE +2 -> L2 (00AB)
+      00A9  Ldc2
+      00AA  ReturnValue
     L2:
-      00AC  Ldl0
-      00AD  Unbox
-      00AE  PushI8 3
-      00B0  JPNE +2 -> L3 (00B5)
-      00B3  Ldc3
-      00B4  ReturnValue
+      00AB  Ldl0
+      00AC  Unbox
+      00AD  PushI8 3
+      00AF  JPNE +2 -> L3 (00B4)
+      00B2  Ldc3
+      00B3  ReturnValue
     L3:
-      00B5  Ldl0
-      00B6  Unbox
-      00B7  PushI8 4
-      00B9  JPNE +2 -> L4 (00BE)
-      00BC  Ldc4
-      00BD  ReturnValue
+      00B4  Ldl0
+      00B5  Unbox
+      00B6  PushI8 4
+      00B8  JPNE +2 -> L4 (00BD)
+      00BB  Ldc4
+      00BC  ReturnValue
     L4:
-      00BE  Ldl0
-      00BF  Unbox
-      00C0  PushI8 5
-      00C2  JPNE +2 -> L5 (00C7)
-      00C5  Ldc5
-      00C6  ReturnValue
+      00BD  Ldl0
+      00BE  Unbox
+      00BF  PushI8 5
+      00C1  JPNE +2 -> L5 (00C6)
+      00C4  Ldc5
+      00C5  ReturnValue
     L5:
-      00C7  Ldc6
-      00C8  Ldl0
-      00C9  Unbox
-      00CA  BoxInt
-      00CB  InvokeVirtual 37 (toString) args=1 ret=1
-      00D0  Ldc7
-      00D1  StrCat 3
-      00D3  ReturnValue
+      00C6  Ldc6
+      00C7  Ldl0
+      00C8  Unbox
+      00C9  BoxInt
+      00CA  InvokeVirtual 37 (toString) args=1 ret=1
+      00CF  Ldc7
+      00D0  StrCat 3
+      00D2  ReturnValue
 
   [public] static values(): surtr.diagnostics.Log:LogLevel[]
-    ; entry 15, locals 0, stack 6, code 00D4..00EC
-      00D4  StaticFieldGet 0 (Trace)
-      00D7  StaticFieldGet 1 (Debug)
-      00DA  StaticFieldGet 2 (Info)
-      00DD  StaticFieldGet 3 (Warning)
-      00E0  StaticFieldGet 4 (Error)
-      00E3  StaticFieldGet 5 (Fatal)
-      00E6  ArrPack 1 (surtr.diagnostics.Log:LogLevel[]) count=6
-      00EB  ReturnValue
+    ; entry 15, locals 0, stack 6, code 00D3..00E5
+      00D3  PushI8 0
+      00D5  PushI8 1
+      00D7  PushI8 2
+      00D9  PushI8 3
+      00DB  PushI8 4
+      00DD  PushI8 5
+      00DF  ArrPack 1 (surtr.diagnostics.Log:LogLevel[]) count=6
+      00E4  ReturnValue
 
 class Logger : surtr:object  [public]
   [private] field _minLevel: surtr.diagnostics.Log:LogLevel
@@ -436,210 +436,210 @@ class Logger : surtr:object  [public]
 
   [public] property minLevel: surtr.diagnostics.Log:LogLevel { get; set; }
     get:
-      ; entry 24, locals 1, stack 1, code 01C7..01CC
-        01C7  Ldl0
-        01C8  FieldGet 7 (_minLevel)
-        01CB  ReturnValue
+      ; entry 24, locals 1, stack 1, code 01B4..01B9
+        01B4  Ldl0
+        01B5  FieldGet 7 (_minLevel)
+        01B8  ReturnValue
     set:
-      ; entry 25, locals 2, stack 2, code 01CC..01D2
-        01CC  Ldl0
-        01CD  Ldl1
-        01CE  FieldSet 7 (_minLevel)
-        01D1  ReturnVoid
+      ; entry 25, locals 2, stack 2, code 01B9..01BF
+        01B9  Ldl0
+        01BA  Ldl1
+        01BB  FieldSet 7 (_minLevel)
+        01BE  ReturnVoid
 
   [public] property tag: string { get; set; }
     get:
-      ; entry 26, locals 1, stack 1, code 01D2..01D7
-        01D2  Ldl0
-        01D3  FieldGet 6 (_tag)
-        01D6  ReturnValue
+      ; entry 26, locals 1, stack 1, code 01BF..01C4
+        01BF  Ldl0
+        01C0  FieldGet 6 (_tag)
+        01C3  ReturnValue
     set:
-      ; entry 27, locals 2, stack 2, code 01D7..01DD
-        01D7  Ldl0
-        01D8  Ldl1
-        01D9  FieldSet 6 (_tag)
-        01DC  ReturnVoid
+      ; entry 27, locals 2, stack 2, code 01C4..01CA
+        01C4  Ldl0
+        01C5  Ldl1
+        01C6  FieldSet 6 (_tag)
+        01C9  ReturnVoid
 
   [public] addSink(sink: surtr.diagnostics.Log:LogSink): surtr.diagnostics.Log:Logger
-    ; entry 28, locals 2, stack 2, code 01DD..01E5
-      01DD  Ldl0
-      01DE  FieldGet 8 (_sinks)
-      01E1  Ldl1
-      01E2  ArrPush
-      01E3  Ldl0
-      01E4  ReturnValue
+    ; entry 28, locals 2, stack 2, code 01CA..01D2
+      01CA  Ldl0
+      01CB  FieldGet 8 (_sinks)
+      01CE  Ldl1
+      01CF  ArrPush
+      01D0  Ldl0
+      01D1  ReturnValue
 
   [public] clearSinks(): void
-    ; entry 30, locals 1, stack 1, code 020B..0211
-      020B  Ldl0
-      020C  FieldGet 8 (_sinks)
-      020F  ArrClear
-      0210  ReturnVoid
+    ; entry 30, locals 1, stack 1, code 01F8..01FE
+      01F8  Ldl0
+      01F9  FieldGet 8 (_sinks)
+      01FC  ArrClear
+      01FD  ReturnVoid
 
   [public] ctor (tag: string = "", minLevel: surtr.diagnostics.Log:LogLevel = 2): void
-    ; entry 23, locals 3, stack 2, code 01B1..01C7
-      01B1  Ldl0
-      01B2  Ldl1
-      01B3  FieldSet 6 (_tag)
-      01B6  Ldl0
-      01B7  Ldl2
-      01B8  FieldSet 7 (_minLevel)
-      01BB  Ldl0
-      01BC  ArrNewX 2 (surtr.diagnostics.Log:LogSink[]) size=0
-      01C3  FieldSet 8 (_sinks)
-      01C6  ReturnVoid
+    ; entry 23, locals 3, stack 2, code 019E..01B4
+      019E  Ldl0
+      019F  Ldl1
+      01A0  FieldSet 6 (_tag)
+      01A3  Ldl0
+      01A4  Ldl2
+      01A5  FieldSet 7 (_minLevel)
+      01A8  Ldl0
+      01A9  ArrNewX 2 (surtr.diagnostics.Log:LogSink[]) size=0
+      01B0  FieldSet 8 (_sinks)
+      01B3  ReturnVoid
 
   [public] debug(message: string): void
-    ; entry 33, locals 2, stack 3, code 0234..023F
-      0234  Ldl0
-      0235  StaticFieldGet 1 (Debug)
-      0238  Ldl1
-      0239  InvokeSpecial 25 (emit) args=3 ret=0
-      023E  ReturnVoid
+    ; entry 33, locals 2, stack 3, code 0220..022A
+      0220  Ldl0
+      0221  PushI8 1
+      0223  Ldl1
+      0224  InvokeSpecial 25 (emit) args=3 ret=0
+      0229  ReturnVoid
 
   [private] emit(level: surtr.diagnostics.Log:LogLevel, message: string): void
-    ; entry 39, locals 8, stack 4, code 0274..02B8
-      0274  Ldl1
-      0275  Stl3
-      0276  Ldl0
-      0277  FieldGet 7 (_minLevel)
-      027A  Stl4
-      027B  Ldl3
-      027C  Stl5
-      027D  Ldl4
-      027E  StlS 6
-      0280  Ldl5
-      0281  LdlS 6
-      0283  GT
-      0284  B2I
-      0285  Ldl5
-      0286  LdlS 6
-      0288  LT
-      0289  B2I
-      028A  Sub
-      028B  PushI8 0
-      028D  JPGE +1 -> L0 (0291)
-      0290  ReturnVoid
+    ; entry 39, locals 8, stack 4, code 025B..029F
+      025B  Ldl1
+      025C  Stl3
+      025D  Ldl0
+      025E  FieldGet 7 (_minLevel)
+      0261  Stl4
+      0262  Ldl3
+      0263  Stl5
+      0264  Ldl4
+      0265  StlS 6
+      0267  Ldl5
+      0268  LdlS 6
+      026A  GT
+      026B  B2I
+      026C  Ldl5
+      026D  LdlS 6
+      026F  LT
+      0270  B2I
+      0271  Sub
+      0272  PushI8 0
+      0274  JPGE +1 -> L0 (0278)
+      0277  ReturnVoid
     L0:
-      0291  PushI8 0
-      0293  StlS 7
+      0278  PushI8 0
+      027A  StlS 7
     L1:
-      0295  LdlS 7
-      0297  Ldl0
-      0298  FieldGet 8 (_sinks)
-      029B  ArrLen
-      029C  JPGE +24 -> L2 (02B7)
-      029F  Ldl0
-      02A0  FieldGet 8 (_sinks)
-      02A3  LdlS 7
-      02A5  ArrGet
-      02A6  Ldl1
-      02A7  Ldl0
-      02A8  FieldGet 6 (_tag)
-      02AB  Ldl2
-      02AC  InvokeInterface 8 (write) args=4 ret=0
-      02B1  IncLocal 7 by 1
-      02B4  JP -34 -> L1 (0295)
+      027C  LdlS 7
+      027E  Ldl0
+      027F  FieldGet 8 (_sinks)
+      0282  ArrLen
+      0283  JPGE +24 -> L2 (029E)
+      0286  Ldl0
+      0287  FieldGet 8 (_sinks)
+      028A  LdlS 7
+      028C  ArrGet
+      028D  Ldl1
+      028E  Ldl0
+      028F  FieldGet 6 (_tag)
+      0292  Ldl2
+      0293  InvokeInterface 8 (write) args=4 ret=0
+      0298  IncLocal 7 by 1
+      029B  JP -34 -> L1 (027C)
     L2:
-      02B7  ReturnVoid
+      029E  ReturnVoid
 
   [public] error(message: string): void
-    ; entry 36, locals 2, stack 3, code 0255..0260
-      0255  Ldl0
-      0256  StaticFieldGet 4 (Error)
-      0259  Ldl1
-      025A  InvokeSpecial 25 (emit) args=3 ret=0
-      025F  ReturnVoid
+    ; entry 36, locals 2, stack 3, code 023E..0248
+      023E  Ldl0
+      023F  PushI8 4
+      0241  Ldl1
+      0242  InvokeSpecial 25 (emit) args=3 ret=0
+      0247  ReturnVoid
 
   [public] fatal(message: string): void
-    ; entry 37, locals 2, stack 3, code 0260..026B
-      0260  Ldl0
-      0261  StaticFieldGet 5 (Fatal)
-      0264  Ldl1
-      0265  InvokeSpecial 25 (emit) args=3 ret=0
-      026A  ReturnVoid
+    ; entry 37, locals 2, stack 3, code 0248..0252
+      0248  Ldl0
+      0249  PushI8 5
+      024B  Ldl1
+      024C  InvokeSpecial 25 (emit) args=3 ret=0
+      0251  ReturnVoid
 
   [public] info(message: string): void
-    ; entry 34, locals 2, stack 3, code 023F..024A
-      023F  Ldl0
-      0240  StaticFieldGet 2 (Info)
-      0243  Ldl1
-      0244  InvokeSpecial 25 (emit) args=3 ret=0
-      0249  ReturnVoid
-
-  [public] isLevelEnabled(level: surtr.diagnostics.Log:LogLevel): bool
-    ; entry 31, locals 6, stack 3, code 0211..0229
-      0211  Ldl1
-      0212  Stl2
-      0213  Ldl0
-      0214  FieldGet 7 (_minLevel)
-      0217  Stl3
-      0218  Ldl2
-      0219  Stl4
-      021A  Ldl3
-      021B  Stl5
-      021C  Ldl4
-      021D  Ldl5
-      021E  GT
-      021F  B2I
-      0220  Ldl4
-      0221  Ldl5
-      0222  LT
-      0223  B2I
-      0224  Sub
-      0225  PushI8 0
-      0227  GE
-      0228  ReturnValue
-
-  [public] log(level: surtr.diagnostics.Log:LogLevel, message: string): void
-    ; entry 38, locals 3, stack 3, code 026B..0274
-      026B  Ldl0
-      026C  Ldl1
-      026D  Ldl2
-      026E  InvokeSpecial 25 (emit) args=3 ret=0
-      0273  ReturnVoid
-
-  [public] removeSink(sink: surtr.diagnostics.Log:LogSink): bool
-    ; entry 29, locals 3, stack 2, code 01E5..020B
-      01E5  PushI8 0
-      01E7  Stl2
-    L0:
-      01E8  Ldl2
-      01E9  Ldl0
-      01EA  FieldGet 8 (_sinks)
-      01ED  ArrLen
-      01EE  JPGE +24 -> L2 (0209)
-      01F1  Ldl0
-      01F2  FieldGet 8 (_sinks)
-      01F5  Ldl2
-      01F6  ArrGet
-      01F7  Ldl1
-      01F8  JPRNE +8 -> L1 (0203)
-      01FB  Ldl0
-      01FC  FieldGet 8 (_sinks)
-      01FF  Ldl2
-      0200  ArrRemoveAt
-      0201  PushTrue
-      0202  ReturnValue
-    L1:
-      0203  IncLocal 2 by 1
-      0206  JP -33 -> L0 (01E8)
-    L2:
-      0209  PushFalse
-      020A  ReturnValue
-
-  [public] trace(message: string): void
-    ; entry 32, locals 2, stack 3, code 0229..0234
-      0229  Ldl0
-      022A  StaticFieldGet 0 (Trace)
+    ; entry 34, locals 2, stack 3, code 022A..0234
+      022A  Ldl0
+      022B  PushI8 2
       022D  Ldl1
       022E  InvokeSpecial 25 (emit) args=3 ret=0
       0233  ReturnVoid
 
+  [public] isLevelEnabled(level: surtr.diagnostics.Log:LogLevel): bool
+    ; entry 31, locals 6, stack 3, code 01FE..0216
+      01FE  Ldl1
+      01FF  Stl2
+      0200  Ldl0
+      0201  FieldGet 7 (_minLevel)
+      0204  Stl3
+      0205  Ldl2
+      0206  Stl4
+      0207  Ldl3
+      0208  Stl5
+      0209  Ldl4
+      020A  Ldl5
+      020B  GT
+      020C  B2I
+      020D  Ldl4
+      020E  Ldl5
+      020F  LT
+      0210  B2I
+      0211  Sub
+      0212  PushI8 0
+      0214  GE
+      0215  ReturnValue
+
+  [public] log(level: surtr.diagnostics.Log:LogLevel, message: string): void
+    ; entry 38, locals 3, stack 3, code 0252..025B
+      0252  Ldl0
+      0253  Ldl1
+      0254  Ldl2
+      0255  InvokeSpecial 25 (emit) args=3 ret=0
+      025A  ReturnVoid
+
+  [public] removeSink(sink: surtr.diagnostics.Log:LogSink): bool
+    ; entry 29, locals 3, stack 2, code 01D2..01F8
+      01D2  PushI8 0
+      01D4  Stl2
+    L0:
+      01D5  Ldl2
+      01D6  Ldl0
+      01D7  FieldGet 8 (_sinks)
+      01DA  ArrLen
+      01DB  JPGE +24 -> L2 (01F6)
+      01DE  Ldl0
+      01DF  FieldGet 8 (_sinks)
+      01E2  Ldl2
+      01E3  ArrGet
+      01E4  Ldl1
+      01E5  JPRNE +8 -> L1 (01F0)
+      01E8  Ldl0
+      01E9  FieldGet 8 (_sinks)
+      01EC  Ldl2
+      01ED  ArrRemoveAt
+      01EE  PushTrue
+      01EF  ReturnValue
+    L1:
+      01F0  IncLocal 2 by 1
+      01F3  JP -33 -> L0 (01D5)
+    L2:
+      01F6  PushFalse
+      01F7  ReturnValue
+
+  [public] trace(message: string): void
+    ; entry 32, locals 2, stack 3, code 0216..0220
+      0216  Ldl0
+      0217  PushI8 0
+      0219  Ldl1
+      021A  InvokeSpecial 25 (emit) args=3 ret=0
+      021F  ReturnVoid
+
   [public] warn(message: string): void
-    ; entry 35, locals 2, stack 3, code 024A..0255
-      024A  Ldl0
-      024B  StaticFieldGet 3 (Warning)
-      024E  Ldl1
-      024F  InvokeSpecial 25 (emit) args=3 ret=0
-      0254  ReturnVoid
+    ; entry 35, locals 2, stack 3, code 0234..023E
+      0234  Ldl0
+      0235  PushI8 3
+      0237  Ldl1
+      0238  InvokeSpecial 25 (emit) args=3 ret=0
+      023D  ReturnVoid

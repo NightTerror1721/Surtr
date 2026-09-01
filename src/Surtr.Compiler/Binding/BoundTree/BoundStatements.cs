@@ -163,20 +163,35 @@ namespace Surtr.Compiler.Binding.BoundTree
     /// <summary>One section of a switch statement.</summary>
     public sealed class BoundSwitchSection
     {
-        internal BoundSwitchSection(IReadOnlyList<BoundExpression> labels, IReadOnlyList<BoundStatement> statements)
+        internal BoundSwitchSection(
+            IReadOnlyList<BoundExpression> labels,
+            IReadOnlyList<BoundStatement> statements,
+            LocalSymbol? patternLocal = null,
+            BoundExpression? guard = null)
         {
             Labels = labels;
             Statements = statements;
+            PatternLocal = patternLocal;
+            Guard = guard;
         }
 
-        /// <summary>The values it matches, empty for the default section.</summary>
+        /// <summary>The values it matches, empty for the default section and for a pattern section.</summary>
         public IReadOnlyList<BoundExpression> Labels { get; }
 
         /// <summary>Its statements.</summary>
         public IReadOnlyList<BoundStatement> Statements { get; }
 
+        /// <summary>
+        /// The local a type-pattern label (<c>case x is Dog:</c>) binds, narrowed to the tested
+        /// type and scoped to this section alone. Null for an ordinary value-label section.
+        /// </summary>
+        public LocalSymbol? PatternLocal { get; }
+
+        /// <summary>The pattern's optional <c>if</c> guard. Only ever set when <see cref="PatternLocal"/> is.</summary>
+        public BoundExpression? Guard { get; }
+
         /// <summary>Whether this is the section nothing else matched.</summary>
-        public bool IsDefault => Labels.Count == 0;
+        public bool IsDefault => Labels.Count == 0 && PatternLocal is null;
     }
 
     /// <summary>A <c>switch</c> statement.</summary>

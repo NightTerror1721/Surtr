@@ -208,14 +208,22 @@ su salida (`Current`/`Result`) y sus cuatro estados (`NotStarted`/`Suspended`/`R
 2. **API de avance no pública.** Los puntos de entrada nativos (`ResumeGenerator`,
    `SendToGenerator`, `RaiseInGenerator`, `DisposeGenerator`) son `internal`
    (`SurtrRuntime.cs:612-629`). Desde C#, hoy se puede *crear* un generador (`TryInvoke` del stub,
-   `:1731-1750`) pero no avanzarlo.
-3. **No hay tipos de espera.** Nada dice «espera 2 segundos», «espera esta condición», «espera a
-   esa otra corutina». El canal de valores (`send`/`GenResumed`) está listo, pero no hay vocabulario.
+   `:1731-1750`) pero no avanzarlo. **Sigue así** — sigue siendo el hueco genuino de A-1 si algún día
+   hace falta avanzar un generador desde C# directamente; lo de abajo se resolvió enteramente en
+   Surtr, sobre los métodos ya públicos de `generator<T>` (`moveNext`/`current`/`dispose`).
+3. ~~**No hay tipos de espera.**~~ **Resuelto (Fase 1, docs/Plan-Roadmap-Novedades.md propuesta 1).**
+   `WaitInstruction` (`surtr.async.Scheduler`) es exactamente el vocabulario que faltaba —
+   `waitSeconds`/`waitUntil`/`waitForCoroutine` — sobre el mismo canal `yield`/`current` que este
+   informe ya identificaba como el canal correcto.
 4. **Sin jerarquía ni cancelación compuesta.** `dispose()` cancela un generador; no hay padre/hijo
    entre generadores (salvo la cadena de delegación, que es composición secuencial, no spawning).
-5. **Sin política de errores entre ticks**: quién captura, registra o propaga el fallo de una
-   corutina que explotó en el tick 47.
-6. Sin completación por callback (solo polling de `state`/`result`).
+   **Cancelación individual estable resuelta** (`Scheduler.stop(handle)`, con handles válidos a
+   través de swap-removal vía slot map); la cancelación *compuesta* (padre→hijos) sigue sin existir —
+   sigue siendo terreno de la Propuesta B (§6) si hiciera falta.
+5. ~~**Sin política de errores entre ticks**~~ **Resuelto.** `Scheduler.onError(handler)` aísla el
+   fallo de una corutina sin detener las demás (igual que Unity, §3) — el fallback sin handler
+   registrado es aislar en silencio.
+6. Sin completación por callback (solo polling de `state`/`result`/`Scheduler.isAlive`).
 
 Los propios planes del proyecto ya señalaban esto: «no hay scheduler ni event loop en Surtr»
 (`docs/Plan-Generadores.md` línea 346, fila descartada de async/await; `docs/Plan-Disposicion.md`
